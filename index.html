@@ -300,12 +300,12 @@ input[type=date]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
 
   <!-- SIDEBAR -->
   <nav class="sidebar" id="sidebar">
-    <div class="nav-item active" data-page="dashboard"><span class="nav-icon">◈</span> Dashboard</div>
-    <div class="nav-item" data-page="expenses"><span class="nav-icon">↕</span> Expenses</div>
-    <div class="nav-item" data-page="investments"><span class="nav-icon">◎</span> Investments</div>
-    <div class="nav-item" data-page="debtors"><span class="nav-icon">⊟</span> Debtors</div>
-    <div class="nav-item" data-page="projections"><span class="nav-icon">◌</span> Projections</div>
-    <div class="nav-item" data-page="settings"><span class="nav-icon">⊕</span> Settings</div>
+    <div class="nav-item active" data-page="dashboard" onclick="navigate('dashboard')"><span class="nav-icon">◈</span> Dashboard</div>
+    <div class="nav-item" data-page="expenses" onclick="navigate('expenses')"><span class="nav-icon">↕</span> Expenses</div>
+    <div class="nav-item" data-page="investments" onclick="navigate('investments')"><span class="nav-icon">◎</span> Investments</div>
+    <div class="nav-item" data-page="debtors" onclick="navigate('debtors')"><span class="nav-icon">⊟</span> Debtors</div>
+    <div class="nav-item" data-page="projections" onclick="navigate('projections')"><span class="nav-icon">◌</span> Projections</div>
+    <div class="nav-item" data-page="settings" onclick="navigate('settings')"><span class="nav-icon">⊕</span> Settings</div>
   </nav>
   <div class="sidebar-overlay" id="sidebar-overlay"></div>
 
@@ -422,12 +422,12 @@ input[type=date]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
 
 <!-- MOBILE NAV -->
 <nav class="mobile-nav">
-  <div class="mob-item active" data-mob="dashboard"><div class="mob-icon">◈</div>Dashboard</div>
-  <div class="mob-item" data-mob="expenses"><div class="mob-icon">↕</div>Expenses</div>
-  <div class="mob-item" data-mob="investments"><div class="mob-icon">◎</div>Invest</div>
-  <div class="mob-item" data-mob="debtors"><div class="mob-icon">⊟</div>Debtors</div>
-  <div class="mob-item" data-mob="projections"><div class="mob-icon">◌</div>Projects</div>
-  <div class="mob-item" data-mob="settings"><div class="mob-icon">⊕</div>Settings</div>
+  <div class="mob-item active" data-mob="dashboard" onclick="navigate('dashboard')"><div class="mob-icon">◈</div>Dashboard</div>
+  <div class="mob-item" data-mob="expenses" onclick="navigate('expenses')"><div class="mob-icon">↕</div>Expenses</div>
+  <div class="mob-item" data-mob="investments" onclick="navigate('investments')"><div class="mob-icon">◎</div>Invest</div>
+  <div class="mob-item" data-mob="debtors" onclick="navigate('debtors')"><div class="mob-icon">⊟</div>Debtors</div>
+  <div class="mob-item" data-mob="projections" onclick="navigate('projections')"><div class="mob-icon">◌</div>Projects</div>
+  <div class="mob-item" data-mob="settings" onclick="navigate('settings')"><div class="mob-icon">⊕</div>Settings</div>
 </nav>
 
 <!-- TOAST -->
@@ -1651,15 +1651,11 @@ async function seedHistory() {
 // ══════════════════════════════════════════════════════════════════════════
 // NAV EVENT LISTENERS
 // ══════════════════════════════════════════════════════════════════════════
-document.querySelectorAll('.nav-item').forEach(item => {
-  item.addEventListener('click', () => navigate(item.dataset.page));
-});
-document.querySelectorAll('.mob-item').forEach(item => {
-  item.addEventListener('click', () => navigate(item.dataset.mob));
-});
+// Navigation handled via inline onclick on nav-item and mob-item elements
 
-// Mobile sidebar toggle via logo tap
-document.querySelector('.logo').addEventListener('click', () => {
+// Mobile sidebar toggle via logo-mark tap only
+document.querySelector('.logo-mark').addEventListener('click', (e) => {
+  e.stopPropagation();
   if (window.innerWidth >= 700) return;
   const sb = document.getElementById('sidebar');
   const ov = document.getElementById('sidebar-overlay');
