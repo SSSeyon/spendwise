@@ -558,6 +558,30 @@ const DEFAULT_BUDGETS = {
 };
 
 const HISTORICAL = [
+  {year:2023,month:11,label:"Nov '23",income:1504749.30,expenses:3109184},
+  {year:2023,month:12,label:"Dec '23",income:2514940.87,expenses:1797869},
+  {year:2024,month:1,label:"Jan '24",income:1526606.41,expenses:1616342.13},
+  {year:2024,month:2,label:"Feb '24",income:1530977.48,expenses:3386294.01},
+  {year:2024,month:3,label:"Mar '24",income:1526387.00,expenses:1575259},
+  {year:2024,month:4,label:"Apr '24",income:6195375.12,expenses:3940457},
+  {year:2024,month:5,label:"May '24",income:4636321.29,expenses:8190421},
+  {year:2024,month:6,label:"Jun '24",income:1851775.64,expenses:2628946.94},
+  {year:2024,month:7,label:"Jul '24",income:3025884.99,expenses:3148494},
+  {year:2024,month:8,label:"Aug '24",income:3842311.74,expenses:2188784.88},
+  {year:2024,month:9,label:"Sep '24",income:1881560.21,expenses:1885132.50},
+  {year:2024,month:10,label:"Oct '24",income:3300562.05,expenses:2514477},
+  {year:2024,month:11,label:"Nov '24",income:1845438.76,expenses:2966831.53},
+  {year:2024,month:12,label:"Dec '24",income:3406527.91,expenses:2866535.38},
+  {year:2025,month:1,label:"Jan '25",income:1847907.18,expenses:3048689.89},
+  {year:2025,month:2,label:"Feb '25",income:5872477.09,expenses:2862795},
+  {year:2025,month:3,label:"Mar '25",income:1869411.72,expenses:2900387},
+  {year:2025,month:4,label:"Apr '25",income:4861674.27,expenses:3336341},
+  {year:2025,month:5,label:"May '25",income:2669192.31,expenses:3826691},
+  {year:2025,month:6,label:"Jun '25",income:6714369.96,expenses:10530930},
+  {year:2025,month:7,label:"Jul '25",income:4621652.95,expenses:3143238.92},
+  {year:2025,month:8,label:"Aug '25",income:2625865.10,expenses:3213695},
+  {year:2025,month:9,label:"Sep '25",income:2618020.93,expenses:2313078.90},
+  {year:2025,month:10,label:"Oct '25",income:2617911.50,expenses:2407654.40},
   {year:2025,month:11,label:"Nov '25",income:2615534.96,expenses:2210241},
   {year:2025,month:12,label:"Dec '25",income:4595720.82,expenses:3397263},
   {year:2026,month:1,label:"Jan '26",income:2630854.93,expenses:3602724,netWorth:18908344.37},
@@ -1480,8 +1504,24 @@ function renderSettData() {
 }
 
 async function seedHistory() {
-  if (!confirm('Seed historical summary data into Firestore?')) return;
+  if (!confirm('Seed all historical data into Firestore? This includes monthly summaries, investment balances, and cash balances from your spreadsheet.')) return;
+
+  // ── Monthly income/expense summary — Nov 2023 to Apr 2026 ────────────
   const FULL_HISTORY = [
+    {year:2023,month:11,income:1504749.30,expenses:3109184},
+    {year:2023,month:12,income:2514940.87,expenses:1797869},
+    {year:2024,month:1,income:1526606.41,expenses:1616342.13},
+    {year:2024,month:2,income:1530977.48,expenses:3386294.01},
+    {year:2024,month:3,income:1526387.00,expenses:1575259},
+    {year:2024,month:4,income:6195375.12,expenses:3940457},
+    {year:2024,month:5,income:4636321.29,expenses:8190421},
+    {year:2024,month:6,income:1851775.64,expenses:2628946.94},
+    {year:2024,month:7,income:3025884.99,expenses:3148494},
+    {year:2024,month:8,income:3842311.74,expenses:2188784.88},
+    {year:2024,month:9,income:1881560.21,expenses:1885132.50},
+    {year:2024,month:10,income:3300562.05,expenses:2514477},
+    {year:2024,month:11,income:1845438.76,expenses:2966831.53},
+    {year:2024,month:12,income:3406527.91,expenses:2866535.38},
     {year:2025,month:1,income:1847907.18,expenses:3048689.89},
     {year:2025,month:2,income:5872477.09,expenses:2862795},
     {year:2025,month:3,income:1869411.72,expenses:2900387},
@@ -1499,15 +1539,72 @@ async function seedHistory() {
     {year:2026,month:3,income:2952559.77,expenses:2863379.90,netWorth:23147424.78},
     {year:2026,month:4,income:2946962.86,expenses:1293585.70},
   ];
+
+  // ── Investment closing balances by month (from spreadsheet) ───────────
+  const INVESTMENTS = [
+    {year:2026,month:1,
+      Piggy:3653614.45,PiggySafelock:1009863.01,Renflex:347.27,
+      RenVault:722324.02,Risevest:713168,Trove:2316360.50,
+      Bamboo:3543452,USDHoldings:2998919},
+    {year:2026,month:2,
+      Piggy:6055668.54,PiggySafelock:2035506.85,Renflex:1629.42,
+      RenVault:2044230.73,Risevest:646590.20,Trove:2210303.20,
+      Bamboo:3199102.60,USDHoldings:2771414.80},
+    {year:2026,month:3,
+      Piggy:5489150.59,PiggySafelock:2066082.19,Renflex:3701.80,
+      RenVault:2075291.34,Risevest:587093.40,Trove:2128539.60,
+      Bamboo:3454512.60,USDHoldings:2854143.60},
+    {year:2026,month:4,
+      Piggy:5605748.34,PiggySafelock:2064109.59,Renflex:407459.57,
+      RenVault:2073287.43,Risevest:646312.80,Trove:2243292.80,
+      Bamboo:3733798.40,USDHoldings:2812779.20},
+  ];
+
+  // ── Cash closing balances by month (from spreadsheet) ─────────────────
+  const CASH = [
+    {year:2026,month:1,GTB:35062,Access:6520,Union:1788},
+    {year:2026,month:2,GTB:93697.49,Access:1008,Union:1788},
+    {year:2026,month:3,GTB:23962.59,Access:7166.67,Union:1788},
+    {year:2026,month:4,GTB:330376.89,Access:2902583.34,Union:1788},
+  ];
+
   try {
-    const batch = db.batch();
-    FULL_HISTORY.forEach(r => {
-      const id = snapId(r.month, r.year);
-      batch.set(db.collection('historicalSummary').doc(id), r, {merge:true});
-    });
+    // Firestore batches are limited to 500 ops — split across multiple batches
+    let batch = db.batch();
+    let opCount = 0;
+
+    const addOp = async (ref, data) => {
+      if (opCount >= 490) {
+        await batch.commit();
+        batch = db.batch();
+        opCount = 0;
+      }
+      batch.set(ref, data, {merge:true});
+      opCount++;
+    };
+
+    for (const r of FULL_HISTORY) {
+      await addOp(db.collection('historicalSummary').doc(snapId(r.month, r.year)), r);
+    }
+    for (const r of INVESTMENTS) {
+      await addOp(db.collection('investments').doc(snapId(r.month, r.year)),
+        {...r, seeded:true});
+    }
+    for (const r of CASH) {
+      await addOp(db.collection('cashBalances').doc(snapId(r.month, r.year)),
+        {...r, seeded:true});
+    }
+
     await batch.commit();
-    showToast('Historical data seeded');
-  } catch(e) { showToast('Error seeding data'); }
+    showToast('All historical data seeded');
+
+    // Reload current month data and re-render
+    await Promise.all([loadInvestments(), loadCash()]);
+    renderAll();
+  } catch(e) {
+    console.error(e);
+    showToast('Error seeding — check console');
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
