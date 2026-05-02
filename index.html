@@ -51,7 +51,16 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);
 .logo-mark{width:30px;height:30px;background:var(--accent);color:var(--bg);
   border-radius:8px;display:grid;place-items:center;font-weight:800;font-size:0.9rem}
 .logo-text{font-weight:800;font-size:1rem;letter-spacing:-0.03em}
-.header-right{font-family:var(--mono);font-size:0.7rem;color:var(--text2);letter-spacing:0.05em}
+.header-right{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+.header-month-label{font-family:var(--mono);font-size:0.7rem;color:var(--text2);letter-spacing:0.05em}
+.header-status{display:flex;align-items:center;gap:5px}
+.sync-dot{width:7px;height:7px;border-radius:50%;background:var(--text3);transition:background 0.4s ease;flex-shrink:0}
+.sync-dot.green{background:#4ade80}
+.sync-dot.yellow{background:var(--gold);animation:pulse 1.2s ease-in-out infinite}
+.sync-dot.red{background:var(--red)}
+.sync-label{font-family:var(--mono);font-size:0.6rem;color:var(--text3);letter-spacing:0.04em}
+.version-label{font-family:var(--mono);font-size:0.58rem;color:var(--text3);letter-spacing:0.04em}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
 
 /* ── SIDEBAR ── */
 .sidebar{
@@ -277,7 +286,14 @@ input[type=date]::-webkit-calendar-picker-indicator{filter:invert(0.6)}
     <div class="logo-mark">S</div>
     <div class="logo-text">SpendWise</div>
   </div>
-  <div class="header-right" id="header-month"></div>
+  <div class="header-right">
+    <div class="header-month-label" id="header-month"></div>
+    <div class="header-status">
+      <div class="sync-dot" id="sync-dot"></div>
+      <span class="sync-label" id="sync-label">—</span>
+      <span class="version-label">v1.1.0</span>
+    </div>
+  </div>
 </header>
 
 <div class="app-body">
@@ -642,7 +658,13 @@ async function initFirebase() {
   });
   db = firebase.firestore();
   db.enablePersistence().catch(() => {});
-  await loadAll();
+  setSyncStatus('syncing');
+  try {
+    await loadAll();
+    setSyncStatus('synced');
+  } catch(e) {
+    setSyncStatus('error');
+  }
   renderAll();
 }
 
@@ -724,7 +746,24 @@ function budgStatus(spent, budget) {
   return r >= 1 ? 'over' : r >= 0.8 ? 'warn' : 'ok';
 }
 
-function showToast(msg) {
+function setSyncStatus(state) {
+  // state: 'syncing' | 'synced' | 'offline' | 'error'
+  const dot = document.getElementById('sync-dot');
+  const label = document.getElementById('sync-label');
+  if (!dot || !label) return;
+  dot.className = 'sync-dot';
+  const map = {
+    syncing: { cls:'yellow', text:'Syncing…' },
+    synced:  { cls:'green',  text:'Synced' },
+    offline: { cls:'red',    text:'Offline' },
+    error:   { cls:'red',    text:'Error' },
+  };
+  const s = map[state] || map.offline;
+  dot.classList.add(s.cls);
+  label.textContent = s.text;
+}
+
+
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 2500);
@@ -980,6 +1019,7 @@ async function saveExpense() {
   const amount = parseFloat(document.getElementById('exp-amount').value);
   if (!amount || amount <= 0) { showToast('Enter a valid amount'); return; }
   state.savingExp = true;
+  setSyncStatus('syncing');
   const btn = document.getElementById('exp-save-btn');
   btn.textContent = 'Saving…'; btn.disabled = true;
   try {
@@ -997,8 +1037,9 @@ async function saveExpense() {
     });
     closeModal('exp-modal');
     showToast('Expense saved');
+    setSyncStatus('synced');
     await loadTransactionsAndRender();
-  } catch(e) { showToast('Error saving — check connection'); }
+  } catch(e) { showToast('Error saving — check connection'); setSyncStatus('error'); }
   finally {
     state.savingExp = false;
     btn.textContent = 'Save Expense'; btn.disabled = false;
@@ -1644,11 +1685,17 @@ document.getElementById('debtor-modal').addEventListener('click', function(e) {
 // Offline/online detection
 window.addEventListener('online', () => {
   document.getElementById('offline-banner').style.display = 'none';
+  setSyncStatus('syncing');
+  loadAll().then(() => { setSyncStatus('synced'); renderAll(); }).catch(() => setSyncStatus('error'));
 });
 window.addEventListener('offline', () => {
   document.getElementById('offline-banner').style.display = 'block';
+  setSyncStatus('offline');
 });
-if (!navigator.onLine) document.getElementById('offline-banner').style.display = 'block';
+if (!navigator.onLine) {
+  document.getElementById('offline-banner').style.display = 'block';
+  setSyncStatus('offline');
+}
 
 // Service Worker
 if ('serviceWorker' in navigator) {
