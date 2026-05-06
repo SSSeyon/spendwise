@@ -671,14 +671,22 @@ async function initFirebase(){
   loadFromCache();
   renderAll();
   if(S.isStale) showStaleBar();
-  await new Promise(resolve=>{function check(){if(typeof firebase!=='undefined')resolve();else setTimeout(check,50);}check();});
-  firebase.initializeApp({apiKey:"AIzaSyAfxfEp8LT-f_zqiRr1Mbj7RghsxulNboY",authDomain:"gen-lang-client-0371859680.firebaseapp.com",projectId:"gen-lang-client-0371859680",storageBucket:"gen-lang-client-0371859680.firebasestorage.app",messagingSenderId:"847229528942",appId:"1:847229528942:web:e22f5cbc612b6a8b822f7f"});
-  db=firebase.firestore();
-  db.enablePersistence().catch(()=>{});
-  if(!navigator.onLine){setSyncStatus('offline');return;}
-  setSyncStatus('syncing');
-  try{await syncAll();cSet(CK.lastSync,Date.now());setSyncStatus('synced');hideStaleBar();renderAll();}
-  catch(e){console.error(e);setSyncStatus('error');}
+  // Boot Firebase in background — don't block initial render
+  (async()=>{
+    await new Promise(resolve=>{function check(){if(typeof firebase!=='undefined')resolve();else setTimeout(check,50);}check();});
+    firebase.initializeApp({apiKey:"AIzaSyAfxfEp8LT-f_zqiRr1Mbj7RghsxulNboY",authDomain:"gen-lang-client-0371859680.firebaseapp.com",projectId:"gen-lang-client-0371859680",storageBucket:"gen-lang-client-0371859680.firebasestorage.app",messagingSenderId:"847229528942",appId:"1:847229528942:web:e22f5cbc612b6a8b822f7f"});
+    db=firebase.firestore();
+    db.enablePersistence().catch(()=>{});
+    if(!navigator.onLine){setSyncStatus('offline');return;}
+    setSyncStatus('syncing');
+    try{
+      await syncAll();
+      cSet(CK.lastSync,Date.now());
+      setSyncStatus('synced');
+      hideStaleBar();
+      renderAll();
+    }catch(e){console.error(e);setSyncStatus('error');}
+  })();
 }
 
 async function syncAll(){
@@ -693,7 +701,7 @@ async function loadTxns(m,y){
     catch{snap=await db.collection('transactions').where('year','==',y).where('month','==',m).get();}
     S.txns=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:1);
     cSet(CK.txns(m,y),S.txns);
-  }catch(e){S.txns=cGet(CK.txns(m,y))||[];}
+  }catch{S.txns=cGet(CK.txns(m,y))||[];}
 }
 
 async function loadIncome(m,y){
@@ -703,18 +711,17 @@ async function loadIncome(m,y){
     catch{snap=await db.collection('income').where('year','==',y).where('month','==',m).get();}
     S.income=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:1);
     cSet(CK.inc(m,y),S.income);
-  }catch(e){S.income=cGet(CK.inc(m,y))||[];}
+  }catch{S.income=cGet(CK.inc(m,y))||[];}
 }
 
 async function loadInvData(m,y){
   try{
     const doc=await db.collection('investments').doc(sid(m,y)).get();
     if(doc.exists){S.investments=doc.data();cSet(CK.inv(m,y),S.investments);return;}
-    // Fall back to most recent
     const snap=await db.collection('investments').orderBy('year','desc').orderBy('month','desc').limit(1).get();
     S.investments=snap.empty?{}:snap.docs[0].data();
     cSet(CK.inv(m,y),S.investments);
-  }catch(e){S.investments=cGet(CK.inv(m,y))||{};}
+  }catch{S.investments=cGet(CK.inv(m,y))||{};}
 }
 
 async function loadCashData(m,y){
@@ -724,30 +731,33 @@ async function loadCashData(m,y){
     const snap=await db.collection('cashBalances').orderBy('year','desc').orderBy('month','desc').limit(1).get();
     S.cash=snap.empty?{}:snap.docs[0].data();
     cSet(CK.cash(m,y),S.cash);
-  }catch(e){S.cash=cGet(CK.cash(m,y))||{};}
+  }catch{S.cash=cGet(CK.cash(m,y))||{};}
 }
 
 async function loadDebtors(){
   try{const snap=await db.collection('debtors').get();S.debtors=snap.docs.map(d=>({id:d.id,...d.data()}));cSet(CK.debtors,S.debtors);}
-  catch(e){S.debtors=cGet(CK.debtors)||[];}
+  catch{S.debtors=cGet(CK.debtors)||[];}
 }
 
 async function loadBudgets(m,y){
   try{const doc=await db.collection('budgets').doc(sid(m,y)).get();S.budgets=doc.exists&&doc.data().categories?{...DEF_BUDGETS,...doc.data().categories}:{...DEF_BUDGETS};cSet(CK.budgets(m,y),S.budgets);}
-  catch(e){S.budgets=cGet(CK.budgets(m,y))||{...DEF_BUDGETS};}
+  catch{S.budgets=cGet(CK.budgets(m,y))||{...DEF_BUDGETS};}
 }
 
 async function reloadMonth(m,y){
-  S.expMonth=m;S.expYear=y;S.expCat='All';
+  S.expMonth=m; S.expYear=y; S.expCat='All';
+  // Load from cache immediately and render
   S.txns=cGet(CK.txns(m,y))||[];
   S.income=cGet(CK.inc(m,y))||[];
   S.investments=cGet(CK.inv(m,y))||{};
   S.budgets=cGet(CK.budgets(m,y))||{...DEF_BUDGETS};
-  renderExpenses();renderDashboard();
+  renderExpenses(); renderDashboard();
+  // Background sync
   if(db&&navigator.onLine){
     setSyncStatus('syncing');
-    await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadBudgets(m,y)]);
-    setSyncStatus('synced');renderExpenses();renderDashboard();renderInvestments();
+    Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadBudgets(m,y)])
+      .then(()=>{setSyncStatus('synced');renderExpenses();renderDashboard();renderInvestments();})
+      .catch(()=>setSyncStatus('error'));
   }
 }
 
@@ -793,26 +803,36 @@ function updateMonthOptions(){
   monthSel.value=S.dashMonth;
 }
 
-async function dashPeriodChange(){
-  S.dashYear=parseInt(document.getElementById('dash-year').value);
-  S.dashMonth=parseInt(document.getElementById('dash-month-sel').value);
-  S.dashCurrency=document.getElementById('dash-currency').value;
+function dashPeriodChange(){
+  const newYear=parseInt(document.getElementById('dash-year').value);
+  const newMonth=parseInt(document.getElementById('dash-month-sel').value);
+  const newCurrency=document.getElementById('dash-currency').value;
+  const currencyOnly=(newYear===S.dashYear&&newMonth===S.dashMonth&&newCurrency!==S.dashCurrency);
+  S.dashYear=newYear; S.dashMonth=newMonth; S.dashCurrency=newCurrency;
   updateMonthOptions();
-  // If month changed, also update expMonth so expenses tab syncs
+  // Currency-only change: re-render immediately from existing data, no fetch needed
+  if(currencyOnly){renderDashboard();return;}
+  // Month/year changed: load from cache instantly, then sync in background
   if(S.dashMonth>0){
-    S.expMonth=S.dashMonth;S.expYear=S.dashYear;
-    if(db&&navigator.onLine){
-      setSyncStatus('syncing');
-      await Promise.all([loadTxns(S.dashMonth,S.dashYear),loadIncome(S.dashMonth,S.dashYear),loadInvData(S.dashMonth,S.dashYear),loadCashData(S.dashMonth,S.dashYear)]);
-      setSyncStatus('synced');
-    } else {
-      S.txns=cGet(CK.txns(S.dashMonth,S.dashYear))||[];
-      S.income=cGet(CK.inc(S.dashMonth,S.dashYear))||[];
-      S.investments=cGet(CK.inv(S.dashMonth,S.dashYear))||{};
-      S.cash=cGet(CK.cash(S.dashMonth,S.dashYear))||{};
-    }
+    S.expMonth=S.dashMonth; S.expYear=S.dashYear;
+    S.txns=cGet(CK.txns(S.dashMonth,S.dashYear))||[];
+    S.income=cGet(CK.inc(S.dashMonth,S.dashYear))||[];
+    S.investments=cGet(CK.inv(S.dashMonth,S.dashYear))||{};
+    S.cash=cGet(CK.cash(S.dashMonth,S.dashYear))||{};
+    S.budgets=cGet(CK.budgets(S.dashMonth,S.dashYear))||{...DEF_BUDGETS};
   }
-  renderDashboard();renderExpenses();
+  renderDashboard(); renderExpenses();
+  // Background sync
+  if(db&&navigator.onLine){
+    setSyncStatus('syncing');
+    Promise.all([
+      loadTxns(S.dashMonth,S.dashYear),
+      loadIncome(S.dashMonth,S.dashYear),
+      loadInvData(S.dashMonth,S.dashYear),
+      loadCashData(S.dashMonth,S.dashYear)
+    ]).then(()=>{setSyncStatus('synced');renderDashboard();renderExpenses();renderInvestments();})
+      .catch(()=>setSyncStatus('error'));
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1391,84 +1411,117 @@ async function confirmSeedImport() {
   const invCount = seed.investments?.length||0;
   const debCount = seed.debtors?.length||0;
   const histCount = seed.historicalSummary?.length||0;
-  if (!confirm(`Import will REPLACE existing Firestore data:\n\n${txnCount} transactions\n${incCount} income entries\n${cashCount} cash records\n${invCount} investment records\n${debCount} debtors\n${histCount} historical summaries\n\nContinue?`)) return;
+  if (!confirm(`Import will populate the app with:\n\n${txnCount} transactions\n${incCount} income entries\n${cashCount} cash records\n${invCount} investment records\n${debCount} debtors\n${histCount} historical summaries\n\nData appears instantly from local cache, then syncs to Firebase in the background.\n\nContinue?`)) return;
 
   const statusEl = document.getElementById('seed-status');
   document.getElementById('seed-preview').style.display = 'none';
+
+  // ── STEP 1: Write everything to localStorage immediately ──────────────
+  statusEl.innerHTML = '<span style="color:var(--gold)">Writing to local cache…</span>';
+
+  // Cache transactions and income per month
+  const txnsByMonth = {};
+  for (const t of (seed.transactions||[])) {
+    const k = CK.txns(t.month, t.year);
+    if (!txnsByMonth[k]) txnsByMonth[k] = [];
+    txnsByMonth[k].push(t);
+  }
+  for (const [k,v] of Object.entries(txnsByMonth)) cSet(k, v);
+
+  const incByMonth = {};
+  for (const i of (seed.income||[])) {
+    const k = CK.inc(i.month, i.year);
+    if (!incByMonth[k]) incByMonth[k] = [];
+    incByMonth[k].push(i);
+  }
+  for (const [k,v] of Object.entries(incByMonth)) cSet(k, v);
+
+  for (const c of (seed.cashBalances||[]))    cSet(CK.cash(c.month, c.year), c);
+  for (const i of (seed.investments||[]))     cSet(CK.inv(i.month, i.year), i);
+  if (seed.debtors?.length)                   cSet(CK.debtors, seed.debtors);
+  cSet(CK.lastSync, Date.now());
+
+  // ── STEP 2: Reload S.* from cache for current month and render ─────────
+  const m = S.expMonth, y = S.expYear;
+  S.txns       = cGet(CK.txns(m,y))||[];
+  S.income     = cGet(CK.inc(m,y))||[];
+  S.investments= cGet(CK.inv(m,y))||{};
+  S.cash       = cGet(CK.cash(m,y))||{};
+  S.debtors    = seed.debtors||[];
+  _pendingSeed = null;
+
+  statusEl.innerHTML = `<span style="color:var(--accent)">✓ Local cache populated — app ready. Syncing to Firebase in background…</span>`;
+  toast('Data loaded — syncing to Firebase…');
+  renderAll();
+
+  // ── STEP 3: Write to Firestore in the background ───────────────────────
+  if (!db) { statusEl.innerHTML += ' <span style="color:var(--text2)">(Firebase not ready — data is in local cache)</span>'; return; }
   setSyncStatus('syncing');
 
-  async function batchWrite(collName, items, docIdFn) {
-    let batch = db.batch(), ops = 0;
-    for (const item of items) {
-      const ref = docIdFn ? db.collection(collName).doc(docIdFn(item)) : db.collection(collName).doc();
-      batch.set(ref, item, {merge: true});
-      if (++ops >= 490) { await batch.commit(); batch = db.batch(); ops = 0; }
-    }
-    if (ops > 0) await batch.commit();
-  }
+  (async () => {
+    try {
+      const now = firebase.firestore.Timestamp.now();
+      const monthKey = r => `${r.year}-${String(r.month).padStart(2,'0')}`;
 
-  async function deleteMonthDocs(collName, months) {
-    for (const {year, month} of months) {
-      try {
-        const snap = await db.collection(collName).where('year','==',year).where('month','==',month).get();
-        if (!snap.empty) {
-          let b = db.batch(), n = 0;
-          snap.docs.forEach(d => { b.delete(d.ref); if(++n>=490){b.commit();b=db.batch();n=0;} });
-          if (n > 0) await b.commit();
+      async function batchSet(collName, items, docIdFn) {
+        let batch = db.batch(), ops = 0;
+        for (const item of items) {
+          const ref = docIdFn ? db.collection(collName).doc(docIdFn(item)) : db.collection(collName).doc();
+          batch.set(ref, item, {merge:true});
+          if (++ops >= 490) { await batch.commit(); batch = db.batch(); ops = 0; }
         }
-      } catch(e) {
-        const snap = await db.collection(collName).where('year','==',year).where('month','==',month).get();
-        if (!snap.empty) { let b=db.batch(); snap.docs.forEach(d=>b.delete(d.ref)); await b.commit(); }
+        if (ops > 0) await batch.commit();
       }
+
+      async function clearMonth(collName, year, month) {
+        try {
+          const snap = await db.collection(collName).where('year','==',year).where('month','==',month).get();
+          if (!snap.empty) {
+            let b = db.batch(), n = 0;
+            snap.docs.forEach(d => { b.delete(d.ref); if(++n>=490){b.commit();b=db.batch();n=0;} });
+            if (n>0) await b.commit();
+          }
+        } catch(e) {
+          try {
+            const snap = await db.collection(collName).where('year','==',year).where('month','==',month).get();
+            if (!snap.empty) { const b=db.batch(); snap.docs.forEach(d=>b.delete(d.ref)); await b.commit(); }
+          } catch(e2) {}
+        }
+      }
+
+      // Historical + cash + investments (merge, no delete needed)
+      if (seed.historicalSummary?.length) await batchSet('historicalSummary', seed.historicalSummary, monthKey);
+      if (seed.cashBalances?.length)      await batchSet('cashBalances', seed.cashBalances, monthKey);
+      if (seed.investments?.length)       await batchSet('investments', seed.investments, monthKey);
+
+      // Transactions: clear each month then write
+      const txnMonths = [...new Map(seed.transactions.map(t=>[`${t.year}-${t.month}`,t])).values()];
+      for (const t of txnMonths) await clearMonth('transactions', t.year, t.month);
+      await batchSet('transactions', seed.transactions.map(t=>({...t,createdAt:now})), null);
+
+      // Income: same
+      const incMonths = [...new Map(seed.income.map(i=>[`${i.year}-${i.month}`,i])).values()];
+      for (const i of incMonths) await clearMonth('income', i.year, i.month);
+      await batchSet('income', seed.income.map(i=>({...i,createdAt:now})), null);
+
+      // Debtors: replace all
+      if (seed.debtors?.length) {
+        const existing = await db.collection('debtors').get();
+        if (!existing.empty) { const b=db.batch(); existing.docs.forEach(d=>b.delete(d.ref)); await b.commit(); }
+        await batchSet('debtors', seed.debtors.map(d=>({...d,createdAt:now})), null);
+      }
+
+      cSet(CK.lastSync, Date.now());
+      setSyncStatus('synced');
+      hideStaleBar();
+      if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent)">✓ Firebase sync complete — all ${txnCount+incCount+cashCount+invCount+debCount+histCount} records written</span>`;
+      toast('Firebase sync complete');
+    } catch(err) {
+      console.error('Firebase seed error:', err);
+      setSyncStatus('error');
+      if (statusEl) statusEl.innerHTML += `<br><span style="color:var(--gold)">⚠ Firebase sync failed (${err.message}) — data is safe in local cache</span>`;
     }
-  }
-
-  try {
-    const now = firebase.firestore.Timestamp.now();
-    const monthKey = r => `${r.year}-${String(r.month).padStart(2,'0')}`;
-
-    statusEl.innerHTML = '<span style="color:var(--gold)">Writing historical summaries…</span>';
-    if (histCount) await batchWrite('historicalSummary', seed.historicalSummary, monthKey);
-
-    statusEl.innerHTML = '<span style="color:var(--gold)">Writing cash balances…</span>';
-    if (cashCount) await batchWrite('cashBalances', seed.cashBalances, monthKey);
-
-    statusEl.innerHTML = '<span style="color:var(--gold)">Writing investments…</span>';
-    if (invCount) await batchWrite('investments', seed.investments, monthKey);
-
-    const txnMonths = [...new Map(seed.transactions.map(t=>([`${t.year}-${t.month}`,{year:t.year,month:t.month}]))).values()];
-    statusEl.innerHTML = `<span style="color:var(--gold)">Clearing old transactions…</span>`;
-    await deleteMonthDocs('transactions', txnMonths);
-    statusEl.innerHTML = `<span style="color:var(--gold)">Writing ${txnCount} transactions…</span>`;
-    await batchWrite('transactions', seed.transactions.map(t=>({...t,createdAt:now})), null);
-
-    const incMonths = [...new Map(seed.income.map(i=>([`${i.year}-${i.month}`,{year:i.year,month:i.month}]))).values()];
-    statusEl.innerHTML = `<span style="color:var(--gold)">Clearing old income…</span>`;
-    await deleteMonthDocs('income', incMonths);
-    statusEl.innerHTML = `<span style="color:var(--gold)">Writing ${incCount} income entries…</span>`;
-    await batchWrite('income', seed.income.map(i=>({...i,createdAt:now})), null);
-
-    statusEl.innerHTML = '<span style="color:var(--gold)">Replacing debtors…</span>';
-    if (debCount) {
-      const existSnap = await db.collection('debtors').get();
-      if (!existSnap.empty) { let b=db.batch(); existSnap.docs.forEach(d=>b.delete(d.ref)); await b.commit(); }
-      await batchWrite('debtors', seed.debtors.map(d=>({...d,createdAt:now})), null);
-    }
-
-    await Promise.all([loadTxns(S.expMonth,S.expYear),loadIncome(S.expMonth,S.expYear),
-                       loadInvData(S.expMonth,S.expYear),loadCashData(S.expMonth,S.expYear),loadDebtors()]);
-    cSet(CK.lastSync, Date.now());
-    setSyncStatus('synced');
-    statusEl.innerHTML = `<span style="color:var(--accent)">✓ Import complete — ${txnCount+incCount+cashCount+invCount+debCount+histCount} records written</span>`;
-    toast('Import complete');
-    _pendingSeed = null;
-    renderAll();
-  } catch(err) {
-    console.error(err);
-    setSyncStatus('error');
-    statusEl.innerHTML = `<span style="color:var(--red)">Import failed: ${err.message}</span>`;
-    toast('Import error — check console');
-  }
+  })();
 }
 
 // ══════════════════════════════════════════════════════════════════════════
