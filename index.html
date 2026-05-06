@@ -164,7 +164,7 @@ input[type=date]::-webkit-calendar-picker-indicator{filter:invert(0.5)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl">v2.0.0</span>
+      <span class="ver-lbl">v2.1.0</span>
     </div>
   </div>
 </header>
@@ -254,6 +254,15 @@ input[type=date]::-webkit-calendar-picker-indicator{filter:invert(0.5)}
       </div>
       <div class="ig" style="max-width:50%"><label class="ilabel">Union (₦)</label><input class="ifield" type="number" inputmode="decimal" id="cash-union" placeholder="0"></div>
       <button class="btn btn-p btn-full" onclick="saveCash()">Save Cash Balances</button>
+    </div>
+    <div class="card">
+      <div class="clabel" style="margin-bottom:10px">Transfer Between Accounts</div>
+      <div class="gform">
+        <div class="ig"><label class="ilabel">From</label><select class="sfield" id="xfr-from"><option>GTB</option><option>Access</option><option>Union</option></select></div>
+        <div class="ig"><label class="ilabel">To</label><select class="sfield" id="xfr-to"><option>Access</option><option>GTB</option><option>Union</option></select></div>
+      </div>
+      <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" type="number" inputmode="decimal" id="xfr-amt" placeholder="0"></div>
+      <button class="btn btn-g btn-full" onclick="transferFunds()">Transfer Funds</button>
     </div>
   </div>
 
@@ -482,12 +491,22 @@ async function loadFromFirebase(){
 }
 
 async function loadTxns(m,y){
-  try{const snap=await db.collection('transactions').where('year','==',y).where('month','==',m).orderBy('date','desc').get();S.txns=snap.docs.map(d=>({id:d.id,...d.data()}));cSet(CK.txns(m,y),S.txns);}
-  catch(e){S.txns=cGet(CK.txns(m,y))||[];}
+  try{
+    let snap;
+    try{snap=await db.collection('transactions').where('year','==',y).where('month','==',m).orderBy('date','desc').get();}
+    catch(idx){snap=await db.collection('transactions').where('year','==',y).where('month','==',m).get();}
+    S.txns=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:1);
+    cSet(CK.txns(m,y),S.txns);
+  }catch(e){S.txns=cGet(CK.txns(m,y))||[];}
 }
 async function loadInv(m,y){
-  try{const doc=await db.collection('investments').doc(sid(m,y)).get();S.investments=doc.exists?doc.data():{};cSet(CK.inv(m,y),S.investments);}
-  catch(e){S.investments=cGet(CK.inv(m,y))||{};}
+  try{
+    const doc=await db.collection('investments').doc(sid(m,y)).get();
+    if(doc.exists){S.investments=doc.data();cSet(CK.inv(m,y),S.investments);return;}
+    const snap=await db.collection('investments').orderBy('year','desc').orderBy('month','desc').limit(1).get();
+    S.investments=snap.empty?{}:snap.docs[0].data();
+    cSet(CK.inv(m,y),S.investments);
+  }catch(e){S.investments=cGet(CK.inv(m,y))||{};}
 }
 async function loadCashData(m,y){
   try{const doc=await db.collection('cashBalances').doc(sid(m,y)).get();S.cash=doc.exists?doc.data():{};cSet(CK.cash(m,y),S.cash);}
@@ -608,8 +627,19 @@ async function saveExpense(){
   const amt=parseFloat(document.getElementById('e-amt').value);
   if(!amt||amt<=0){toast('Enter a valid amount');return;}
   S.saving=true;const btn=document.getElementById('e-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
-  const data={amount:amt,category:document.getElementById('e-cat').value,bank:document.getElementById('e-bank').value,payee:document.getElementById('e-payee').value,date:document.getElementById('e-date').value,subcategory:document.getElementById('e-subcat').value,notes:document.getElementById('e-notes').value,month:S.expMonth,year:S.expYear,createdAt:firebase.firestore.FieldValue.serverTimestamp()};
-  try{await db.collection('transactions').add(data);closeMod('exp-modal');toast('Expense saved');setSyncStatus('synced');await loadTxns(S.expMonth,S.expYear);renderExpenses();renderDashboard();}
+  const bank=document.getElementById('e-bank').value;
+  const data={amount:amt,category:document.getElementById('e-cat').value,bank,payee:document.getElementById('e-payee').value,date:document.getElementById('e-date').value,subcategory:document.getElementById('e-subcat').value,notes:document.getElementById('e-notes').value,month:S.expMonth,year:S.expYear,createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+  try{
+    await db.collection('transactions').add(data);
+    // Deduct from bank balance
+    const cashDoc=await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).get();
+    const cashData=cashDoc.exists?cashDoc.data():{month:S.expMonth,year:S.expYear,GTB:0,Access:0,Union:0};
+    cashData[bank]=Math.max(0,(cashData[bank]||0)-amt);
+    await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).set(cashData,{merge:true});
+    S.cash=cashData;cSet(CK.cash(S.expMonth,S.expYear),cashData);
+    closeMod('exp-modal');toast(`Expense saved · ${bank} updated`);setSyncStatus('synced');
+    await loadTxns(S.expMonth,S.expYear);renderExpenses();renderDashboard();renderCashPage();
+  }
   catch(e){toast('Error saving');setSyncStatus('error');}
   finally{S.saving=false;btn.textContent='Save Expense';btn.disabled=false;}
 }
@@ -666,6 +696,26 @@ async function changeCashMonth(m){
   S.cashMonth=m;const cached=cGet(CK.cash(m,S.cashYear));if(cached) S.cash=cached;renderCashPage();
   if(db&&navigator.onLine){await loadCashData(m,S.cashYear);renderCashPage();renderDashboard();}
 }
+async function transferFunds(){
+  const from=document.getElementById('xfr-from').value;
+  const to=document.getElementById('xfr-to').value;
+  const amt=parseFloat(document.getElementById('xfr-amt').value)||0;
+  if(!amt||amt<=0){toast('Enter a valid amount');return;}
+  if(from===to){toast('Choose different accounts');return;}
+  const cash={...S.cash};
+  if((cash[from]||0)<amt){toast(`Insufficient funds in ${from}`);return;}
+  cash[from]=(cash[from]||0)-amt;
+  cash[to]=(cash[to]||0)+amt;
+  setSyncStatus('syncing');
+  try{
+    await db.collection('cashBalances').doc(sid(S.cashMonth,S.cashYear)).set({...cash,month:S.cashMonth,year:S.cashYear},{merge:true});
+    S.cash=cash;cSet(CK.cash(S.cashMonth,S.cashYear),cash);
+    document.getElementById('xfr-amt').value='';
+    toast(`Transferred ${fN(amt)} from ${from} to ${to}`);setSyncStatus('synced');
+    renderCashPage();renderDashboard();
+  }catch(e){toast('Error transferring');setSyncStatus('error');}
+}
+
 async function saveCash(){
   const data={month:S.cashMonth,year:S.cashYear,GTB:parseFloat(document.getElementById('cash-gtb').value)||0,Access:parseFloat(document.getElementById('cash-access').value)||0,Union:parseFloat(document.getElementById('cash-union').value)||0};
   setSyncStatus('syncing');
@@ -677,10 +727,45 @@ async function saveCash(){
 function renderDebtors(){
   const dbs=S.debtors;
   const totalLoaned=dbs.reduce((s,d)=>{const r=d.rate||DEF_RATES[d.currency]||1;return s+(d.amount||0)*r;},0);
-  const totalOwed=dbs.reduce((s,d)=>s+(d.ngnBalance||0),0);
-  document.getElementById('debtor-stats').innerHTML=`<div class="card card-sm" style="margin-bottom:0"><div class="clabel">Total Loaned</div><div class="cval-sm">${fN(totalLoaned)}</div></div><div class="card card-sm" style="margin-bottom:0"><div class="clabel">Outstanding</div><div class="cval-sm" style="color:var(--red)">${fN(totalOwed)}</div></div>`;
+  // Only count expected-repayment debtors in outstanding
+  const totalOwed=dbs.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0);
+  document.getElementById('debtor-stats').innerHTML=`<div class="card card-sm" style="margin-bottom:0"><div class="clabel">Total Loaned</div><div class="cval-sm">${fN(totalLoaned)}</div></div><div class="card card-sm" style="margin-bottom:0"><div class="clabel">Expected Back</div><div class="cval-sm" style="color:var(--red)">${fN(totalOwed)}</div></div>`;
   if(!dbs.length){document.getElementById('debtor-list').innerHTML='<div class="empty"><div class="empty-i">⊟</div>No debtors yet</div>';return;}
-  document.getElementById('debtor-list').innerHTML=dbs.map(d=>{const pct=d.amount>0?((d.paid||0)/d.amount)*100:0;const settled=pct>=100;return`<div class="dc" style="${settled?'opacity:0.4':''}"><div class="dc-top"><div><div class="dc-name">${d.name}</div><div class="dc-sub">${d.category} · ${d.currency} ${fNum(d.amount)}</div></div><div class="badge ${settled?'bg':'br'}">${settled?'Settled':fN(d.ngnBalance)+' due'}</div></div>${!settled?`<div class="prog"><div class="pf ok" style="width:${Math.min(pct,100)}%"></div></div>`:''} ${d.notes?`<div style="font-size:0.65rem;color:var(--text2);margin-top:5px">${d.notes}</div>`:''}<div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">${!settled?`<button class="btn btn-g btn-sm" onclick="recordPmt('${d.id}',${d.amount},${d.paid||0},${d.rate||DEF_RATES[d.currency]||1})">Record Payment</button>`:''}<button class="btn btn-g btn-sm" onclick="openEditDeb('${d.id}')">Edit</button><button class="btn btn-d btn-sm" onclick="removeDeb('${d.id}')">Remove</button></div></div>`;}).join('');
+  document.getElementById('debtor-list').innerHTML=dbs.map(d=>{
+    const expectRepay=d.expectRepayment!==false;
+    const effBalance=expectRepay?(d.ngnBalance||0):0;
+    const pct=d.amount>0?((d.paid||0)/d.amount)*100:0;
+    const settled=pct>=100||!expectRepay;
+    return`<div class="dc" style="${settled&&expectRepay?'opacity:0.4':''}">
+      <div class="dc-top">
+        <div><div class="dc-name">${d.name}</div><div class="dc-sub">${d.category} · ${d.currency} ${fNum(d.amount)}</div></div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+          <div class="badge ${settled?'bg':'br'}">${!expectRepay?'Write-off':settled?'Settled':fN(effBalance)+' due'}</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
+        <div style="font-size:0.65rem;color:var(--text2)">Expecting repayment</div>
+        <div onclick="toggleRepay('${d.id}',${!expectRepay})" style="width:36px;height:20px;border-radius:10px;background:${expectRepay?'var(--accent)':'var(--border2)'};position:relative;cursor:pointer;transition:background 0.2s;flex-shrink:0">
+          <div style="position:absolute;top:2px;${expectRepay?'right:2px':'left:2px'};width:16px;height:16px;border-radius:50%;background:${expectRepay?'var(--bg)':'var(--text3)'};transition:all 0.2s"></div>
+        </div>
+      </div>
+      ${expectRepay&&!settled?`<div class="prog" style="margin-top:8px"><div class="pf ok" style="width:${Math.min(pct,100)}%"></div></div>`:''}
+      ${d.notes?`<div style="font-size:0.65rem;color:var(--text2);margin-top:5px">${d.notes}</div>`:''}
+      <div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">
+        ${expectRepay&&!settled?`<button class="btn btn-g btn-sm" onclick="recordPmt('${d.id}',${d.amount},${d.paid||0},${d.rate||DEF_RATES[d.currency]||1})">Record Payment</button>`:''}
+        <button class="btn btn-g btn-sm" onclick="openEditDeb('${d.id}')">Edit</button>
+        <button class="btn btn-d btn-sm" onclick="removeDeb('${d.id}')">Remove</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function toggleRepay(id, newVal){
+  try{
+    await db.collection('debtors').doc(id).update({expectRepayment:newVal});
+    const d=S.debtors.find(x=>x.id===id);if(d) d.expectRepayment=newVal;
+    renderDebtors();
+  }catch(e){toast('Error updating');}
 }
 function openDebMod(){document.getElementById('deb-mod-title').textContent='Add Debtor';document.getElementById('deb-save').textContent='Add Debtor';document.getElementById('d-eid').value='';['d-name','d-amt','d-paid','d-rate','d-notes'].forEach(i=>document.getElementById(i).value='');document.getElementById('d-cur').value='NGN';document.getElementById('d-type').value='Loan';openMod('deb-modal');}
 function openEditDeb(id){const d=S.debtors.find(x=>x.id===id);if(!d) return;document.getElementById('deb-mod-title').textContent='Edit Debtor';document.getElementById('deb-save').textContent='Update';document.getElementById('d-eid').value=id;document.getElementById('d-name').value=d.name||'';document.getElementById('d-cur').value=d.currency||'NGN';document.getElementById('d-type').value=d.category||'Loan';document.getElementById('d-amt').value=d.amount||'';document.getElementById('d-paid').value=d.paid||'';document.getElementById('d-rate').value=d.rate||'';document.getElementById('d-notes').value=d.notes||'';openMod('deb-modal');}
@@ -703,7 +788,41 @@ function renderProjNW(){
   const recent=HISTORY.filter(h=>h.income&&h.expenses).slice(-6);
   const avgSave=recent.length?recent.reduce((s,h)=>s+Math.max(0,(h.income-h.expenses)/h.income),0)/recent.length:0;
   const nwM=HISTORY.filter(h=>h.netWorth);
-  document.getElementById('proj-networth').innerHTML=`<div class="card"><div class="clabel">Avg. Savings Rate — 6 months</div><div class="cval" style="color:${avgSave>0.2?'var(--accent)':'var(--gold)'}">${(avgSave*100).toFixed(1)}%</div><div class="csub">${avgSave>0.3?'Strong savings discipline':avgSave>0.1?'Moderate — room to improve':'Low — review discretionary spend'}</div></div><div class="card"><div class="clabel" style="margin-bottom:10px">Net Worth Snapshots</div>${nwM.map(d=>`<div class="pjrow"><div><span class="pjlabel">${d.label}</span><div style="font-size:0.6rem;color:var(--text3);font-family:var(--mono)">In ${fN(d.income)} · Out ${fN(d.expenses)}</div></div><span class="pjval" style="color:var(--accent)">${fN(d.netWorth)}</span></div>`).join('')}</div>`;
+  // Current breakdown
+  const inv=S.investments,cash=S.cash;
+  const invTotal=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
+  const cashTotal=(cash.GTB||0)+(cash.Access||0)+(cash.Union||0);
+  const debtorsOwed=S.debtors.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0);
+  const currentNW=invTotal+cashTotal+debtorsOwed;
+  document.getElementById('proj-networth').innerHTML=`
+    <div class="card">
+      <div class="clabel">Avg. Savings Rate — 6 months</div>
+      <div class="cval" style="color:${avgSave>0.2?'var(--accent)':'var(--gold)'}">${(avgSave*100).toFixed(1)}%</div>
+      <div class="csub">${avgSave>0.3?'Strong savings discipline':avgSave>0.1?'Moderate — room to improve':'Low — review discretionary spend'}</div>
+    </div>
+    ${currentNW>0?`<div class="card">
+      <div class="clabel" style="margin-bottom:10px">Current Net Worth Breakdown</div>
+      <div class="pjrow"><span class="pjlabel">Investments</span><span class="pjval" style="color:var(--accent)">${fN(invTotal)}</span></div>
+      <div class="pjrow"><span class="pjlabel">Cash (GTB + Access + Union)</span><span class="pjval" style="color:var(--blue)">${fN(cashTotal)}</span></div>
+      ${cashTotal?`<div style="padding:4px 0 8px;display:flex;gap:8px;flex-wrap:wrap">${['GTB','Access','Union'].map(b=>`<div style="font-size:0.65rem;font-family:var(--mono);color:var(--text2)">${b}: ${fN(cash[b]||0)}</div>`).join('')}</div>`:''}
+      ${debtorsOwed?`<div class="pjrow"><span class="pjlabel">Debtors (expected)</span><span class="pjval" style="color:var(--gold)">${fN(debtorsOwed)}</span></div>`:''}
+      <div class="pjrow" style="font-weight:700;border-top:1px solid var(--border2);margin-top:4px;padding-top:10px"><span>Estimated Total</span><span class="pjval" style="color:var(--accent)">${fN(currentNW)}</span></div>
+      ${invTotal?`<div class="abar" style="margin-top:10px">
+        <div style="flex:${invTotal};background:var(--accent);opacity:0.8" title="Investments"></div>
+        <div style="flex:${cashTotal};background:var(--blue);opacity:0.8" title="Cash"></div>
+        ${debtorsOwed?`<div style="flex:${debtorsOwed};background:var(--gold);opacity:0.8" title="Debtors"></div>`:''}
+      </div>
+      <div style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:4px;font-size:0.62rem;color:var(--text2)"><div style="width:7px;height:7px;border-radius:2px;background:var(--accent)"></div>Investments</div>
+        <div style="display:flex;align-items:center;gap:4px;font-size:0.62rem;color:var(--text2)"><div style="width:7px;height:7px;border-radius:2px;background:var(--blue)"></div>Cash</div>
+        ${debtorsOwed?`<div style="display:flex;align-items:center;gap:4px;font-size:0.62rem;color:var(--text2)"><div style="width:7px;height:7px;border-radius:2px;background:var(--gold)"></div>Debtors</div>`:''}
+      </div>`:''}
+    </div>`:``}
+    <div class="card">
+      <div class="clabel" style="margin-bottom:10px">Historical Net Worth Snapshots</div>
+      ${nwM.map(d=>`<div class="pjrow"><div><span class="pjlabel">${d.label}</span><div style="font-size:0.6rem;color:var(--text3);font-family:var(--mono)">In ${fN(d.income)} · Out ${fN(d.expenses)}</div></div><span class="pjval" style="color:var(--accent)">${fN(d.netWorth)}</span></div>`).join('')}
+    </div>
+  `;
 }
 function renderProjRun(){
   const cash=S.cash,cashTotal=(cash.GTB||0)+(cash.Access||0)+(cash.Union||0);
@@ -714,9 +833,44 @@ function renderProjRun(){
   document.getElementById('proj-runway').innerHTML=`<div class="card"><div class="clabel">Cash Runway</div><div class="cval" style="color:${runway>3?'var(--accent)':runway>1?'var(--gold)':'var(--red)'}">${runway?runway+' months':'—'}</div><div class="csub">Cash ${fN(cashTotal)} · Avg. spend ${fN(avgSpend)}/mo</div></div><div class="card"><div class="clabel" style="margin-bottom:10px">Fixed Monthly Obligations</div>${FIXED_OBL.map(o=>`<div class="pjrow"><span class="pjlabel">${o.label}</span><span class="pjval">${fN(o.amount)}</span></div>`).join('')}<div class="pjrow" style="font-weight:700"><span>Total</span><span class="pjval" style="color:var(--accent)">${fN(fixedTotal)}</span></div></div><div class="card"><div class="clabel">Avg. Spend (6 months)</div><div class="cval-sm">${fN(avgSpend)}</div><div class="csub">Fixed = ${avgSpend?((fixedTotal/avgSpend)*100).toFixed(0):'—'}% of avg. spend</div></div>`;
 }
 function renderProjFees(){
-  const rem=SCHOOL_FEES.filter(f=>!f.paid).reduce((s,f)=>s+f.amount,0);
+  // Load fee state from localStorage so edits persist
+  const feeState=cGet('sw_school_fees')||SCHOOL_FEES.map((f,i)=>({...f,id:i}));
+  const rem=feeState.filter(f=>!f.paid).reduce((s,f)=>s+f.amount,0);
+  const paid=feeState.filter(f=>f.paid).reduce((s,f)=>s+f.amount,0);
   const feeBreak=[{l:'Tuition',a:113750},{l:'Bus',a:50000},{l:'Snacks',a:21000},{l:'Swimming',a:50000},{l:'Books',a:35000},{l:'Music',a:50000},{l:'Others',a:30000}];
-  document.getElementById('proj-fees').innerHTML=`<div class="card"><div class="clabel">Fife's Fees Remaining</div><div class="cval-sm">${fN(rem)}</div></div><div class="card"><div class="clabel" style="margin-bottom:10px">Fee Schedule</div>${SCHOOL_FEES.map(f=>`<div class="pjrow" style="${f.paid?'opacity:0.38':''}"><span class="pjlabel">${f.label}</span><div style="display:flex;align-items:center;gap:8px"><span class="pjval">${fN(f.amount)}</span>${f.paid?'<span class="badge bg">Paid</span>':''}</div></div>`).join('')}</div><div class="card"><div class="clabel" style="margin-bottom:10px">Per-term Breakdown</div>${feeBreak.map(f=>`<div class="pjrow"><span class="pjlabel">${f.l}</span><span class="pjval">${fN(f.a)}</span></div>`).join('')}</div>`;
+  document.getElementById('proj-fees').innerHTML=`
+    <div class="g2">
+      <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Remaining</div><div class="cval-sm" style="color:var(--red)">${fN(rem)}</div></div>
+      <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Paid So Far</div><div class="cval-sm" style="color:var(--accent)">${fN(paid)}</div></div>
+    </div>
+    <div class="card">
+      <div class="sh"><div class="clabel" style="margin-bottom:0">Fee Schedule</div><span style="font-size:0.65rem;color:var(--text2)">Tap to mark paid/unpaid</span></div>
+      ${feeState.map((f,i)=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);${f.paid?'opacity:0.45':''}">
+          <div>
+            <div style="font-size:0.78rem;font-weight:600">${f.label}</div>
+            <div style="font-size:0.65rem;font-family:var(--mono);color:var(--text2);margin-top:1px">${fN(f.amount)}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            ${f.paid?'<span class="badge bg">Paid</span>':''}
+            <div onclick="toggleFeePaid(${i})" style="width:36px;height:20px;border-radius:10px;background:${f.paid?'var(--accent)':'var(--border2)'};position:relative;cursor:pointer;transition:background 0.2s;flex-shrink:0">
+              <div style="position:absolute;top:2px;${f.paid?'right:2px':'left:2px'};width:16px;height:16px;border-radius:50%;background:${f.paid?'var(--bg)':'var(--text3)'};transition:all 0.2s"></div>
+            </div>
+          </div>
+        </div>`).join('')}
+    </div>
+    <div class="card">
+      <div class="clabel" style="margin-bottom:10px">Per-term Breakdown</div>
+      ${feeBreak.map(f=>`<div class="pjrow"><span class="pjlabel">${f.l}</span><span class="pjval">${fN(f.a)}</span></div>`).join('')}
+    </div>
+  `;
+}
+
+function toggleFeePaid(idx){
+  const feeState=cGet('sw_school_fees')||SCHOOL_FEES.map((f,i)=>({...f,id:i}));
+  feeState[idx].paid=!feeState[idx].paid;
+  cSet('sw_school_fees',feeState);
+  renderProjFees();
 }
 function renderProjHistory(){
   document.getElementById('proj-history').innerHTML=`<div class="card"><div class="clabel" style="margin-bottom:10px">Full History — Nov 2023 to Apr 2026</div>${HISTORY.map(d=>`<div class="pjrow"><div><span class="pjlabel">${d.label}</span>${d.netWorth?`<div style="font-size:0.6rem;color:var(--accent);font-family:var(--mono)">NW ${fN(d.netWorth)}</div>`:''}</div><div style="text-align:right"><div style="font-size:0.72rem;font-family:var(--mono);color:var(--text)">${fN(d.income)}</div><div style="font-size:0.68rem;font-family:var(--mono);color:var(--red)">${fN(d.expenses)}</div></div></div>`).join('')}</div>`;
@@ -799,11 +953,22 @@ async function saveInvFromSettings(){
 
 // SETTINGS — DATA
 function renderSettData(){
-  document.getElementById('sett-data').innerHTML=`<div class="exp-card"><div class="exp-card-title" style="margin-bottom:6px">Seed Historical Data</div><div class="exp-card-sub">Writes all 2023–2026 monthly summaries, investment balances, and cash balances from your spreadsheet into Firestore. Safe to run multiple times.</div><button class="btn btn-p" onclick="seedAll()">Seed All Historical Data</button></div><div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v2.0.0</div><div>Firebase: gen-lang-client-0371859680</div><div>History: Nov 2023 – Apr 2026</div></div></div>`;
+  document.getElementById('sett-data').innerHTML=`<div class="exp-card"><div class="exp-card-title" style="margin-bottom:6px">Seed Historical Data</div><div class="exp-card-sub">Writes all 2023–2026 monthly summaries, investment balances, and cash balances from your spreadsheet into Firestore. Safe to run multiple times.</div><button class="btn btn-p" onclick="seedAll()">Seed All Historical Data</button></div><div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v2.1.0</div><div>Firebase: gen-lang-client-0371859680</div><div>History: Nov 2023 – Apr 2026</div></div></div>`;
 }
 async function seedAll(){
   if(!confirm('Seed all historical data from your spreadsheet into Firestore?')) return;
   const FULL_HISTORY=[{year:2023,month:11,income:1504749.30,expenses:3109184},{year:2023,month:12,income:2514940.87,expenses:1797869},{year:2024,month:1,income:1526606.41,expenses:1616342.13},{year:2024,month:2,income:1530977.48,expenses:3386294.01},{year:2024,month:3,income:1526387.00,expenses:1575259},{year:2024,month:4,income:6195375.12,expenses:3940457},{year:2024,month:5,income:4636321.29,expenses:8190421},{year:2024,month:6,income:1851775.64,expenses:2628946.94},{year:2024,month:7,income:3025884.99,expenses:3148494},{year:2024,month:8,income:3842311.74,expenses:2188784.88},{year:2024,month:9,income:1881560.21,expenses:1885132.50},{year:2024,month:10,income:3300562.05,expenses:2514477},{year:2024,month:11,income:1845438.76,expenses:2966831.53},{year:2024,month:12,income:3406527.91,expenses:2866535.38},{year:2025,month:1,income:1847907.18,expenses:3048689.89},{year:2025,month:2,income:5872477.09,expenses:2862795},{year:2025,month:3,income:1869411.72,expenses:2900387},{year:2025,month:4,income:4861674.27,expenses:3336341},{year:2025,month:5,income:2669192.31,expenses:3826691},{year:2025,month:6,income:6714369.96,expenses:10530930},{year:2025,month:7,income:4621652.95,expenses:3143238.92},{year:2025,month:8,income:2625865.10,expenses:3213695},{year:2025,month:9,income:2618020.93,expenses:2313078.90},{year:2025,month:10,income:2617911.50,expenses:2407654.40},{year:2025,month:11,income:2615534.96,expenses:2210241},{year:2025,month:12,income:4595720.82,expenses:3397263},{year:2026,month:1,income:2630854.93,expenses:3602724,netWorth:18908344.37},{year:2026,month:2,income:7579189.64,expenses:3043808.71,netWorth:23442773.02},{year:2026,month:3,income:2952559.77,expenses:2863379.90,netWorth:23147424.78},{year:2026,month:4,income:2946962.86,expenses:1293585.70}];
+  const DEBTORS=[
+    {name:'Semasa',currency:'USD',amount:1000,paid:0,balance:1000,rate:1600,ngnBalance:1600000,category:'Loan',notes:'USD loan',expectRepayment:true},
+    {name:'Jesse',currency:'USD',amount:275,paid:100,balance:175,rate:1600,ngnBalance:280000,category:'Loan',notes:'$100 paid',expectRepayment:true},
+    {name:'Stella',currency:'USD',amount:17.98,paid:0,balance:17.98,rate:1600,ngnBalance:28768,category:'Loan',notes:'',expectRepayment:true},
+    {name:'Maurtin',currency:'GBP',amount:500,paid:0,balance:500,rate:2050,ngnBalance:1025000,category:'Loan',notes:'',expectRepayment:true},
+    {name:'Kishi',currency:'USD',amount:86,paid:0,balance:86,rate:1600,ngnBalance:137600,category:'Loan',notes:'',expectRepayment:true},
+    {name:'Iseyemi',currency:'USD',amount:200,paid:0,balance:200,rate:1600,ngnBalance:320000,category:'Loan',notes:'',expectRepayment:true},
+    {name:'Sena',currency:'NGN',amount:100000,paid:0,balance:100000,rate:1,ngnBalance:100000,category:'Loan',notes:'',expectRepayment:true},
+    {name:'Mauton',currency:'NGN',amount:700000,paid:0,balance:700000,rate:1,ngnBalance:700000,category:'Loan',notes:'',expectRepayment:true},
+    {name:'House of Mayrie',currency:'NGN',amount:700000,paid:0,balance:700000,rate:1,ngnBalance:700000,category:'Loan',notes:'',expectRepayment:true},
+  ];
   const INVESTMENTS=[{year:2026,month:1,Piggy:3653614.45,PiggySafelock:1009863.01,Renflex:347.27,RenVault:722324.02,Risevest:713168,Trove:2316360.50,Bamboo:3543452,USDHoldings:2998919},{year:2026,month:2,Piggy:6055668.54,PiggySafelock:2035506.85,Renflex:1629.42,RenVault:2044230.73,Risevest:646590.20,Trove:2210303.20,Bamboo:3199102.60,USDHoldings:2771414.80},{year:2026,month:3,Piggy:5489150.59,PiggySafelock:2066082.19,Renflex:3701.80,RenVault:2075291.34,Risevest:587093.40,Trove:2128539.60,Bamboo:3454512.60,USDHoldings:2854143.60},{year:2026,month:4,Piggy:5605748.34,PiggySafelock:2064109.59,Renflex:407459.57,RenVault:2073287.43,Risevest:646312.80,Trove:2243292.80,Bamboo:3733798.40,USDHoldings:2812779.20}];
   const CASH=[{year:2026,month:1,GTB:35062,Access:6520,Union:1788},{year:2026,month:2,GTB:93697.49,Access:1008,Union:1788},{year:2026,month:3,GTB:23962.59,Access:7166.67,Union:1788},{year:2026,month:4,GTB:330376.89,Access:2902583.34,Union:1788}];
   setSyncStatus('syncing');
@@ -814,9 +979,16 @@ async function seedAll(){
     for(const r of INVESTMENTS) await add(db.collection('investments').doc(sid(r.month,r.year)),r);
     for(const r of CASH) await add(db.collection('cashBalances').doc(sid(r.month,r.year)),r);
     await batch.commit();
+    // Seed debtors only if collection is empty
+    const debSnap=await db.collection('debtors').limit(1).get();
+    if(debSnap.empty){
+      const debBatch=db.batch();
+      DEBTORS.forEach(d=>{debBatch.set(db.collection('debtors').doc(),{...d,createdAt:firebase.firestore.Timestamp.now()});});
+      await debBatch.commit();
+    }
     INVESTMENTS.forEach(r=>cSet(CK.inv(r.month,r.year),r));CASH.forEach(r=>cSet(CK.cash(r.month,r.year),r));
     toast('All historical data seeded');setSyncStatus('synced');
-    await Promise.all([loadInv(S.expMonth,S.expYear),loadCashData(S.expMonth,S.expYear)]);renderAll();
+    await Promise.all([loadInv(S.expMonth,S.expYear),loadCashData(S.expMonth,S.expYear),loadDebtors()]);renderAll();
   }catch(e){console.error(e);toast('Error seeding');setSyncStatus('error');}
 }
 
