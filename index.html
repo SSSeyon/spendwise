@@ -181,7 +181,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl">v3.0.0</span>
+      <span class="ver-lbl">v3.1.0</span>
     </div>
   </div>
 </header>
@@ -201,6 +201,7 @@ datalist option{background:var(--bg2);color:var(--text)}
       <option value="NGN">₦ NGN</option>
       <option value="USD">$ USD</option>
       <option value="GBP">£ GBP</option>
+      <option value="NATIVE">◈ Effective</option>
     </select>
   </div>
   <!-- Net worth -->
@@ -466,15 +467,15 @@ const CAT_LINES = {
   'Itunu': ['Itunu'],
   'Domestic': ['Car purchase','Car wash','Service charge','Laundry','Home repairs','Rent','Temu','Cleaner'],
   'Food': ['Lunch','Eat out'],
-  'Groceries': ['Ozzy shopping','Super Saver','Globus','Spar','Ebeano','Blenco','Sinomart','Other groceries'],
+  'Groceries': ['Ozzy shopping','Super Saver','Globus','Spar','Ebeano','Blenco','Sinomart','Cash groceries','Other groceries'],
   'Fife': ["Fife's school fees","Fife's (Other)","Fife's Bday"],
   'Internet services': ['Netflix/Amazon','Internet +Airtime'],
   'Recreation': ['UK Visa','DSTV','Outing','Outing BDG'],
   'Personal care': ['Medications','Personal care'],
-  'Gifts and donations': ['Mama','Mum','Pentho','Pego','Dunsin','Gbago Day','Jennifer','Gbago','Tadeyon','Senapon Whesu','Mausi Whesu','Others'],
-  'Loans': ['Semasa','Gbewato','Morin','House of Mayrie','Mauton','Tobi Talia'],
+  'Gifts and donations': ['Mama','Mum','Pentho','Pego','Dunsin','Gbago Day','Jennifer','Gbago','Tadeyon','Senapon Whesu','Mausi Whesu','Cash gifts','Baba Sesi','Athingban','Segowe','Sejiro','Yemi','Tope','Francis','MBO',"Dad's Bday","JO's Bday","Kola's Wedding","Olamide's wedding","Pirotress",'Xmas Gifts','Xmas gift (Gatemen)','Others'],
+  'Loans': ['Semasa','Gbewato','Morin','House of Mayrie','Mauton','Tobi Talia','Jennifer','Maugbe'],
   'Others': ['Cash Withdrawal','Others'],
-  'Work Travel': ['Home-MMIA','MMIA - Home','Westgate','Westgate - RB','LC Waikiki','RB - The View','Java House'],
+  'Work Travel': ['Home-MMIA','MMIA - Home','Westgate','Westgate - RB','LC Waikiki','RB - The View','Java House','RB - Westgate (Jen)','RB - Pizza Garden (all)','Pizza Garden (All)','Mall to RB (FJ)','RB to Mercure (JO)','RB to Riverside (JO)','Radisson - Address (All)','Address -Radisson (All)','Riverside - Marriot (All)'],
   'Education': ['Tuition','School fees'],
 };
 const CATS = Object.keys(CAT_LINES);
@@ -484,13 +485,13 @@ const CASH_ACCOUNTS = ['GTB','Access','Union','Renmoney'];
 
 // Investment platforms (without Renflex which is now Renmoney in cash)
 const PLATFORMS = [
-  {key:'Piggy',label:'Piggy',color:'#c8f542'},
-  {key:'PiggySafelock',label:'Piggy Safelock',color:'#a8d430'},
-  {key:'RenVault',label:'RenVault',color:'#4a8aee'},
-  {key:'Risevest',label:'Risevest',color:'#f5c842'},
-  {key:'Trove',label:'Trove',color:'#ff9f5c'},
-  {key:'Bamboo',label:'Bamboo',color:'#ff5c9f'},
-  {key:'USDHoldings',label:'USD Holdings',color:'#5c9eff'},
+  {key:'Piggy',label:'Piggy',color:'#c8f542',currency:'NGN'},
+  {key:'PiggySafelock',label:'Piggy Safelock',color:'#a8d430',currency:'NGN'},
+  {key:'RenVault',label:'RenVault',color:'#4a8aee',currency:'NGN'},
+  {key:'Risevest',label:'Risevest',color:'#f5c842',currency:'USD'},
+  {key:'Trove',label:'Trove',color:'#ff9f5c',currency:'USD'},
+  {key:'Bamboo',label:'Bamboo',color:'#ff5c9f',currency:'USD'},
+  {key:'USDHoldings',label:'USD Holdings',color:'#5c9eff',currency:'USD'},
 ];
 
 const DEF_RATES={NGN:1,USD:1600,GBP:2050};
@@ -616,13 +617,31 @@ const curY=()=>new Date().getFullYear();
 const bSt=(s,b)=>!b?'ok':s/b>=1?'over':s/b>=0.8?'warn':'ok';
 
 function fmtCur(ngn, currency, m, y) {
-  if (currency === 'NGN') return fN(ngn);
+  if (!currency || currency === 'NGN') return fN(ngn);
+  if (currency === 'NATIVE') return fN(ngn); // NATIVE falls back to NGN for generic amounts
   const key = fxKey(m||S.dashMonth, y||S.dashYear);
   const rates = FX_RATES[key] || {USD:1600,GBP:2050};
   const rate = rates[currency] || 1;
   const val = ngn / rate;
   const sym = currency === 'USD' ? '$' : '£';
   return sym + val.toLocaleString('en-NG',{maximumFractionDigits:0});
+}
+
+// Format a platform balance in its native currency or converted
+function fmtPlatformVal(rawVal, platform, currency, m, y) {
+  const p = PLATFORMS.find(x=>x.key===platform);
+  if (!p) return fmtCur(rawVal, currency, m, y);
+  const key = fxKey(m||S.dashMonth, y||S.dashYear);
+  const rates = FX_RATES[key] || {USD:1600,GBP:2050};
+  if (currency === 'NATIVE') {
+    // Show in the platform's own currency
+    if (p.currency === 'NGN') return fN(rawVal);
+    // rawVal stored in NGN — convert back to platform currency for display
+    const rate = rates[p.currency] || 1;
+    const sym = p.currency === 'USD' ? '$' : p.currency === 'GBP' ? '£' : '₦';
+    return sym + (rawVal / rate).toLocaleString('en-NG',{maximumFractionDigits:2});
+  }
+  return fmtCur(rawVal, currency, m, y);
 }
 
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);}
@@ -882,7 +901,7 @@ function renderDashboard(){
 
   // Investments
   document.getElementById('dash-inv-total').textContent=invTotal?fmtCur(invTotal,cur,m,y):'—';
-  document.getElementById('dash-inv').innerHTML=PLATFORMS.map(p=>{const val=inv[p.key]||0;const pct=invTotal>0?((val/invTotal)*100).toFixed(1):'0.0';return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)"><div style="display:flex;align-items:center;gap:7px"><div style="width:6px;height:6px;border-radius:50%;background:${p.color};flex-shrink:0"></div><div><div style="font-size:0.78rem;font-weight:600">${p.label}</div><div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono)">${pct}%</div></div></div><div style="font-family:var(--mono);font-size:0.84rem;color:${val?p.color:'var(--text3)'}">${val?fmtCur(val,cur,m,y):'—'}</div></div>`;}).join('');
+  document.getElementById('dash-inv').innerHTML=PLATFORMS.map(p=>{const val=inv[p.key]||0;const pct=invTotal>0?((val/invTotal)*100).toFixed(1):'0.0';const dispVal=fmtPlatformVal(val,p.key,cur,m,y);const nativeLabel=cur==='NATIVE'&&p.currency!=='NGN'?` <span style="font-size:0.58rem;color:var(--text3)">${p.currency}</span>`:'';return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)"><div style="display:flex;align-items:center;gap:7px"><div style="width:6px;height:6px;border-radius:50%;background:${p.color};flex-shrink:0"></div><div><div style="font-size:0.78rem;font-weight:600">${p.label}${nativeLabel}</div><div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono)">${pct}%</div></div></div><div style="font-family:var(--mono);font-size:0.84rem;color:${val?p.color:'var(--text3)'}">${val?dispVal:'—'}</div></div>`;}).join('');
   const active=PLATFORMS.filter(p=>inv[p.key]);
   document.getElementById('dash-abar').innerHTML=invTotal&&active.length?active.map(p=>`<div style="flex:${inv[p.key]};background:${p.color};opacity:0.8"></div>`).join(''):'';
 
@@ -1078,8 +1097,10 @@ async function saveIncome(){
 // ══════════════════════════════════════════════════════════════════════════
 function renderInvestments(){
   const inv=S.investments,total=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
-  document.getElementById('inv-total').innerHTML=`<div class="clabel">Total Portfolio — ${MONTHS[S.expMonth-1]} ${S.expYear}</div><div class="cval">${total?fN(total):'—'}</div><div class="csub">${PLATFORMS.length} platforms</div>`;
-  document.getElementById('inv-platforms').innerHTML=PLATFORMS.map(p=>{const val=inv[p.key]||0;const pct=total>0?((val/total)*100).toFixed(1):'0.0';return`<div class="prow"><div><div class="pname">${p.label}</div><div class="ppct">${pct}%</div></div><div class="pval" style="color:${val?p.color:'var(--text3)'}">${val?fN(val):'—'}</div></div>`;}).join('');
+  const cur=S.dashCurrency;
+  const m=S.expMonth,y=S.expYear;
+  document.getElementById('inv-total').innerHTML=`<div class="clabel">Total Portfolio — ${MONTHS[m-1]} ${y}</div><div class="cval">${total?fmtCur(total,cur==='NATIVE'?'NGN':cur,m,y):'—'}</div><div class="csub">${PLATFORMS.length} platforms</div>`;
+  document.getElementById('inv-platforms').innerHTML=PLATFORMS.map(p=>{const val=inv[p.key]||0;const pct=total>0?((val/total)*100).toFixed(1):'0.0';const dispVal=fmtPlatformVal(val,p.key,cur,m,y);const currTag=`<span style="font-size:0.58rem;padding:1px 5px;border-radius:4px;background:var(--bg3);color:var(--text3);margin-left:5px">${p.currency}</span>`;return`<div class="prow"><div><div class="pname">${p.label}${currTag}</div><div class="ppct">${pct}%</div></div><div class="pval" style="color:${val?p.color:'var(--text3)'}">${val?dispVal:'—'}</div></div>`;}).join('');
   const active=PLATFORMS.filter(p=>inv[p.key]);
   if(active.length&&total){document.getElementById('inv-alloc').style.display='block';document.getElementById('inv-abar').innerHTML=active.map(p=>`<div style="flex:${inv[p.key]};background:${p.color};opacity:0.82"></div>`).join('');document.getElementById('inv-legend').innerHTML=active.map(p=>`<div style="display:flex;align-items:center;gap:4px;font-size:0.62rem;color:var(--text2)"><div style="width:7px;height:7px;border-radius:2px;background:${p.color}"></div>${p.label}</div>`).join('');}
   else document.getElementById('inv-alloc').style.display='none';
@@ -1314,10 +1335,140 @@ async function saveInvFromSettings(){
 
 function renderSettData(){
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card"><div class="exp-card-title" style="margin-bottom:6px">Seed All Historical Data</div><div class="exp-card-sub">Writes all monthly summaries (Nov 2023–May 2026), investment balances, cash balances, and debtors from your spreadsheet into Firestore. Safe to run again.</div><button class="btn btn-p" onclick="seedAll()">Seed All Data</button></div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">FX Rates</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9">Approximate monthly average rates are built into the app (2023–2026). Switch to USD or GBP in the Dashboard period selector to view figures in foreign currency.</div></div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.0.0</div><div>Firebase: gen-lang-client-0371859680</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card">
+      <div class="exp-card-title" style="margin-bottom:6px">Import JSON Seed File</div>
+      <div class="exp-card-sub">Upload <strong>spendwise-seed.json</strong> to populate all transactions, income, investments, cash balances, and debtors in one go.</div>
+      <input type="file" id="seed-file-input" accept=".json" style="display:none" onchange="handleSeedFile(event)">
+      <div style="margin-top:10px"><button class="btn btn-p" onclick="document.getElementById('seed-file-input').click()">↑ Choose JSON File</button></div>
+      <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
+      <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
+    </div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">FX Rates</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9">Monthly average rates built in (2023–2026). Switch to USD/GBP/Effective in the Dashboard.</div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.1.0</div><div>Firebase: gen-lang-client-0371859680</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
+}
+
+let _pendingSeed = null;
+
+function handleSeedFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try {
+      const seed = JSON.parse(e.target.result);
+      if (!seed.transactions || !seed.income) {
+        document.getElementById('seed-status').innerHTML = '<span style="color:var(--red)">Invalid file — missing transactions or income</span>';
+        return;
+      }
+      _pendingSeed = seed;
+      const preview = document.getElementById('seed-preview');
+      preview.style.display = 'block';
+      preview.innerHTML = `
+        <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:8px">${file.name}</div>
+        ${[['Transactions',seed.transactions?.length||0],['Income entries',seed.income?.length||0],
+           ['Cash records',seed.cashBalances?.length||0],['Investment records',seed.investments?.length||0],
+           ['Debtors',seed.debtors?.length||0],['Historical summaries',seed.historicalSummary?.length||0]]
+          .map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border);font-size:0.72rem"><span style="color:var(--text2)">${k}</span><span style="font-family:var(--mono);color:var(--accent)">${v}</span></div>`).join('')}
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button class="btn btn-p btn-sm" onclick="confirmSeedImport()">Import All Data</button>
+          <button class="btn btn-g btn-sm" onclick="document.getElementById('seed-preview').style.display='none';document.getElementById('seed-status').textContent=''">Cancel</button>
+        </div>`;
+      document.getElementById('seed-status').textContent = 'Review the counts above, then click Import All Data.';
+    } catch(err) {
+      document.getElementById('seed-status').innerHTML = `<span style="color:var(--red)">Parse error: ${err.message}</span>`;
+    }
+  };
+  reader.readAsText(file);
+}
+
+async function confirmSeedImport() {
+  const seed = _pendingSeed;
+  if (!seed) return;
+  const txnCount = seed.transactions?.length||0;
+  const incCount = seed.income?.length||0;
+  const cashCount = seed.cashBalances?.length||0;
+  const invCount = seed.investments?.length||0;
+  const debCount = seed.debtors?.length||0;
+  const histCount = seed.historicalSummary?.length||0;
+  if (!confirm(`Import will REPLACE existing Firestore data:\n\n${txnCount} transactions\n${incCount} income entries\n${cashCount} cash records\n${invCount} investment records\n${debCount} debtors\n${histCount} historical summaries\n\nContinue?`)) return;
+
+  const statusEl = document.getElementById('seed-status');
+  document.getElementById('seed-preview').style.display = 'none';
+  setSyncStatus('syncing');
+
+  async function batchWrite(collName, items, docIdFn) {
+    let batch = db.batch(), ops = 0;
+    for (const item of items) {
+      const ref = docIdFn ? db.collection(collName).doc(docIdFn(item)) : db.collection(collName).doc();
+      batch.set(ref, item, {merge: true});
+      if (++ops >= 490) { await batch.commit(); batch = db.batch(); ops = 0; }
+    }
+    if (ops > 0) await batch.commit();
+  }
+
+  async function deleteMonthDocs(collName, months) {
+    for (const {year, month} of months) {
+      try {
+        const snap = await db.collection(collName).where('year','==',year).where('month','==',month).get();
+        if (!snap.empty) {
+          let b = db.batch(), n = 0;
+          snap.docs.forEach(d => { b.delete(d.ref); if(++n>=490){b.commit();b=db.batch();n=0;} });
+          if (n > 0) await b.commit();
+        }
+      } catch(e) {
+        const snap = await db.collection(collName).where('year','==',year).where('month','==',month).get();
+        if (!snap.empty) { let b=db.batch(); snap.docs.forEach(d=>b.delete(d.ref)); await b.commit(); }
+      }
+    }
+  }
+
+  try {
+    const now = firebase.firestore.Timestamp.now();
+    const monthKey = r => `${r.year}-${String(r.month).padStart(2,'0')}`;
+
+    statusEl.innerHTML = '<span style="color:var(--gold)">Writing historical summaries…</span>';
+    if (histCount) await batchWrite('historicalSummary', seed.historicalSummary, monthKey);
+
+    statusEl.innerHTML = '<span style="color:var(--gold)">Writing cash balances…</span>';
+    if (cashCount) await batchWrite('cashBalances', seed.cashBalances, monthKey);
+
+    statusEl.innerHTML = '<span style="color:var(--gold)">Writing investments…</span>';
+    if (invCount) await batchWrite('investments', seed.investments, monthKey);
+
+    const txnMonths = [...new Map(seed.transactions.map(t=>([`${t.year}-${t.month}`,{year:t.year,month:t.month}]))).values()];
+    statusEl.innerHTML = `<span style="color:var(--gold)">Clearing old transactions…</span>`;
+    await deleteMonthDocs('transactions', txnMonths);
+    statusEl.innerHTML = `<span style="color:var(--gold)">Writing ${txnCount} transactions…</span>`;
+    await batchWrite('transactions', seed.transactions.map(t=>({...t,createdAt:now})), null);
+
+    const incMonths = [...new Map(seed.income.map(i=>([`${i.year}-${i.month}`,{year:i.year,month:i.month}]))).values()];
+    statusEl.innerHTML = `<span style="color:var(--gold)">Clearing old income…</span>`;
+    await deleteMonthDocs('income', incMonths);
+    statusEl.innerHTML = `<span style="color:var(--gold)">Writing ${incCount} income entries…</span>`;
+    await batchWrite('income', seed.income.map(i=>({...i,createdAt:now})), null);
+
+    statusEl.innerHTML = '<span style="color:var(--gold)">Replacing debtors…</span>';
+    if (debCount) {
+      const existSnap = await db.collection('debtors').get();
+      if (!existSnap.empty) { let b=db.batch(); existSnap.docs.forEach(d=>b.delete(d.ref)); await b.commit(); }
+      await batchWrite('debtors', seed.debtors.map(d=>({...d,createdAt:now})), null);
+    }
+
+    await Promise.all([loadTxns(S.expMonth,S.expYear),loadIncome(S.expMonth,S.expYear),
+                       loadInvData(S.expMonth,S.expYear),loadCashData(S.expMonth,S.expYear),loadDebtors()]);
+    cSet(CK.lastSync, Date.now());
+    setSyncStatus('synced');
+    statusEl.innerHTML = `<span style="color:var(--accent)">✓ Import complete — ${txnCount+incCount+cashCount+invCount+debCount+histCount} records written</span>`;
+    toast('Import complete');
+    _pendingSeed = null;
+    renderAll();
+  } catch(err) {
+    console.error(err);
+    setSyncStatus('error');
+    statusEl.innerHTML = `<span style="color:var(--red)">Import failed: ${err.message}</span>`;
+    toast('Import error — check console');
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1370,20 +1521,41 @@ async function seedAll(){
     {year:2026,month:5,GTB:31729.90,Union:1788,Access:0,Renmoney:2402150.01},
   ];
 
-  // Investment balances (Renflex removed — it's now Renmoney in cash)
+  // Investment balances — NGN-denominated platforms use NGN values directly.
+  // USD-denominated platforms (Risevest, Trove, Bamboo, USDHoldings) are stored
+  // converted to NGN at the month's FX rate so the app can sum portfolios uniformly.
+  // The "Effective" currency toggle reverses this conversion for display.
   const INVESTMENTS=[
-    {year:2026,month:1,Piggy:3611049.87,PiggySafelock:1009863.01,RenVault:722324.02,Risevest:491.84,Trove:1597.49,Bamboo:2443.76,USDHoldings:0},
-    {year:2026,month:2,Piggy:6001523.22,PiggySafelock:2035506.85,RenVault:2044230.73,Risevest:482.53,Trove:1649.48,Bamboo:2387.39,USDHoldings:0},
-    {year:2026,month:3,Piggy:5428418.19,PiggySafelock:2066082.19,RenVault:2075291.34,Risevest:425.43,Trove:1542.42,Bamboo:2503.27,USDHoldings:0},
-    {year:2026,month:4,Piggy:3525451.19,PiggySafelock:2095671.23,RenVault:2105350.00,Risevest:425.43,Trove:1542.42,Bamboo:2503.27,USDHoldings:0},
-    {year:2026,month:5,Piggy:3569280.19,PiggySafelock:2101589.04,RenVault:2111361.73,Risevest:480.48,Trove:1699.55,Bamboo:2806.62,USDHoldings:0},
+    // Jan 2026 — closing balances from spreadsheet
+    // NGN: Piggy 3,611,049 | PiggySafelock 1,009,863 | RenVault 722,324
+    // USD: Risevest 491.84 | Trove 1,597.49 | Bamboo 2,443.76 | USD Holdings 2,068.22
+    // USD->NGN @1580 (Jan 2026 rate)
+    {year:2026,month:1,Piggy:3611049,PiggySafelock:1009863,RenVault:722324,
+     Risevest:Math.round(491.84*1580),Trove:Math.round(1597.49*1580),Bamboo:Math.round(2443.76*1580),USDHoldings:Math.round(2068.22*1580)},
+    // Feb 2026
+    {year:2026,month:2,Piggy:6001523,PiggySafelock:2035507,RenVault:2044231,
+     Risevest:Math.round(482.53*1600),Trove:Math.round(1649.48*1600),Bamboo:Math.round(2387.39*1600),USDHoldings:Math.round(2068.22*1600)},
+    // Mar 2026
+    {year:2026,month:3,Piggy:5489151,PiggySafelock:2066082,RenVault:2075291,
+     Risevest:Math.round(425.43*1620),Trove:Math.round(1542.42*1620),Bamboo:Math.round(2503.27*1620),USDHoldings:Math.round(2068.22*1620)},
+    // Apr 2026
+    {year:2026,month:4,Piggy:3574017,PiggySafelock:2095671,RenVault:2105350,
+     Risevest:Math.round(425.43*1600),Trove:Math.round(1542.42*1600),Bamboo:Math.round(2503.27*1600),USDHoldings:Math.round(4468.22*1600)},
+    // May 2026
+    {year:2026,month:5,Piggy:3576287,PiggySafelock:2101589,RenVault:2111362,
+     Risevest:Math.round(480.48*1590),Trove:Math.round(1699.55*1590),Bamboo:Math.round(2806.62*1590),USDHoldings:Math.round(4371.22*1590)},
   ];
 
-  // Debtors from Excel
+  // Debtors — from Jan'26 sheet expense summary table (most current snapshot)
   const DEBTORS=[
-    {name:'Semasa',currency:'USD',amount:1000,paid:0,balance:1000,rate:1600,ngnBalance:1600000,category:'Loan',notes:'',expectRepayment:true},
-    {name:'Mauton',currency:'NGN',amount:700000,paid:0,balance:700000,rate:1,ngnBalance:700000,category:'Loan',notes:'',expectRepayment:true},
-    {name:'House of Mayrie',currency:'NGN',amount:700000,paid:0,balance:700000,rate:1,ngnBalance:700000,category:'Loan',notes:'',expectRepayment:true},
+    {name:'Semasa',currency:'USD',amount:1000,paid:0,balance:1000,rate:1450,ngnBalance:1450000,category:'Loan',notes:'',expectRepayment:true},
+    {name:'Jesse',currency:'USD',amount:275,paid:100,balance:175,rate:1450,ngnBalance:253750,category:'Loan',notes:'',expectRepayment:true},
+    {name:'Stella',currency:'USD',amount:17.98,paid:0,balance:17.98,rate:1450,ngnBalance:26071,category:'Loan',notes:'',expectRepayment:true},
+    {name:'Mautin',currency:'GBP',amount:500,paid:0,balance:500,rate:1930,ngnBalance:965000,category:'Loan',notes:'',expectRepayment:true},
+    {name:'Kishi',currency:'USD',amount:86,paid:0,balance:86,rate:1450,ngnBalance:124700,category:'Loan',notes:'',expectRepayment:true},
+    {name:'Iseyemi',currency:'USD',amount:200,paid:0,balance:200,rate:1450,ngnBalance:290000,category:'Loan',notes:'',expectRepayment:true},
+    {name:'Sena',currency:'NGN',amount:100000,paid:0,balance:100000,rate:1,ngnBalance:100000,category:'Loan',notes:'',expectRepayment:true},
+    {name:'Mauton',currency:'NGN',amount:700000,paid:0,balance:700000,rate:1,ngnBalance:700000,category:'Loan',notes:'From summary sheet',expectRepayment:true},
     {name:'Funmi',currency:'NGN',amount:395025,paid:0,balance:395025,rate:1,ngnBalance:395025,category:'Loan',notes:'',expectRepayment:true},
     {name:'Pentho & Semako',currency:'NGN',amount:250000,paid:0,balance:250000,rate:1,ngnBalance:250000,category:'Loan',notes:'',expectRepayment:false},
     {name:'Maugbe',currency:'NGN',amount:205000,paid:0,balance:205000,rate:1,ngnBalance:205000,category:'Loan',notes:'',expectRepayment:true},
