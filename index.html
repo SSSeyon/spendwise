@@ -13,7 +13,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-treemap@2.3.0/dist/chartjs-chart-treemap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -181,7 +180,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl">v3.2.0</span>
+      <span class="ver-lbl">v3.3.0</span>
     </div>
   </div>
 </header>
@@ -216,10 +215,10 @@ datalist option{background:var(--bg2);color:var(--text)}
   <div class="card">
     <div class="sh"><div class="sh-title">Expenses by Category</div></div>
     <div class="chart-btns" id="chart-btns">
-      <button class="chart-btn active" onclick="setChartType('treemap',this)">Treemap</button>
-      <button class="chart-btn" onclick="setChartType('doughnut',this)">Donut</button>
+      <button class="chart-btn active" onclick="setChartType('doughnut',this)">Donut</button>
       <button class="chart-btn" onclick="setChartType('pie',this)">Pie</button>
       <button class="chart-btn" onclick="setChartType('bar',this)">Bar</button>
+      <button class="chart-btn" onclick="setChartType('hbar',this)">H-Bar</button>
     </div>
     <canvas id="cat-chart" style="max-height:220px"></canvas>
   </div>
@@ -275,6 +274,7 @@ datalist option{background:var(--bg2);color:var(--text)}
   <div class="tabs">
     <button class="tab active" onclick="invTab('current',this)">Current</button>
     <button class="tab" onclick="invTab('trend',this)">Trend</button>
+    <button class="tab" onclick="invTab('edit',this)">Edit</button>
   </div>
   <div id="inv-current">
     <div class="card" id="inv-total"></div>
@@ -288,6 +288,13 @@ datalist option{background:var(--bg2);color:var(--text)}
   <div id="inv-trend" style="display:none">
     <div class="card"><div class="clabel" style="margin-bottom:12px">Portfolio Growth</div><canvas id="inv-chart" style="max-height:200px"></canvas></div>
   </div>
+  <div id="inv-edit" style="display:none">
+    <div class="card">
+      <div class="clabel" style="margin-bottom:10px">Update Balances — <span id="inv-edit-label"></span></div>
+      <div id="inv-edit-fields"></div>
+      <button class="btn btn-p btn-full" onclick="saveInvFromEdit()">Save Balances</button>
+    </div>
+  </div>
 </div>
 
 <!-- CASH -->
@@ -298,21 +305,22 @@ datalist option{background:var(--bg2);color:var(--text)}
   <div class="card"><div class="clabel" style="margin-bottom:12px">Balance by Account</div><div id="cash-breakdown"></div></div>
   <div class="card">
     <div class="clabel" style="margin-bottom:10px">Update — <span id="cash-month-label"></span></div>
-    <div class="gform">
-      <div class="ig"><label class="ilabel">GTB (₦)</label><input class="ifield" type="number" inputmode="decimal" id="cash-gtb" placeholder="0"></div>
-      <div class="ig"><label class="ilabel">Access (₦)</label><input class="ifield" type="number" inputmode="decimal" id="cash-access" placeholder="0"></div>
-    </div>
-    <div class="gform">
-      <div class="ig"><label class="ilabel">Union (₦)</label><input class="ifield" type="number" inputmode="decimal" id="cash-union" placeholder="0"></div>
-      <div class="ig"><label class="ilabel">Renmoney (₦)</label><input class="ifield" type="number" inputmode="decimal" id="cash-ren" placeholder="0"></div>
-    </div>
+    <div id="cash-inputs"></div>
     <button class="btn btn-p btn-full" onclick="saveCash()">Save Cash Balances</button>
+  </div>
+  <div class="card">
+    <div class="clabel" style="margin-bottom:10px">Add New Account</div>
+    <div class="gform">
+      <div class="ig"><label class="ilabel">Account Name</label><input class="ifield" type="text" id="new-acct-name" placeholder="e.g. Kuda"></div>
+      <div class="ig" style="display:flex;align-items:flex-end"><button class="btn btn-g btn-full" onclick="addCashAccount()">Add Account</button></div>
+    </div>
+    <div id="custom-accts-list" style="margin-top:8px"></div>
   </div>
   <div class="card">
     <div class="clabel" style="margin-bottom:10px">Transfer Between Accounts</div>
     <div class="gform">
-      <div class="ig"><label class="ilabel">From</label><select class="sfield" id="xfr-from"><option>GTB</option><option>Access</option><option>Union</option><option>Renmoney</option></select></div>
-      <div class="ig"><label class="ilabel">To</label><select class="sfield" id="xfr-to"><option>Access</option><option>GTB</option><option>Union</option><option>Renmoney</option></select></div>
+      <div class="ig"><label class="ilabel">From</label><select class="sfield" id="xfr-from"></select></div>
+      <div class="ig"><label class="ilabel">To</label><select class="sfield" id="xfr-to"></select></div>
     </div>
     <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" type="number" inputmode="decimal" id="xfr-amt" placeholder="0"></div>
     <button class="btn btn-g btn-full" onclick="transferFunds()">Transfer Funds</button>
@@ -347,12 +355,10 @@ datalist option{background:var(--bg2);color:var(--text)}
   <div class="tabs">
     <button class="tab active" onclick="settTab('budget',this)">Budget</button>
     <button class="tab" onclick="settTab('export',this)">Export</button>
-    <button class="tab" onclick="settTab('investments',this)">Investments</button>
     <button class="tab" onclick="settTab('data',this)">Data</button>
   </div>
   <div id="sett-budget"></div>
   <div id="sett-export" style="display:none"></div>
-  <div id="sett-investments" style="display:none"></div>
   <div id="sett-data" style="display:none"></div>
 </div>
 
@@ -379,7 +385,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="gform">
       <div class="ig"><label class="ilabel">Category</label><select class="sfield" id="e-cat" onchange="updateExpenseLines()"></select></div>
       <div class="ig"><label class="ilabel">Bank</label>
-        <select class="sfield" id="e-bank"><option>GTB</option><option>Access</option><option>Union</option><option>Renmoney</option></select>
+        <select class="sfield" id="e-bank"><option>GTB</option><option>Access</option><option>Renmoney</option></select>
       </div>
     </div>
     <div class="ig">
@@ -411,7 +417,7 @@ datalist option{background:var(--bg2);color:var(--text)}
         </select>
       </div>
       <div class="ig"><label class="ilabel">Bank Received Into</label>
-        <select class="sfield" id="i-bank"><option>GTB</option><option>Access</option><option>Union</option><option>Renmoney</option></select>
+        <select class="sfield" id="i-bank"><option>GTB</option><option>Access</option><option>Renmoney</option></select>
       </div>
     </div>
     <div class="gform">
@@ -472,7 +478,7 @@ const CAT_LINES = {
   'Internet services': ['Netflix/Amazon','Internet +Airtime'],
   'Recreation': ['UK Visa','DSTV','Outing','Outing BDG'],
   'Personal care': ['Medications','Personal care'],
-  'Gifts and donations': ['Mama','Mum','Pentho','Pego','Dunsin','Gbago Day','Jennifer','Gbago','Tadeyon','Senapon Whesu','Mausi Whesu','Cash gifts','Baba Sesi','Athingban','Segowe','Sejiro','Yemi','Tope','Francis','MBO',"Dad's Bday","JO's Bday","Kola's Wedding","Olamide's wedding","Pirotress",'Xmas Gifts','Xmas gift (Gatemen)','Others'],
+  'Gifts and donations': ['Mama','Mum','Pentho','Pego','Dunsin','Gbago Day','Jennifer','Gbago','Tadeyon','Senapon Whesu','Mausi Whesu','Cash gifts','Baba Sesi','Athingban','Segowe','Sejiro','Yemi','Tope','Francis','MBO',"Dad's Bday","JO's Bday","Kola's Wedding","Olamide's wedding",'Pirotress','Xmas Gifts','Xmas gift (Gatemen)','Others'],
   'Loans': ['Semasa','Gbewato','Morin','House of Mayrie','Mauton','Tobi Talia','Jennifer','Maugbe'],
   'Others': ['Cash Withdrawal','Others'],
   'Work Travel': ['Home-MMIA','MMIA - Home','Westgate','Westgate - RB','LC Waikiki','RB - The View','Java House','RB - Westgate (Jen)','RB - Pizza Garden (all)','Pizza Garden (All)','Mall to RB (FJ)','RB to Mercure (JO)','RB to Riverside (JO)','Radisson - Address (All)','Address -Radisson (All)','Riverside - Marriot (All)'],
@@ -480,8 +486,8 @@ const CAT_LINES = {
 };
 const CATS = Object.keys(CAT_LINES);
 
-// Cash accounts (Renmoney moved here from investments)
-const CASH_ACCOUNTS = ['GTB','Access','Union','Renmoney'];
+const DEFAULT_CASH_ACCOUNTS = ['GTB','Access','Renmoney'];
+function getCashAccounts(){ return cGet('sw3_cash_accounts') || DEFAULT_CASH_ACCOUNTS; }
 
 // Investment platforms (without Renflex which is now Renmoney in cash)
 const PLATFORMS = [
@@ -567,8 +573,8 @@ let S={
   dashMonth:now.getMonth()+1,dashYear:now.getFullYear(),dashCurrency:'NGN',
   txns:[],income:[],investments:{},cash:{},debtors:[],budgets:{...DEF_BUDGETS},
   catChart:null,trendChart:null,invChart:null,
-  chartType:'treemap',
-  saving:false,isStale:false,lastSync:null,
+  chartType:'doughnut',
+  saving:false,isStale:false,lastSync:null,fbSyncVersion:null,
   customExpLines:{}, // user-added expense lines
 };
 let db;
@@ -584,6 +590,7 @@ const CK={
   debtors:'sw3_debtors',
   budgets:(m,y)=>`sw3_budgets_${y}_${m}`,
   lastSync:'sw3_last_sync',
+  fbSyncVer:'sw3_fb_sync_ver',
   customLines:'sw3_custom_lines',
   schoolFees:'sw3_school_fees',
 };
@@ -599,6 +606,7 @@ function loadFromCache(){
   S.debtors=cGet(CK.debtors)||[];
   S.budgets=cGet(CK.budgets(m,y))||{...DEF_BUDGETS};
   S.lastSync=cGet(CK.lastSync);
+  S.fbSyncVersion=cGet(CK.fbSyncVer);
   S.customExpLines=cGet(CK.customLines)||{};
   S.isStale=S.txns.length>0||Object.keys(S.investments).length>0||Object.keys(S.cash).length>0;
 }
@@ -617,31 +625,22 @@ const curY=()=>new Date().getFullYear();
 const bSt=(s,b)=>!b?'ok':s/b>=1?'over':s/b>=0.8?'warn':'ok';
 
 function fmtCur(ngn, currency, m, y) {
-  if (!currency || currency === 'NGN') return fN(ngn);
-  if (currency === 'NATIVE') return fN(ngn); // NATIVE falls back to NGN for generic amounts
-  const key = fxKey(m||S.dashMonth, y||S.dashYear);
-  const rates = FX_RATES[key] || {USD:1600,GBP:2050};
-  const rate = rates[currency] || 1;
-  const val = ngn / rate;
-  const sym = currency === 'USD' ? '$' : '£';
-  return sym + val.toLocaleString('en-NG',{maximumFractionDigits:0});
+  if(!currency||currency==='NGN'||currency==='NATIVE') return fN(ngn);
+  const key=fxKey(m||S.dashMonth,y||S.dashYear);
+  const rates=FX_RATES[key]||{USD:1600,GBP:2050};
+  const sym=currency==='USD'?'$':'£';
+  return sym+(ngn/(rates[currency]||1)).toLocaleString('en-NG',{maximumFractionDigits:0});
 }
-
-// Format a platform balance in its native currency or converted
-function fmtPlatformVal(rawVal, platform, currency, m, y) {
-  const p = PLATFORMS.find(x=>x.key===platform);
-  if (!p) return fmtCur(rawVal, currency, m, y);
-  const key = fxKey(m||S.dashMonth, y||S.dashYear);
-  const rates = FX_RATES[key] || {USD:1600,GBP:2050};
-  if (currency === 'NATIVE') {
-    // Show in the platform's own currency
-    if (p.currency === 'NGN') return fN(rawVal);
-    // rawVal stored in NGN — convert back to platform currency for display
-    const rate = rates[p.currency] || 1;
-    const sym = p.currency === 'USD' ? '$' : p.currency === 'GBP' ? '£' : '₦';
-    return sym + (rawVal / rate).toLocaleString('en-NG',{maximumFractionDigits:2});
+function fmtPlatformVal(rawVal,platformKey,currency,m,y){
+  const p=PLATFORMS.find(x=>x.key===platformKey);
+  if(!p) return fmtCur(rawVal,currency,m,y);
+  if(currency==='NATIVE'){
+    if(p.currency==='NGN') return fN(rawVal);
+    const rates=FX_RATES[fxKey(m||S.dashMonth,y||S.dashYear)]||{USD:1600,GBP:2050};
+    const sym=p.currency==='USD'?'$':'£';
+    return sym+(rawVal/(rates[p.currency]||1)).toLocaleString('en-NG',{maximumFractionDigits:2});
   }
-  return fmtCur(rawVal, currency, m, y);
+  return fmtCur(rawVal,currency,m,y);
 }
 
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);}
@@ -667,11 +666,10 @@ function hideStaleBar(){document.getElementById('stale-bar').style.display='none
 // ══════════════════════════════════════════════════════════════════════════
 // FIREBASE
 // ══════════════════════════════════════════════════════════════════════════
-async function initFirebase(){
+function initFirebase(){
   loadFromCache();
   renderAll();
   if(S.isStale) showStaleBar();
-  // Boot Firebase in background — don't block initial render
   (async()=>{
     await new Promise(resolve=>{function check(){if(typeof firebase!=='undefined')resolve();else setTimeout(check,50);}check();});
     firebase.initializeApp({apiKey:"AIzaSyAfxfEp8LT-f_zqiRr1Mbj7RghsxulNboY",authDomain:"gen-lang-client-0371859680.firebaseapp.com",projectId:"gen-lang-client-0371859680",storageBucket:"gen-lang-client-0371859680.firebasestorage.app",messagingSenderId:"847229528942",appId:"1:847229528942:web:e22f5cbc612b6a8b822f7f"});
@@ -680,11 +678,15 @@ async function initFirebase(){
     if(!navigator.onLine){setSyncStatus('offline');return;}
     setSyncStatus('syncing');
     try{
+      const m=S.expMonth,y=S.expYear;
       await syncAll();
-      cSet(CK.lastSync,Date.now());
-      setSyncStatus('synced');
-      hideStaleBar();
-      renderAll();
+      if(S.expMonth===m&&S.expYear===y){
+        S.txns=cGet(CK.txns(m,y))||S.txns;
+        S.income=cGet(CK.inc(m,y))||S.income;
+        S.investments=cGet(CK.inv(m,y))||S.investments;
+        S.cash=cGet(CK.cash(m,y))||S.cash;
+      }
+      cSet(CK.lastSync,Date.now());setSyncStatus('synced');hideStaleBar();renderAll();
     }catch(e){console.error(e);setSyncStatus('error');}
   })();
 }
@@ -701,7 +703,7 @@ async function loadTxns(m,y){
     catch{snap=await db.collection('transactions').where('year','==',y).where('month','==',m).get();}
     S.txns=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:1);
     cSet(CK.txns(m,y),S.txns);
-  }catch{S.txns=cGet(CK.txns(m,y))||[];}
+  }catch(e){S.txns=cGet(CK.txns(m,y))||[];}
 }
 
 async function loadIncome(m,y){
@@ -711,17 +713,18 @@ async function loadIncome(m,y){
     catch{snap=await db.collection('income').where('year','==',y).where('month','==',m).get();}
     S.income=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:1);
     cSet(CK.inc(m,y),S.income);
-  }catch{S.income=cGet(CK.inc(m,y))||[];}
+  }catch(e){S.income=cGet(CK.inc(m,y))||[];}
 }
 
 async function loadInvData(m,y){
   try{
     const doc=await db.collection('investments').doc(sid(m,y)).get();
     if(doc.exists){S.investments=doc.data();cSet(CK.inv(m,y),S.investments);return;}
+    // Fall back to most recent
     const snap=await db.collection('investments').orderBy('year','desc').orderBy('month','desc').limit(1).get();
     S.investments=snap.empty?{}:snap.docs[0].data();
     cSet(CK.inv(m,y),S.investments);
-  }catch{S.investments=cGet(CK.inv(m,y))||{};}
+  }catch(e){S.investments=cGet(CK.inv(m,y))||{};}
 }
 
 async function loadCashData(m,y){
@@ -731,33 +734,38 @@ async function loadCashData(m,y){
     const snap=await db.collection('cashBalances').orderBy('year','desc').orderBy('month','desc').limit(1).get();
     S.cash=snap.empty?{}:snap.docs[0].data();
     cSet(CK.cash(m,y),S.cash);
-  }catch{S.cash=cGet(CK.cash(m,y))||{};}
+  }catch(e){S.cash=cGet(CK.cash(m,y))||{};}
 }
 
 async function loadDebtors(){
   try{const snap=await db.collection('debtors').get();S.debtors=snap.docs.map(d=>({id:d.id,...d.data()}));cSet(CK.debtors,S.debtors);}
-  catch{S.debtors=cGet(CK.debtors)||[];}
+  catch(e){S.debtors=cGet(CK.debtors)||[];}
 }
 
 async function loadBudgets(m,y){
   try{const doc=await db.collection('budgets').doc(sid(m,y)).get();S.budgets=doc.exists&&doc.data().categories?{...DEF_BUDGETS,...doc.data().categories}:{...DEF_BUDGETS};cSet(CK.budgets(m,y),S.budgets);}
-  catch{S.budgets=cGet(CK.budgets(m,y))||{...DEF_BUDGETS};}
+  catch(e){S.budgets=cGet(CK.budgets(m,y))||{...DEF_BUDGETS};}
 }
 
-async function reloadMonth(m,y){
-  S.expMonth=m; S.expYear=y; S.expCat='All';
-  // Load from cache immediately and render
+function reloadMonth(m,y){
+  S.expMonth=m;S.expYear=y;S.expCat='All';
   S.txns=cGet(CK.txns(m,y))||[];
   S.income=cGet(CK.inc(m,y))||[];
   S.investments=cGet(CK.inv(m,y))||{};
   S.budgets=cGet(CK.budgets(m,y))||{...DEF_BUDGETS};
-  renderExpenses(); renderDashboard();
-  // Background sync
+  renderExpenses();renderDashboard();
   if(db&&navigator.onLine){
     setSyncStatus('syncing');
     Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadBudgets(m,y)])
-      .then(()=>{setSyncStatus('synced');renderExpenses();renderDashboard();renderInvestments();})
-      .catch(()=>setSyncStatus('error'));
+      .then(()=>{
+        if(S.expMonth===m&&S.expYear===y){
+          S.txns=cGet(CK.txns(m,y))||S.txns;
+          S.income=cGet(CK.inc(m,y))||S.income;
+          S.investments=cGet(CK.inv(m,y))||S.investments;
+          S.budgets=cGet(CK.budgets(m,y))||S.budgets;
+          setSyncStatus('synced');renderExpenses();renderDashboard();renderInvestments();
+        }
+      }).catch(()=>setSyncStatus('error'));
   }
 }
 
@@ -772,7 +780,7 @@ function navTo(pg){
   document.getElementById('app-body').scrollTop=0;
   const fab=document.getElementById('fab');
   if(['expenses','debtors','investments'].includes(pg)) fab.className='fab'; else fab.className='fab hidden';
-  if(pg==='investments') fab.onclick=()=>openMod('inv-modal');
+  if(pg==='investments') fab.onclick=()=>{const btn=document.querySelector('#pg-investments .tabs .tab:last-child');if(btn){invTab('edit',btn);}};
   else if(pg==='debtors') fab.onclick=()=>openDebMod();
   else fab.onclick=()=>openExpModal();
 }
@@ -806,32 +814,33 @@ function updateMonthOptions(){
 function dashPeriodChange(){
   const newYear=parseInt(document.getElementById('dash-year').value);
   const newMonth=parseInt(document.getElementById('dash-month-sel').value);
-  const newCurrency=document.getElementById('dash-currency').value;
-  const currencyOnly=(newYear===S.dashYear&&newMonth===S.dashMonth&&newCurrency!==S.dashCurrency);
-  S.dashYear=newYear; S.dashMonth=newMonth; S.dashCurrency=newCurrency;
+  const newCur=document.getElementById('dash-currency').value;
+  const curOnly=(newYear===S.dashYear&&newMonth===S.dashMonth&&newCur!==S.dashCurrency);
+  S.dashYear=newYear;S.dashMonth=newMonth;S.dashCurrency=newCur;
   updateMonthOptions();
-  // Currency-only change: re-render immediately from existing data, no fetch needed
-  if(currencyOnly){renderDashboard();return;}
-  // Month/year changed: load from cache instantly, then sync in background
+  if(curOnly){renderDashboard();return;}
   if(S.dashMonth>0){
-    S.expMonth=S.dashMonth; S.expYear=S.dashYear;
+    S.expMonth=S.dashMonth;S.expYear=S.dashYear;
     S.txns=cGet(CK.txns(S.dashMonth,S.dashYear))||[];
     S.income=cGet(CK.inc(S.dashMonth,S.dashYear))||[];
     S.investments=cGet(CK.inv(S.dashMonth,S.dashYear))||{};
     S.cash=cGet(CK.cash(S.dashMonth,S.dashYear))||{};
     S.budgets=cGet(CK.budgets(S.dashMonth,S.dashYear))||{...DEF_BUDGETS};
   }
-  renderDashboard(); renderExpenses();
-  // Background sync
+  renderDashboard();renderExpenses();
   if(db&&navigator.onLine){
+    const m=S.dashMonth,y=S.dashYear;
     setSyncStatus('syncing');
-    Promise.all([
-      loadTxns(S.dashMonth,S.dashYear),
-      loadIncome(S.dashMonth,S.dashYear),
-      loadInvData(S.dashMonth,S.dashYear),
-      loadCashData(S.dashMonth,S.dashYear)
-    ]).then(()=>{setSyncStatus('synced');renderDashboard();renderExpenses();renderInvestments();})
-      .catch(()=>setSyncStatus('error'));
+    Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y)])
+      .then(()=>{
+        if(S.expMonth===m&&S.expYear===y){
+          S.txns=cGet(CK.txns(m,y))||S.txns;
+          S.income=cGet(CK.inc(m,y))||S.income;
+          S.investments=cGet(CK.inv(m,y))||S.investments;
+          S.cash=cGet(CK.cash(m,y))||S.cash;
+          setSyncStatus('synced');renderDashboard();renderExpenses();renderInvestments();
+        }
+      }).catch(()=>setSyncStatus('error'));
   }
 }
 
@@ -875,7 +884,7 @@ function renderDashboard(){
 
   const budgTotal=Object.values(S.budgets).reduce((s,v)=>s+(v||0),0);
   const cash=S.cash;
-  const cashTotal=CASH_ACCOUNTS.reduce((s,b)=>s+(cash[b]||0),0);
+  const cashTotal=getCashAccounts().reduce((s,b)=>s+(cash[b]||0),0);
   const inv=S.investments;
   const invTotal=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
   const nw=invTotal+cashTotal;
@@ -917,11 +926,17 @@ function renderDashboard(){
 
   // Cash
   document.getElementById('dash-cash-total').textContent=cashTotal?fmtCur(cashTotal,cur,m,y):'—';
-  document.getElementById('dash-cash').innerHTML=CASH_ACCOUNTS.map((b,i)=>{const val=cash[b]||0;const pct=cashTotal?Math.round(val/cashTotal*100):0;return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;${i<CASH_ACCOUNTS.length-1?'border-bottom:1px solid var(--border)':''}"><div><div style="font-size:0.8rem;font-weight:600">${b}</div><div style="font-size:0.63rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}% of total</div></div><div style="font-family:var(--mono);font-size:0.88rem;color:${val?'var(--blue)':'var(--text3)'}">${val?fmtCur(val,cur,m,y):'—'}</div></div>`;}).join('');
+  const cashAccts=getCashAccounts();
+  document.getElementById('dash-cash').innerHTML=cashAccts.map((b,i)=>{const val=cash[b]||0;const pct=cashTotal?Math.round(val/cashTotal*100):0;return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;${i<cashAccts.length-1?'border-bottom:1px solid var(--border)':''}"><div><div style="font-size:0.8rem;font-weight:600">${b}</div><div style="font-size:0.63rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}% of total</div></div><div style="font-family:var(--mono);font-size:0.88rem;color:${val?'var(--blue)':'var(--text3)'}">${val?fmtCur(val,cur,m,y):'—'}</div></div>`;}).join('');
 
   // Investments
-  document.getElementById('dash-inv-total').textContent=invTotal?fmtCur(invTotal,cur,m,y):'—';
-  document.getElementById('dash-inv').innerHTML=PLATFORMS.map(p=>{const val=inv[p.key]||0;const pct=invTotal>0?((val/invTotal)*100).toFixed(1):'0.0';const dispVal=fmtPlatformVal(val,p.key,cur,m,y);const nativeLabel=cur==='NATIVE'&&p.currency!=='NGN'?` <span style="font-size:0.58rem;color:var(--text3)">${p.currency}</span>`:'';return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)"><div style="display:flex;align-items:center;gap:7px"><div style="width:6px;height:6px;border-radius:50%;background:${p.color};flex-shrink:0"></div><div><div style="font-size:0.78rem;font-weight:600">${p.label}${nativeLabel}</div><div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono)">${pct}%</div></div></div><div style="font-family:var(--mono);font-size:0.84rem;color:${val?p.color:'var(--text3)'}">${val?dispVal:'—'}</div></div>`;}).join('');
+  document.getElementById('dash-inv-total').textContent=invTotal?fmtCur(invTotal,cur==='NATIVE'?'NGN':cur,m,y):'—';
+  document.getElementById('dash-inv').innerHTML=PLATFORMS.map(p=>{
+    const val=inv[p.key]||0;const pct=invTotal>0?((val/invTotal)*100).toFixed(1):'0.0';
+    const dispVal=fmtPlatformVal(val,p.key,cur,m,y);
+    const badge=`<span style="font-size:0.56rem;padding:1px 4px;border-radius:3px;background:var(--bg3);color:var(--text3);margin-left:4px">${p.currency}</span>`;
+    return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)"><div style="display:flex;align-items:center;gap:7px"><div style="width:6px;height:6px;border-radius:50%;background:${p.color};flex-shrink:0"></div><div><div style="font-size:0.78rem;font-weight:600">${p.label}${badge}</div><div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono)">${pct}%</div></div></div><div style="font-family:var(--mono);font-size:0.84rem;color:${val?p.color:'var(--text3)'}">${val?dispVal:'—'}</div></div>`;
+  }).join('');
   const active=PLATFORMS.filter(p=>inv[p.key]);
   document.getElementById('dash-abar').innerHTML=invTotal&&active.length?active.map(p=>`<div style="flex:${inv[p.key]};background:${p.color};opacity:0.8"></div>`).join(''):'';
 
@@ -970,10 +985,9 @@ function renderDashFullYear(y,totalInc,totalExp,cur){
 // ══════════════════════════════════════════════════════════════════════════
 const CAT_COLORS=['#c8f542','#5c9eff','#f5c842','#ff5c9f','#9f5cff','#ff9f5c','#4ade80','#f87171','#a8d430','#4a8aee','#60a5fa','#fbbf24','#34d399','#e879f9','#fb923c'];
 
-function setChartType(type, btn){
+function setChartType(type,btn){
   S.chartType=type;
-  document.querySelectorAll('.chart-btn').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
+  document.querySelectorAll('.chart-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');
   const catSpend={};S.txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+(t.amount||0);});
   renderCatChart(catSpend,S.dashCurrency,S.dashMonth,S.dashYear);
 }
@@ -990,10 +1004,12 @@ function renderCatChart(catSpend,cur,m,y){
   const colors=labels.map((_,i)=>CAT_COLORS[i%CAT_COLORS.length]);
   const ctx=canvas.getContext('2d');
   const commonOpts={responsive:true,maintainAspectRatio:true,plugins:{legend:{display:S.chartType!=='bar',position:'bottom',labels:{color:'#8888bb',font:{family:'DM Mono',size:9},boxWidth:8,padding:8}},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>{const v=typeof c.parsed==='object'?c.parsed.v||c.parsed.y||c.raw:c.parsed;return (c.label||'')+': ₦'+Number(v).toLocaleString();}}}}};
-  if(S.chartType==='treemap'){
-    S.catChart=new Chart(ctx,{type:'treemap',data:{datasets:[{label:'Expenses',data:entries.map(([k,v],i)=>({key:k,value:v})),backgroundColor:(ctx)=>colors[ctx.dataIndex%colors.length],borderColor:'rgba(6,6,16,0.5)',borderWidth:1,captions:{display:true,color:'#060610',font:{size:10,weight:'bold'},formatter:(ctx)=>ctx.raw.key}}]},options:{...commonOpts,plugins:{...commonOpts.plugins,legend:{display:false}}}});
+  if(S.chartType==='hbar'){
+    canvas.style.maxHeight='280px';
+    S.catChart=new Chart(ctx,{type:'bar',data:{labels,datasets:[{data,backgroundColor:colors,borderWidth:0,borderRadius:3}]},options:{...commonOpts,indexAxis:'y',plugins:{...commonOpts.plugins,legend:{display:false}},scales:{x:{display:false,grid:{display:false}},y:{grid:{display:false},ticks:{color:'#8888bb',font:{family:'DM Mono',size:9}},border:{display:false}}}}});
   } else {
-    S.catChart=new Chart(ctx,{type:S.chartType==='bar'?'bar':S.chartType,data:{labels,datasets:[{data,backgroundColor:colors,borderWidth:0,borderRadius:S.chartType==='bar'?4:0}]},options:{...commonOpts,scales:S.chartType==='bar'?{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}:{},plugins:{...commonOpts.plugins,legend:{display:S.chartType!=='bar',position:'bottom',labels:{color:'#8888bb',font:{family:'DM Mono',size:9},boxWidth:8,padding:6}}}}});
+    canvas.style.maxHeight='220px';
+    S.catChart=new Chart(ctx,{type:S.chartType==='bar'?'bar':S.chartType,data:{labels,datasets:[{data,backgroundColor:colors,borderWidth:0,borderRadius:S.chartType==='bar'?4:0}]},options:{...commonOpts,scales:S.chartType==='bar'?{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}:{}}});
   }
 }
 
@@ -1117,22 +1133,41 @@ async function saveIncome(){
 // ══════════════════════════════════════════════════════════════════════════
 function renderInvestments(){
   const inv=S.investments,total=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
-  const cur=S.dashCurrency;
-  const m=S.expMonth,y=S.expYear;
+  const cur=S.dashCurrency,m=S.expMonth,y=S.expYear;
   document.getElementById('inv-total').innerHTML=`<div class="clabel">Total Portfolio — ${MONTHS[m-1]} ${y}</div><div class="cval">${total?fmtCur(total,cur==='NATIVE'?'NGN':cur,m,y):'—'}</div><div class="csub">${PLATFORMS.length} platforms</div>`;
-  document.getElementById('inv-platforms').innerHTML=PLATFORMS.map(p=>{const val=inv[p.key]||0;const pct=total>0?((val/total)*100).toFixed(1):'0.0';const dispVal=fmtPlatformVal(val,p.key,cur,m,y);const currTag=`<span style="font-size:0.58rem;padding:1px 5px;border-radius:4px;background:var(--bg3);color:var(--text3);margin-left:5px">${p.currency}</span>`;return`<div class="prow"><div><div class="pname">${p.label}${currTag}</div><div class="ppct">${pct}%</div></div><div class="pval" style="color:${val?p.color:'var(--text3)'}">${val?dispVal:'—'}</div></div>`;}).join('');
+  document.getElementById('inv-platforms').innerHTML=PLATFORMS.map(p=>{
+    const val=inv[p.key]||0;const pct=total>0?((val/total)*100).toFixed(1):'0.0';
+    const dispVal=fmtPlatformVal(val,p.key,cur,m,y);
+    const badge=`<span style="font-size:0.56rem;padding:1px 4px;border-radius:3px;background:var(--bg3);color:var(--text3);margin-left:4px">${p.currency}</span>`;
+    return`<div class="prow"><div><div class="pname">${p.label}${badge}</div><div class="ppct">${pct}%</div></div><div class="pval" style="color:${val?p.color:'var(--text3)'}">${val?dispVal:'—'}</div></div>`;
+  }).join('');
   const active=PLATFORMS.filter(p=>inv[p.key]);
   if(active.length&&total){document.getElementById('inv-alloc').style.display='block';document.getElementById('inv-abar').innerHTML=active.map(p=>`<div style="flex:${inv[p.key]};background:${p.color};opacity:0.82"></div>`).join('');document.getElementById('inv-legend').innerHTML=active.map(p=>`<div style="display:flex;align-items:center;gap:4px;font-size:0.62rem;color:var(--text2)"><div style="width:7px;height:7px;border-radius:2px;background:${p.color}"></div>${p.label}</div>`).join('');}
   else document.getElementById('inv-alloc').style.display='none';
+  // Populate Edit tab
+  const editLabel=document.getElementById('inv-edit-label');
+  const editFields=document.getElementById('inv-edit-fields');
+  if(editLabel) editLabel.textContent=`${MONTHS[m-1]} ${y}`;
+  if(editFields) editFields.innerHTML=PLATFORMS.map(p=>`<div class="ig"><label class="ilabel">${p.label} (${p.currency==='NGN'?'₦ NGN':'NGN equiv.'})</label><input class="ifield" type="number" inputmode="decimal" id="inv-edit-${p.key}" placeholder="0" value="${inv[p.key]||''}"></div>`).join('');
 }
 function invTab(tab,btn){
-  document.getElementById('inv-current').style.display=tab==='current'?'block':'none';
-  document.getElementById('inv-trend').style.display=tab==='trend'?'block':'none';
+  ['current','trend','edit'].forEach(t=>{const el=document.getElementById('inv-'+t);if(el)el.style.display=t===tab?'block':'none';});
   btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');
   if(tab==='trend') renderInvTrend();
+  if(tab==='edit') renderInvestments();
 }
 async function renderInvTrend(){
   try{const snap=await db.collection('investments').orderBy('year').orderBy('month').get();const data=snap.docs.map(d=>{const s=d.data();return{label:`${MS[s.month-1]} '${String(s.year).slice(2)}`,total:PLATFORMS.reduce((sum,p)=>sum+(s[p.key]||0),0)};});if(S.invChart) S.invChart.destroy();const ctx=document.getElementById('inv-chart').getContext('2d');S.invChart=new Chart(ctx,{type:'line',data:{labels:data.map(d=>d.label),datasets:[{data:data.map(d=>d.total),borderColor:'#c8f542',backgroundColor:'rgba(200,245,66,0.06)',borderWidth:2,pointBackgroundColor:'#c8f542',pointRadius:3,tension:0.3,fill:true}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>fN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}}});}catch(e){}
+}
+async function saveInvFromEdit(){
+  if(S.saving) return;S.saving=true;setSyncStatus('syncing');
+  const data={month:S.expMonth,year:S.expYear};
+  PLATFORMS.forEach(p=>{const el=document.getElementById('inv-edit-'+p.key);const v=el?parseFloat(el.value):NaN;data[p.key]=isNaN(v)?0:v;});
+  S.investments=data;cSet(CK.inv(S.expMonth,S.expYear),data);
+  renderInvestments();renderDashboard();
+  try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});toast('Balances saved');setSyncStatus('synced');}
+  catch(e){toast('Saved locally — sync pending');setSyncStatus('error');}
+  finally{S.saving=false;}
 }
 function openInvMod(){
   document.getElementById('inv-mod-label').textContent=`${MONTHS[S.expMonth-1]} ${S.expYear} — closing balances (₦)`;
@@ -1152,26 +1187,47 @@ async function saveInvestments(){
 // ══════════════════════════════════════════════════════════════════════════
 function renderCashPage(){
   const m=S.cashMonth,y=S.cashYear;
+  const ACCTS=getCashAccounts();
   const months=[];for(let i=curM();i>=1;i--) months.push(i);
   document.getElementById('cash-months').innerHTML=months.map(mo=>`<div class="mpill ${mo===m?'active':''}" onclick="changeCashMonth(${mo})">${MS[mo-1]}</div>`).join('');
   document.getElementById('cash-month-label').textContent=`${MONTHS[m-1]} ${y}`;
-  const cash=S.cash,total=CASH_ACCOUNTS.reduce((s,b)=>s+(cash[b]||0),0);
-  document.getElementById('cash-summary').innerHTML=`<div class="clabel">Total Cash — ${MONTHS[m-1]} ${y}</div><div class="cval">${total?fN(total):'—'}</div><div class="csub">GTB · Access · Union · Renmoney</div>`;
-  document.getElementById('cash-breakdown').innerHTML=CASH_ACCOUNTS.map((b,i)=>{const val=cash[b]||0,pct=total?Math.round(val/total*100):0;return`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;${i<CASH_ACCOUNTS.length-1?'border-bottom:1px solid var(--border)':''}"><div><div style="font-size:0.82rem;font-weight:600">${b}</div><div style="font-size:0.65rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${total?pct+'%':'—'}</div></div><div style="font-family:var(--mono);font-size:0.9rem;color:${val?'var(--blue)':'var(--text3)'}">${val?fN(val):'—'}</div></div>`;}).join('');
-  document.getElementById('cash-gtb').value=cash.GTB||'';
-  document.getElementById('cash-access').value=cash.Access||'';
-  document.getElementById('cash-union').value=cash.Union||'';
-  document.getElementById('cash-ren').value=cash.Renmoney||'';
+  const cash=S.cash,total=ACCTS.reduce((s,b)=>s+(cash[b]||0),0);
+  document.getElementById('cash-summary').innerHTML=`<div class="clabel">Total Cash — ${MONTHS[m-1]} ${y}</div><div class="cval">${total?fN(total):'—'}</div><div class="csub">${ACCTS.join(' · ')}</div>`;
+  document.getElementById('cash-breakdown').innerHTML=ACCTS.map((b,i)=>{const val=cash[b]||0,pct=total?Math.round(val/total*100):0;return`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;${i<ACCTS.length-1?'border-bottom:1px solid var(--border)':''}"><div><div style="font-size:0.82rem;font-weight:600">${b}</div><div style="font-size:0.65rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${total?pct+'%':'—'}</div></div><div style="font-family:var(--mono);font-size:0.9rem;color:${val?'var(--blue)':'var(--text3)'}">${val?fN(val):'—'}</div></div>`;}).join('');
+  document.getElementById('cash-inputs').innerHTML=`<div class="gform">${ACCTS.map(b=>`<div class="ig"><label class="ilabel">${b} (₦)</label><input class="ifield" type="number" inputmode="decimal" id="cash-${b.toLowerCase().replace(/\s+/g,'-')}" placeholder="0" value="${cash[b]||''}"></div>`).join('')}</div>`;
+  const customAccts=ACCTS.filter(a=>!DEFAULT_CASH_ACCOUNTS.includes(a));
+  const caEl=document.getElementById('custom-accts-list');
+  if(caEl) caEl.innerHTML=customAccts.length?customAccts.map(a=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:0.78rem">${a}<button class="btn btn-d btn-sm" onclick="removeCashAccount('${a}')">Remove</button></div>`).join(''):'';
+  const opts=ACCTS.map(a=>`<option>${a}</option>`).join('');
+  const xFrom=document.getElementById('xfr-from');const xTo=document.getElementById('xfr-to');
+  if(xFrom) xFrom.innerHTML=opts;if(xTo) xTo.innerHTML=opts;
 }
 async function changeCashMonth(m){
   S.cashMonth=m;const cached=cGet(CK.cash(m,S.cashYear));if(cached) S.cash=cached;renderCashPage();
-  if(db&&navigator.onLine){await loadCashData(m,S.cashYear);renderCashPage();renderDashboard();}
+  if(db&&navigator.onLine){loadCashData(m,S.cashYear).then(()=>{if(S.cashMonth===m)renderCashPage();}).catch(()=>{});}
 }
 async function saveCash(){
-  const data={month:S.cashMonth,year:S.cashYear,GTB:parseFloat(document.getElementById('cash-gtb').value)||0,Access:parseFloat(document.getElementById('cash-access').value)||0,Union:parseFloat(document.getElementById('cash-union').value)||0,Renmoney:parseFloat(document.getElementById('cash-ren').value)||0};
-  setSyncStatus('syncing');
-  try{await db.collection('cashBalances').doc(sid(S.cashMonth,S.cashYear)).set(data,{merge:true});S.cash=data;cSet(CK.cash(S.cashMonth,S.cashYear),data);toast('Cash balances saved');setSyncStatus('synced');renderCashPage();renderDashboard();}
-  catch(e){toast('Error saving');setSyncStatus('error');}
+  const ACCTS=getCashAccounts();
+  const data={month:S.cashMonth,year:S.cashYear};
+  ACCTS.forEach(b=>{const el=document.getElementById('cash-'+b.toLowerCase().replace(/\s+/g,'-'));data[b]=el?parseFloat(el.value)||0:0;});
+  S.cash=data;cSet(CK.cash(S.cashMonth,S.cashYear),data);
+  renderCashPage();renderDashboard();toast('Cash balances saved');setSyncStatus('syncing');
+  try{await db.collection('cashBalances').doc(sid(S.cashMonth,S.cashYear)).set(data,{merge:true});setSyncStatus('synced');}
+  catch(e){toast('Saved locally — sync pending');setSyncStatus('error');}
+}
+function addCashAccount(){
+  const name=document.getElementById('new-acct-name').value.trim();
+  if(!name){toast('Enter an account name');return;}
+  const existing=getCashAccounts();
+  if(existing.includes(name)){toast('Account already exists');return;}
+  cSet('sw3_cash_accounts',[...existing,name]);
+  document.getElementById('new-acct-name').value='';
+  toast(`${name} added`);renderCashPage();
+}
+function removeCashAccount(name){
+  if(DEFAULT_CASH_ACCOUNTS.includes(name)){toast('Cannot remove default accounts');return;}
+  cSet('sw3_cash_accounts',getCashAccounts().filter(a=>a!==name));
+  toast(`${name} removed`);renderCashPage();
 }
 async function transferFunds(){
   const from=document.getElementById('xfr-from').value,to=document.getElementById('xfr-to').value;
@@ -1181,9 +1237,11 @@ async function transferFunds(){
   const cash={...S.cash};
   if((cash[from]||0)<amt){toast(`Insufficient funds in ${from}`);return;}
   cash[from]=(cash[from]||0)-amt;cash[to]=(cash[to]||0)+amt;
-  setSyncStatus('syncing');
-  try{await db.collection('cashBalances').doc(sid(S.cashMonth,S.cashYear)).set({...cash,month:S.cashMonth,year:S.cashYear},{merge:true});S.cash=cash;cSet(CK.cash(S.cashMonth,S.cashYear),cash);document.getElementById('xfr-amt').value='';toast(`Transferred ${fN(amt)} from ${from} to ${to}`);setSyncStatus('synced');renderCashPage();renderDashboard();}
-  catch(e){toast('Error transferring');setSyncStatus('error');}
+  S.cash=cash;cSet(CK.cash(S.cashMonth,S.cashYear),cash);
+  document.getElementById('xfr-amt').value='';toast(`Transferred ${fN(amt)} from ${from} to ${to}`);
+  renderCashPage();renderDashboard();setSyncStatus('syncing');
+  try{await db.collection('cashBalances').doc(sid(S.cashMonth,S.cashYear)).set({...cash,month:S.cashMonth,year:S.cashYear},{merge:true});setSyncStatus('synced');}
+  catch(e){setSyncStatus('error');}
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1221,8 +1279,10 @@ function renderDebtors(){
   }).join('');
 }
 async function toggleRepay(id,newVal){
-  try{await db.collection('debtors').doc(id).update({expectRepayment:newVal});const d=S.debtors.find(x=>x.id===id);if(d) d.expectRepayment=newVal;renderDebtors();}
-  catch(e){toast('Error updating');}
+  const d=S.debtors.find(x=>x.id===id);
+  if(d){d.expectRepayment=newVal;cSet(CK.debtors,S.debtors);}
+  renderDebtors();
+  if(id&&db){try{await db.collection('debtors').doc(id).update({expectRepayment:newVal});}catch(e){}}
 }
 function openDebMod(){document.getElementById('deb-mod-title').textContent='Add Debtor';document.getElementById('deb-save').textContent='Add Debtor';document.getElementById('d-eid').value='';['d-name','d-amt','d-paid','d-rate','d-notes'].forEach(i=>document.getElementById(i).value='');document.getElementById('d-cur').value='NGN';document.getElementById('d-type').value='Loan';openMod('deb-modal');}
 function openEditDeb(id){const d=S.debtors.find(x=>x.id===id);if(!d) return;document.getElementById('deb-mod-title').textContent='Edit Debtor';document.getElementById('deb-save').textContent='Update';document.getElementById('d-eid').value=id;document.getElementById('d-name').value=d.name||'';document.getElementById('d-cur').value=d.currency||'NGN';document.getElementById('d-type').value=d.category||'Loan';document.getElementById('d-amt').value=d.amount||'';document.getElementById('d-paid').value=d.paid||'';document.getElementById('d-rate').value=d.rate||'';document.getElementById('d-notes').value=d.notes||'';openMod('deb-modal');}
@@ -1249,7 +1309,7 @@ function renderProjNW(){
   const avgSave=recent.length?recent.reduce((s,h)=>s+Math.max(0,(h.income-h.expenses)/h.income),0)/recent.length:0;
   const inv=S.investments,cash=S.cash;
   const invTotal=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
-  const cashTotal=CASH_ACCOUNTS.reduce((s,b)=>s+(cash[b]||0),0);
+  const cashTotal=getCashAccounts().reduce((s,b)=>s+(cash[b]||0),0);
   const debtorsOwed=S.debtors.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0);
   const nw=invTotal+cashTotal+debtorsOwed;
   document.getElementById('proj-networth').innerHTML=`
@@ -1257,7 +1317,7 @@ function renderProjNW(){
     ${nw>0?`<div class="card"><div class="clabel" style="margin-bottom:10px">Current Net Worth Breakdown</div>
       <div class="pjrow"><span class="pjlabel">Investments</span><span class="pjval" style="color:var(--accent)">${fN(invTotal)}</span></div>
       <div class="pjrow"><span class="pjlabel">Cash (GTB · Access · Union · Renmoney)</span><span class="pjval" style="color:var(--blue)">${fN(cashTotal)}</span></div>
-      ${CASH_ACCOUNTS.map(b=>`<div style="font-size:0.65rem;font-family:var(--mono);color:var(--text2);padding:2px 0">${b}: ${fN(cash[b]||0)}</div>`).join('')}
+      ${getCashAccounts().map(b=>`<div style="font-size:0.65rem;font-family:var(--mono);color:var(--text2);padding:2px 0">${b}: ${fN(cash[b]||0)}</div>`).join('')}
       ${debtorsOwed?`<div class="pjrow" style="margin-top:8px"><span class="pjlabel">Debtors (expected)</span><span class="pjval" style="color:var(--gold)">${fN(debtorsOwed)}</span></div>`:''}
       <div class="pjrow" style="font-weight:700;border-top:1px solid var(--border2);margin-top:6px;padding-top:10px"><span>Total</span><span class="pjval" style="color:var(--accent)">${fN(nw)}</span></div>
       <div class="abar" style="margin-top:10px">
@@ -1269,7 +1329,7 @@ function renderProjNW(){
 }
 
 function renderProjRun(){
-  const cash=S.cash,cashTotal=CASH_ACCOUNTS.reduce((s,b)=>s+(cash[b]||0),0);
+  const cash=S.cash,cashTotal=getCashAccounts().reduce((s,b)=>s+(cash[b]||0),0);
   const recent=HISTORY.filter(h=>h.expenses).slice(-6);
   const avgSpend=recent.length?recent.reduce((s,h)=>s+h.expenses,0)/recent.length:0;
   const runway=avgSpend?(cashTotal/avgSpend).toFixed(1):null;
@@ -1297,14 +1357,56 @@ function renderProjFees(){
 function toggleFeePaid(idx){const fs=cGet(CK.schoolFees)||SCHOOL_FEES_DEFAULT.map((f,i)=>({...f,id:i}));fs[idx].paid=!fs[idx].paid;cSet(CK.schoolFees,fs);renderProjFees();}
 
 function renderProjHistory(){
-  document.getElementById('proj-history').innerHTML=`<div class="card"><div class="clabel" style="margin-bottom:10px">Full History — Nov 2023 to May 2026</div>${HISTORY.map(d=>`<div class="pjrow"><div><span class="pjlabel">${d.label}</span></div><div style="text-align:right"><div style="font-size:0.72rem;font-family:var(--mono);color:var(--accent)">${fN(d.income)}</div><div style="font-size:0.68rem;font-family:var(--mono);color:var(--red)">${fN(d.expenses)}</div></div></div>`).join('')}</div>`;
+  document.getElementById('proj-history').innerHTML=`
+    <div class="card">
+      <div style="display:grid;grid-template-columns:80px 1fr 1fr;gap:0;padding-bottom:7px;border-bottom:1px solid var(--border);margin-bottom:4px">
+        <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:var(--text3)">Month</div>
+        <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:var(--accent);text-align:right;cursor:pointer" onclick="histSort('income')">Income ↕</div>
+        <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:var(--red);text-align:right;cursor:pointer" onclick="histSort('expenses')">Expenses ↕</div>
+      </div>
+      <div id="hist-rows">${buildHistRows(HISTORY)}</div>
+    </div>`;
+}
+function buildHistRows(data){
+  return data.map((d,i)=>`
+    <div style="display:grid;grid-template-columns:80px 1fr 1fr;gap:0;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer;align-items:center" onclick="expandHistRow(${HISTORY.indexOf(d)})">
+      <div style="font-size:0.75rem;font-weight:600">${d.label}</div>
+      <div style="font-family:var(--mono);font-size:0.71rem;color:var(--accent);text-align:right">${fN(d.income)}</div>
+      <div style="font-family:var(--mono);font-size:0.71rem;color:var(--red);text-align:right">${fN(d.expenses)}</div>
+    </div>
+    <div id="hist-detail-${HISTORY.indexOf(d)}" style="display:none;background:var(--bg2);border-radius:6px;padding:8px 10px;margin:2px 0 4px;font-size:0.68rem"></div>
+  `).join('');
+}
+let _histDir={income:1,expenses:1};
+function histSort(col){
+  _histDir[col]*=-1;
+  const sorted=[...HISTORY].sort((a,b)=>_histDir[col]*(b[col]-a[col]));
+  const el=document.getElementById('hist-rows');
+  if(el) el.innerHTML=buildHistRows(sorted);
+}
+function expandHistRow(i){
+  const el=document.getElementById('hist-detail-'+i);
+  if(!el) return;
+  const showing=el.style.display!=='none'&&el.innerHTML!=='';
+  el.style.display=showing?'none':'block';
+  if(showing) return;
+  const d=HISTORY[i];
+  if(!d) return;
+  const txns=cGet(CK.txns(d.month,d.year))||[];
+  const inc=cGet(CK.inc(d.month,d.year))||[];
+  if(!txns.length&&!inc.length){el.innerHTML='<div style="color:var(--text3)">No cached data — visit the Expenses tab for this month to load it.</div>';return;}
+  const cats={};txns.forEach(t=>{cats[t.category]=(cats[t.category]||0)+(t.amount||0);});
+  const expRows=Object.entries(cats).sort((a,b)=>b[1]-a[1]).map(([c,a])=>`<div style="display:flex;justify-content:space-between;padding:2px 0"><span style="color:var(--text2)">${c}</span><span style="font-family:var(--mono);color:var(--red)">${fN(a)}</span></div>`).join('');
+  const incRows=inc.map(i=>`<div style="display:flex;justify-content:space-between;padding:2px 0"><span style="color:var(--text2)">${i.category}</span><span style="font-family:var(--mono);color:var(--accent)">${fN(i.amount)}</span></div>`).join('');
+  el.innerHTML=(incRows?`<div style="font-size:0.6rem;font-weight:700;color:var(--accent);margin-bottom:3px;text-transform:uppercase">Income</div>${incRows}<div style="height:6px"></div>`:'')+
+               (expRows?`<div style="font-size:0.6rem;font-weight:700;color:var(--red);margin-bottom:3px;text-transform:uppercase">Expenses</div>${expRows}`:'');
 }
 
 // ══════════════════════════════════════════════════════════════════════════
 // SETTINGS
 // ══════════════════════════════════════════════════════════════════════════
-function renderSettings(){renderSettBudget();renderSettExport();renderSettInv();renderSettData();}
-function settTab(tab,btn){['budget','export','investments','data'].forEach(t=>{document.getElementById('sett-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
+function renderSettings(){renderSettBudget();renderSettExport();renderSettData();}
+function settTab(tab,btn){['budget','export','data'].forEach(t=>{document.getElementById('sett-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
 function renderSettBudget(){
   const total=Object.values(S.budgets).reduce((s,v)=>s+(v||0),0);
   document.getElementById('sett-budget').innerHTML=`<div style="font-size:0.68rem;color:var(--text2);margin-bottom:12px">Budget for ${MONTHS[S.expMonth-1]} ${S.expYear}</div>${CATS.map(c=>{const k=ck(c);return`<div class="ig"><label class="ilabel">${c}</label><input class="ifield" type="number" inputmode="decimal" id="b-${k}" placeholder="0" value="${S.budgets[k]||''}"></div>`;}).join('')}<div style="display:flex;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);margin-bottom:12px;font-weight:700;font-size:0.84rem"><span>Total</span><span style="font-family:var(--mono);color:var(--accent)">${fN(total)}</span></div><button class="btn btn-p btn-full" onclick="saveBudget()">Save Budget</button>`;
@@ -1344,306 +1446,154 @@ function doExport(rows,filename,fmt){
   else{if(typeof XLSX==='undefined'){toast('Excel library not loaded');return;}const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=[{wch:12},{wch:18},{wch:24},{wch:10},{wch:24},{wch:14}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Transactions');XLSX.writeFile(wb,filename+'.xlsx');toast('Excel file downloaded');}
 }
 
-function renderSettInv(){
-  document.getElementById('sett-investments').innerHTML=`<div style="font-size:0.68rem;color:var(--text2);margin-bottom:12px">Investment closing balances — ${MONTHS[S.expMonth-1]} ${S.expYear}</div>${PLATFORMS.map(p=>`<div class="ig"><label class="ilabel">${p.label} (₦)</label><input class="ifield" type="number" inputmode="decimal" id="si-${p.key}" placeholder="0" value="${S.investments[p.key]||''}"></div>`).join('')}<button class="btn btn-p btn-full" onclick="saveInvFromSettings()">Save Investment Balances</button>`;
-}
-async function saveInvFromSettings(){
-  setSyncStatus('syncing');const data={month:S.expMonth,year:S.expYear};PLATFORMS.forEach(p=>{const v=parseFloat(document.getElementById('si-'+p.key).value);data[p.key]=isNaN(v)?0:v;});
-  try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});S.investments=data;cSet(CK.inv(S.expMonth,S.expYear),data);toast('Balances saved');setSyncStatus('synced');renderInvestments();renderDashboard();}
-  catch(e){toast('Error saving');setSyncStatus('error');}
-}
-
 function renderSettData(){
+  const fbVer=cGet(CK.fbSyncVer)||null;
+  const ls=cGet(CK.lastSync);
+  let syncInfo='Not yet synced';
+  if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
     <div class="exp-card">
+      <div class="exp-card-title" style="margin-bottom:6px">Firebase Sync Status</div>
+      <div class="pjrow"><span class="pjlabel">Last sync</span><span class="pjval">${syncInfo}</span></div>
+      <div class="pjrow"><span class="pjlabel">Seed version</span><span class="pjval" style="color:var(--accent)">${fbVer||'—'}</span></div>
+      <div class="pjrow"><span class="pjlabel">Transactions (this month)</span><span class="pjval">${S.txns.length}</span></div>
+      <div class="pjrow"><span class="pjlabel">Income records</span><span class="pjval">${S.income.length}</span></div>
+      <div class="pjrow"><span class="pjlabel">Debtors</span><span class="pjval">${S.debtors.length}</span></div>
+      <div style="margin-top:10px"><button class="btn btn-g btn-sm" onclick="forceSyncNow()">↻ Force re-sync from Firebase</button></div>
+    </div>
+    <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Import JSON Seed File</div>
-      <div class="exp-card-sub">Upload <strong>spendwise-seed.json</strong> to populate all transactions, income, investments, cash balances, and debtors in one go.</div>
+      <div class="exp-card-sub">Upload <strong>spendwise-seed.json</strong> to populate all data instantly. Firebase syncs in the background.</div>
       <input type="file" id="seed-file-input" accept=".json" style="display:none" onchange="handleSeedFile(event)">
       <div style="margin-top:10px"><button class="btn btn-p" onclick="document.getElementById('seed-file-input').click()">↑ Choose JSON File</button></div>
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">FX Rates</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9">Monthly average rates built in (2023–2026). Switch to USD/GBP/Effective in the Dashboard.</div></div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.2.0</div><div>Firebase: gen-lang-client-0371859680</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.3.0</div><div>Firebase: gen-lang-client-0371859680</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
 }
+async function forceSyncNow(){
+  if(!db||!navigator.onLine){toast('Not connected');return;}
+  setSyncStatus('syncing');toast('Syncing…');
+  try{
+    const m=S.expMonth,y=S.expYear;
+    await syncAll();
+    if(S.expMonth===m&&S.expYear===y){
+      S.txns=cGet(CK.txns(m,y))||S.txns;
+      S.income=cGet(CK.inc(m,y))||S.income;
+      S.investments=cGet(CK.inv(m,y))||S.investments;
+      S.cash=cGet(CK.cash(m,y))||S.cash;
+    }
+    cSet(CK.lastSync,Date.now());setSyncStatus('synced');renderAll();toast('Sync complete');renderSettData();
+  }catch(e){setSyncStatus('error');toast('Sync failed');}
+}
 
-let _pendingSeed = null;
-
-function handleSeedFile(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async (e) => {
-    try {
-      const seed = JSON.parse(e.target.result);
-      if (!seed.transactions || !seed.income) {
-        document.getElementById('seed-status').innerHTML = '<span style="color:var(--red)">Invalid file — missing transactions or income</span>';
-        return;
-      }
-      _pendingSeed = seed;
-      const preview = document.getElementById('seed-preview');
-      preview.style.display = 'block';
-      preview.innerHTML = `
+// ══════════════════════════════════════════════════════════════════════════
+// SEED / JSON IMPORT
+// ══════════════════════════════════════════════════════════════════════════
+let _pendingSeed=null;
+function handleSeedFile(event){
+  const file=event.target.files[0];if(!file) return;
+  const reader=new FileReader();
+  reader.onload=(e)=>{
+    try{
+      const seed=JSON.parse(e.target.result);
+      if(!seed.transactions||!seed.income){document.getElementById('seed-status').innerHTML='<span style="color:var(--red)">Invalid file</span>';return;}
+      _pendingSeed=seed;
+      const preview=document.getElementById('seed-preview');preview.style.display='block';
+      preview.innerHTML=`
         <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:8px">${file.name}</div>
-        ${[['Transactions',seed.transactions?.length||0],['Income entries',seed.income?.length||0],
-           ['Cash records',seed.cashBalances?.length||0],['Investment records',seed.investments?.length||0],
-           ['Debtors',seed.debtors?.length||0],['Historical summaries',seed.historicalSummary?.length||0]]
+        ${[['Transactions',seed.transactions?.length||0],['Income',seed.income?.length||0],['Cash records',seed.cashBalances?.length||0],['Investments',seed.investments?.length||0],['Debtors',seed.debtors?.length||0],['History',seed.historicalSummary?.length||0]]
           .map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border);font-size:0.72rem"><span style="color:var(--text2)">${k}</span><span style="font-family:var(--mono);color:var(--accent)">${v}</span></div>`).join('')}
         <div style="margin-top:10px;display:flex;gap:8px">
           <button class="btn btn-p btn-sm" onclick="confirmSeedImport()">Import All Data</button>
-          <button class="btn btn-g btn-sm" onclick="document.getElementById('seed-preview').style.display='none';document.getElementById('seed-status').textContent=''">Cancel</button>
+          <button class="btn btn-g btn-sm" onclick="document.getElementById('seed-preview').style.display='none'">Cancel</button>
         </div>`;
-      document.getElementById('seed-status').textContent = 'Review the counts above, then click Import All Data.';
-    } catch(err) {
-      document.getElementById('seed-status').innerHTML = `<span style="color:var(--red)">Parse error: ${err.message}</span>`;
-    }
+      document.getElementById('seed-status').textContent='Review counts, then click Import.';
+    }catch(err){document.getElementById('seed-status').innerHTML=`<span style="color:var(--red)">Parse error: ${err.message}</span>`;}
   };
   reader.readAsText(file);
 }
-
-async function confirmSeedImport() {
-  const seed = _pendingSeed;
-  if (!seed) return;
-  const txnCount = seed.transactions?.length||0;
-  const incCount = seed.income?.length||0;
-  const cashCount = seed.cashBalances?.length||0;
-  const invCount = seed.investments?.length||0;
-  const debCount = seed.debtors?.length||0;
-  const histCount = seed.historicalSummary?.length||0;
-  if (!confirm(`Import will populate the app with:\n\n${txnCount} transactions\n${incCount} income entries\n${cashCount} cash records\n${invCount} investment records\n${debCount} debtors\n${histCount} historical summaries\n\nData appears instantly from local cache, then syncs to Firebase in the background.\n\nContinue?`)) return;
-
-  const statusEl = document.getElementById('seed-status');
-  document.getElementById('seed-preview').style.display = 'none';
-
-  // ── STEP 1: Write everything to localStorage immediately ──────────────
-  statusEl.innerHTML = '<span style="color:var(--gold)">Writing to local cache…</span>';
-
-  // Cache transactions and income per month
-  const txnsByMonth = {};
-  for (const t of (seed.transactions||[])) {
-    const k = CK.txns(t.month, t.year);
-    if (!txnsByMonth[k]) txnsByMonth[k] = [];
-    txnsByMonth[k].push(t);
-  }
-  for (const [k,v] of Object.entries(txnsByMonth)) cSet(k, v);
-
-  const incByMonth = {};
-  for (const i of (seed.income||[])) {
-    const k = CK.inc(i.month, i.year);
-    if (!incByMonth[k]) incByMonth[k] = [];
-    incByMonth[k].push(i);
-  }
-  for (const [k,v] of Object.entries(incByMonth)) cSet(k, v);
-
-  for (const c of (seed.cashBalances||[]))    cSet(CK.cash(c.month, c.year), c);
-  for (const i of (seed.investments||[]))     cSet(CK.inv(i.month, i.year), i);
-  if (seed.debtors?.length)                   cSet(CK.debtors, seed.debtors);
-  cSet(CK.lastSync, Date.now());
-
-  // ── STEP 2: Reload S.* from cache for current month and render ─────────
-  const m = S.expMonth, y = S.expYear;
-  S.txns       = cGet(CK.txns(m,y))||[];
-  S.income     = cGet(CK.inc(m,y))||[];
-  S.investments= cGet(CK.inv(m,y))||{};
-  S.cash       = cGet(CK.cash(m,y))||{};
-  S.debtors    = seed.debtors||[];
-  _pendingSeed = null;
-
-  statusEl.innerHTML = `<span style="color:var(--accent)">✓ Local cache populated — app ready. Syncing to Firebase in background…</span>`;
-  toast('Data loaded — syncing to Firebase…');
-  renderAll();
-
-  // ── STEP 3: Write to Firestore in the background ───────────────────────
-  if (!db) { statusEl.innerHTML += ' <span style="color:var(--text2)">(Firebase not ready — data is in local cache)</span>'; return; }
+async function confirmSeedImport(){
+  const seed=_pendingSeed;if(!seed) return;
+  const c={t:seed.transactions?.length||0,i:seed.income?.length||0,ca:seed.cashBalances?.length||0,iv:seed.investments?.length||0,d:seed.debtors?.length||0,h:seed.historicalSummary?.length||0};
+  if(!confirm(`Import will load:\n${c.t} transactions · ${c.i} income entries\n${c.ca} cash records · ${c.iv} investment records\n${c.d} debtors · ${c.h} history rows\n\nApp loads instantly — Firebase syncs in background.`)) return;
+  const statusEl=document.getElementById('seed-status');
+  document.getElementById('seed-preview').style.display='none';
+  statusEl.innerHTML='<span style="color:var(--gold)">Loading into app…</span>';
+  // Write to localStorage immediately
+  const txnsByM={},incByM={};
+  for(const t of(seed.transactions||[])){const k=CK.txns(t.month,t.year);if(!txnsByM[k])txnsByM[k]=[];txnsByM[k].push(t);}
+  for(const i of(seed.income||[])){const k=CK.inc(i.month,i.year);if(!incByM[k])incByM[k]=[];incByM[k].push(i);}
+  for(const[k,v]of Object.entries(txnsByM)) cSet(k,v);
+  for(const[k,v]of Object.entries(incByM)) cSet(k,v);
+  for(const c of(seed.cashBalances||[])) cSet(CK.cash(c.month,c.year),c);
+  for(const i of(seed.investments||[])) cSet(CK.inv(i.month,i.year),i);
+  if(seed.debtors?.length) cSet(CK.debtors,seed.debtors);
+  const ver=(seed._meta?.version||'imported')+' @ '+new Date().toLocaleDateString('en-GB');
+  cSet(CK.fbSyncVer,ver);cSet(CK.lastSync,Date.now());
+  // Reload S.* and render
+  const m=S.expMonth,y=S.expYear;
+  S.txns=cGet(CK.txns(m,y))||[];
+  S.income=cGet(CK.inc(m,y))||[];
+  S.investments=cGet(CK.inv(m,y))||{};
+  S.cash=cGet(CK.cash(m,y))||{};
+  S.debtors=seed.debtors||[];
+  _pendingSeed=null;
+  statusEl.innerHTML=`<span style="color:var(--accent)">✓ App loaded — syncing to Firebase…</span>`;
+  toast('Data loaded');renderAll();
+  // Background Firebase write
+  if(!db){statusEl.innerHTML+=` <span style="color:var(--text2)">(Firebase not ready — data in local cache)</span>`;return;}
   setSyncStatus('syncing');
-
-  (async () => {
-    try {
-      const now = firebase.firestore.Timestamp.now();
-      const monthKey = r => `${r.year}-${String(r.month).padStart(2,'0')}`;
-
-      async function batchSet(collName, items, docIdFn) {
-        let batch = db.batch(), ops = 0;
-        for (const item of items) {
-          const ref = docIdFn ? db.collection(collName).doc(docIdFn(item)) : db.collection(collName).doc();
-          batch.set(ref, item, {merge:true});
-          if (++ops >= 490) { await batch.commit(); batch = db.batch(); ops = 0; }
-        }
-        if (ops > 0) await batch.commit();
+  (async()=>{
+    try{
+      const now=firebase.firestore.Timestamp.now();
+      const mk=r=>`${r.year}-${String(r.month).padStart(2,'0')}`;
+      async function batchSet(col,items,idFn){
+        let b=db.batch(),n=0;
+        for(const item of items){const ref=idFn?db.collection(col).doc(idFn(item)):db.collection(col).doc();b.set(ref,item,{merge:true});if(++n>=490){await b.commit();b=db.batch();n=0;}}
+        if(n>0) await b.commit();
       }
-
-      async function clearMonth(collName, year, month) {
-        try {
-          const snap = await db.collection(collName).where('year','==',year).where('month','==',month).get();
-          if (!snap.empty) {
-            let b = db.batch(), n = 0;
-            snap.docs.forEach(d => { b.delete(d.ref); if(++n>=490){b.commit();b=db.batch();n=0;} });
-            if (n>0) await b.commit();
-          }
-        } catch(e) {
-          try {
-            const snap = await db.collection(collName).where('year','==',year).where('month','==',month).get();
-            if (!snap.empty) { const b=db.batch(); snap.docs.forEach(d=>b.delete(d.ref)); await b.commit(); }
-          } catch(e2) {}
-        }
-      }
-
-      // Historical + cash + investments (merge, no delete needed)
-      if (seed.historicalSummary?.length) await batchSet('historicalSummary', seed.historicalSummary, monthKey);
-      if (seed.cashBalances?.length)      await batchSet('cashBalances', seed.cashBalances, monthKey);
-      if (seed.investments?.length)       await batchSet('investments', seed.investments, monthKey);
-
-      // Transactions: clear each month then write
-      const txnMonths = [...new Map(seed.transactions.map(t=>[`${t.year}-${t.month}`,t])).values()];
-      for (const t of txnMonths) await clearMonth('transactions', t.year, t.month);
-      await batchSet('transactions', seed.transactions.map(t=>({...t,createdAt:now})), null);
-
-      // Income: same
-      const incMonths = [...new Map(seed.income.map(i=>[`${i.year}-${i.month}`,i])).values()];
-      for (const i of incMonths) await clearMonth('income', i.year, i.month);
-      await batchSet('income', seed.income.map(i=>({...i,createdAt:now})), null);
-
-      // Debtors: replace all
-      if (seed.debtors?.length) {
-        const existing = await db.collection('debtors').get();
-        if (!existing.empty) { const b=db.batch(); existing.docs.forEach(d=>b.delete(d.ref)); await b.commit(); }
-        await batchSet('debtors', seed.debtors.map(d=>({...d,createdAt:now})), null);
-      }
-
-      cSet(CK.lastSync, Date.now());
-      setSyncStatus('synced');
-      hideStaleBar();
-      if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent)">✓ Firebase sync complete — all ${txnCount+incCount+cashCount+invCount+debCount+histCount} records written</span>`;
-      toast('Firebase sync complete');
-    } catch(err) {
-      console.error('Firebase seed error:', err);
-      setSyncStatus('error');
-      if (statusEl) statusEl.innerHTML += `<br><span style="color:var(--gold)">⚠ Firebase sync failed (${err.message}) — data is safe in local cache</span>`;
+      async function clearM(col,months){for(const{year,month}of months){try{const s=await db.collection(col).where('year','==',year).where('month','==',month).get();if(!s.empty){let b=db.batch();s.docs.forEach(d=>b.delete(d.ref));await b.commit();}}catch(e){}}}
+      if(seed.historicalSummary?.length) await batchSet('historicalSummary',seed.historicalSummary,mk);
+      if(seed.cashBalances?.length) await batchSet('cashBalances',seed.cashBalances,mk);
+      if(seed.investments?.length) await batchSet('investments',seed.investments,mk);
+      const txnMs=[...new Map(seed.transactions.map(t=>[`${t.year}-${t.month}`,t])).values()];
+      await clearM('transactions',txnMs);
+      await batchSet('transactions',seed.transactions.map(t=>({...t,createdAt:now})),null);
+      const incMs=[...new Map(seed.income.map(i=>[`${i.year}-${i.month}`,i])).values()];
+      await clearM('income',incMs);
+      await batchSet('income',seed.income.map(i=>({...i,createdAt:now})),null);
+      if(seed.debtors?.length){const ex=await db.collection('debtors').get();if(!ex.empty){const b=db.batch();ex.docs.forEach(d=>b.delete(d.ref));await b.commit();}await batchSet('debtors',seed.debtors.map(d=>({...d,createdAt:now})),null);}
+      cSet(CK.lastSync,Date.now());setSyncStatus('synced');hideStaleBar();
+      if(statusEl) statusEl.innerHTML=`<span style="color:var(--accent)">✓ Firebase sync complete</span>`;
+      toast('Firebase sync complete');renderSettData();
+    }catch(err){
+      console.error('Firebase seed error:',err);setSyncStatus('error');
+      if(statusEl) statusEl.innerHTML+=`<br><span style="color:var(--gold)">⚠ Firebase failed (${err.message}) — safe in local cache</span>`;
     }
   })();
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// SEED ALL HISTORICAL DATA (from new Excel)
-// ══════════════════════════════════════════════════════════════════════════
-async function seedAll(){
-  if(!confirm('Seed all historical data from your Excel into Firestore?')) return;
-  setSyncStatus('syncing');
-
-  const FULL_HISTORY=[
-    {year:2023,month:11,income:1504749.30,expenses:3109184},
-    {year:2023,month:12,income:2514940.87,expenses:1797869},
-    {year:2024,month:1,income:1526606.41,expenses:1616342.13},
-    {year:2024,month:2,income:1530977.48,expenses:3386294.01},
-    {year:2024,month:3,income:1526387.00,expenses:1575259},
-    {year:2024,month:4,income:6195375.12,expenses:3940457},
-    {year:2024,month:5,income:4636321.29,expenses:8190421},
-    {year:2024,month:6,income:1851775.64,expenses:2628946.94},
-    {year:2024,month:7,income:3025884.99,expenses:3148494},
-    {year:2024,month:8,income:3842311.74,expenses:2188784.88},
-    {year:2024,month:9,income:1881560.21,expenses:1885132.50},
-    {year:2024,month:10,income:3300562.05,expenses:2514477},
-    {year:2024,month:11,income:1845438.76,expenses:2966831.53},
-    {year:2024,month:12,income:3406527.91,expenses:2866535.38},
-    {year:2025,month:1,income:1847907.18,expenses:3048689.89},
-    {year:2025,month:2,income:5872477.09,expenses:2862795},
-    {year:2025,month:3,income:1869411.72,expenses:2900387},
-    {year:2025,month:4,income:4861674.27,expenses:3336341},
-    {year:2025,month:5,income:2669192.31,expenses:3826691},
-    {year:2025,month:6,income:6714369.96,expenses:10530930},
-    {year:2025,month:7,income:4621652.95,expenses:3143238.92},
-    {year:2025,month:8,income:2625865.10,expenses:3213695},
-    {year:2025,month:9,income:2618020.93,expenses:2313078.90},
-    {year:2025,month:10,income:2617911.50,expenses:2407654.40},
-    {year:2025,month:11,income:2615534.96,expenses:2210241},
-    {year:2025,month:12,income:4595720.82,expenses:3397263},
-    {year:2026,month:1,income:2630854.93,expenses:3602724},
-    {year:2026,month:2,income:7579189.64,expenses:3043808.71},
-    {year:2026,month:3,income:2952559.77,expenses:2863379.90},
-    {year:2026,month:4,income:6215643.60,expenses:5002992.61},
-    {year:2026,month:5,income:5961217.77,expenses:1519729.08},
-  ];
-
-  // Cash balances extracted from Excel (Renmoney = Renflex personal)
-  const CASH=[
-    {year:2026,month:1,GTB:35062,Union:1788,Access:6520,Renmoney:919.27},
-    {year:2026,month:2,GTB:93697.49,Union:1788,Access:1008,Renmoney:1501629.56},
-    {year:2026,month:3,GTB:23962.59,Union:1788,Access:7166.67,Renmoney:2003701.93},
-    {year:2026,month:4,GTB:47653.98,Union:1788,Access:0,Renmoney:1733.34},
-    {year:2026,month:5,GTB:31729.90,Union:1788,Access:0,Renmoney:2402150.01},
-  ];
-
-  // Investment balances — NGN-denominated platforms use NGN values directly.
-  // USD-denominated platforms (Risevest, Trove, Bamboo, USDHoldings) are stored
-  // converted to NGN at the month's FX rate so the app can sum portfolios uniformly.
-  // The "Effective" currency toggle reverses this conversion for display.
-  const INVESTMENTS=[
-    // Jan 2026 — closing balances from spreadsheet
-    // NGN: Piggy 3,611,049 | PiggySafelock 1,009,863 | RenVault 722,324
-    // USD: Risevest 491.84 | Trove 1,597.49 | Bamboo 2,443.76 | USD Holdings 2,068.22
-    // USD->NGN @1580 (Jan 2026 rate)
-    {year:2026,month:1,Piggy:3611049,PiggySafelock:1009863,RenVault:722324,
-     Risevest:Math.round(491.84*1580),Trove:Math.round(1597.49*1580),Bamboo:Math.round(2443.76*1580),USDHoldings:Math.round(2068.22*1580)},
-    // Feb 2026
-    {year:2026,month:2,Piggy:6001523,PiggySafelock:2035507,RenVault:2044231,
-     Risevest:Math.round(482.53*1600),Trove:Math.round(1649.48*1600),Bamboo:Math.round(2387.39*1600),USDHoldings:Math.round(2068.22*1600)},
-    // Mar 2026
-    {year:2026,month:3,Piggy:5489151,PiggySafelock:2066082,RenVault:2075291,
-     Risevest:Math.round(425.43*1620),Trove:Math.round(1542.42*1620),Bamboo:Math.round(2503.27*1620),USDHoldings:Math.round(2068.22*1620)},
-    // Apr 2026
-    {year:2026,month:4,Piggy:3574017,PiggySafelock:2095671,RenVault:2105350,
-     Risevest:Math.round(425.43*1600),Trove:Math.round(1542.42*1600),Bamboo:Math.round(2503.27*1600),USDHoldings:Math.round(4468.22*1600)},
-    // May 2026
-    {year:2026,month:5,Piggy:3576287,PiggySafelock:2101589,RenVault:2111362,
-     Risevest:Math.round(480.48*1590),Trove:Math.round(1699.55*1590),Bamboo:Math.round(2806.62*1590),USDHoldings:Math.round(4371.22*1590)},
-  ];
-
-  // Debtors — from Jan'26 sheet expense summary table (most current snapshot)
-  const DEBTORS=[
-    {name:'Semasa',currency:'USD',amount:1000,paid:0,balance:1000,rate:1450,ngnBalance:1450000,category:'Loan',notes:'',expectRepayment:true},
-    {name:'Jesse',currency:'USD',amount:275,paid:100,balance:175,rate:1450,ngnBalance:253750,category:'Loan',notes:'',expectRepayment:true},
-    {name:'Stella',currency:'USD',amount:17.98,paid:0,balance:17.98,rate:1450,ngnBalance:26071,category:'Loan',notes:'',expectRepayment:true},
-    {name:'Mautin',currency:'GBP',amount:500,paid:0,balance:500,rate:1930,ngnBalance:965000,category:'Loan',notes:'',expectRepayment:true},
-    {name:'Kishi',currency:'USD',amount:86,paid:0,balance:86,rate:1450,ngnBalance:124700,category:'Loan',notes:'',expectRepayment:true},
-    {name:'Iseyemi',currency:'USD',amount:200,paid:0,balance:200,rate:1450,ngnBalance:290000,category:'Loan',notes:'',expectRepayment:true},
-    {name:'Sena',currency:'NGN',amount:100000,paid:0,balance:100000,rate:1,ngnBalance:100000,category:'Loan',notes:'',expectRepayment:true},
-    {name:'Mauton',currency:'NGN',amount:700000,paid:0,balance:700000,rate:1,ngnBalance:700000,category:'Loan',notes:'From summary sheet',expectRepayment:true},
-    {name:'Funmi',currency:'NGN',amount:395025,paid:0,balance:395025,rate:1,ngnBalance:395025,category:'Loan',notes:'',expectRepayment:true},
-    {name:'Pentho & Semako',currency:'NGN',amount:250000,paid:0,balance:250000,rate:1,ngnBalance:250000,category:'Loan',notes:'',expectRepayment:false},
-    {name:'Maugbe',currency:'NGN',amount:205000,paid:0,balance:205000,rate:1,ngnBalance:205000,category:'Loan',notes:'',expectRepayment:true},
-    {name:'Gbewato',currency:'NGN',amount:203000,paid:0,balance:203000,rate:1,ngnBalance:203000,category:'Loan',notes:'',expectRepayment:true},
-    {name:'Caleb',currency:'NGN',amount:142000,paid:0,balance:142000,rate:1,ngnBalance:142000,category:'Loan',notes:'Back to school + summer school',expectRepayment:false},
-    {name:'Pego',currency:'NGN',amount:80000,paid:0,balance:80000,rate:1,ngnBalance:80000,category:'Loan',notes:'',expectRepayment:true},
-    {name:'Semako',currency:'NGN',amount:40000,paid:0,balance:40000,rate:1,ngnBalance:40000,category:'Loan',notes:'',expectRepayment:true},
-  ];
-
-  try{
-    let batch=db.batch(),ops=0;
-    const add=async(ref,data)=>{if(ops>=490){await batch.commit();batch=db.batch();ops=0;}batch.set(ref,data,{merge:true});ops++;};
-    for(const r of FULL_HISTORY) await add(db.collection('historicalSummary').doc(sid(r.month,r.year)),r);
-    for(const r of INVESTMENTS) await add(db.collection('investments').doc(sid(r.month,r.year)),r);
-    for(const r of CASH) await add(db.collection('cashBalances').doc(sid(r.month,r.year)),r);
-    await batch.commit();
-    // Seed debtors (clear first, then add)
-    const existingDebs=await db.collection('debtors').get();
-    const delBatch=db.batch();existingDebs.docs.forEach(d=>delBatch.delete(d.ref));await delBatch.commit();
-    const addBatch=db.batch();
-    DEBTORS.forEach(d=>addBatch.set(db.collection('debtors').doc(),{...d,createdAt:firebase.firestore.Timestamp.now()}));
-    await addBatch.commit();
-    // Update local cache
-    INVESTMENTS.forEach(r=>cSet(CK.inv(r.month,r.year),r));
-    CASH.forEach(r=>cSet(CK.cash(r.month,r.year),r));
-    toast('All historical data seeded');setSyncStatus('synced');
-    await Promise.all([loadInvData(S.expMonth,S.expYear),loadCashData(S.expMonth,S.expYear),loadDebtors()]);
-    renderAll();
-  }catch(e){console.error(e);toast('Error seeding — check console');setSyncStatus('error');}
-}
 
 // ══════════════════════════════════════════════════════════════════════════
 // ONLINE/OFFLINE
 // ══════════════════════════════════════════════════════════════════════════
-window.addEventListener('online',()=>{document.getElementById('offl').style.display='none';setSyncStatus('syncing');if(db) syncAll().then(()=>{setSyncStatus('synced');cSet(CK.lastSync,Date.now());hideStaleBar();renderAll();}).catch(()=>setSyncStatus('error'));});
+window.addEventListener('online',()=>{
+  document.getElementById('offl').style.display='none';setSyncStatus('syncing');
+  if(db){
+    const m=S.expMonth,y=S.expYear;
+    syncAll().then(()=>{
+      if(S.expMonth===m&&S.expYear===y){
+        S.txns=cGet(CK.txns(m,y))||S.txns;
+        S.income=cGet(CK.inc(m,y))||S.income;
+        S.investments=cGet(CK.inv(m,y))||S.investments;
+        S.cash=cGet(CK.cash(m,y))||S.cash;
+      }
+      setSyncStatus('synced');cSet(CK.lastSync,Date.now());hideStaleBar();renderAll();
+    }).catch(()=>setSyncStatus('error'));
+  }
+});
 window.addEventListener('offline',()=>{document.getElementById('offl').style.display='block';setSyncStatus('offline');});
 if(!navigator.onLine) document.getElementById('offl').style.display='block';
 ['exp-modal','inv-modal','deb-modal','inc-modal'].forEach(id=>{document.getElementById(id).addEventListener('click',function(e){if(e.target===this)closeMod(id);});});
