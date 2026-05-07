@@ -202,7 +202,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl">v3.7.2</span>
+      <span class="ver-lbl">v3.7.3</span>
     </div>
   </div>
 </header>
@@ -386,13 +386,9 @@ datalist option{background:var(--bg2);color:var(--text)}
   <div class="pg-title" style="margin-bottom:12px">Projections</div>
   <div class="tabs">
     <button class="tab active" onclick="projTab('networth',this)">Net Worth</button>
-    <button class="tab" onclick="projTab('runway',this)">Runway</button>
-    <button class="tab" onclick="projTab('fees',this)">School Fees</button>
     <button class="tab" onclick="projTab('history',this)">History</button>
   </div>
   <div id="proj-networth"></div>
-  <div id="proj-runway" style="display:none"></div>
-  <div id="proj-fees" style="display:none"></div>
   <div id="proj-history" style="display:none"></div>
 </div>
 
@@ -400,13 +396,13 @@ datalist option{background:var(--bg2);color:var(--text)}
 <div class="pg" id="pg-settings">
   <div class="pg-title" style="margin-bottom:12px">Settings</div>
   <div class="tabs">
-    <button class="tab active" onclick="settTab('budget',this)">Budget</button>
+    <button class="tab active" onclick="settTab('data',this)">Data</button>
+    <button class="tab" onclick="settTab('budget',this)">Budget</button>
     <button class="tab" onclick="settTab('export',this)">Export</button>
-    <button class="tab" onclick="settTab('data',this)">Data</button>
   </div>
-  <div id="sett-budget"></div>
+  <div id="sett-data"></div>
+  <div id="sett-budget" style="display:none"></div>
   <div id="sett-export" style="display:none"></div>
-  <div id="sett-data" style="display:none"></div>
 </div>
 
 </div></div>
@@ -632,6 +628,8 @@ function loadFromCache(){
   S.dashCurrency=cGet(CK.currency)||'NGN';
   S.customExpLines=cGet(CK.customLines)||{};
   S.isStale=S.txns.length>0||Object.keys(S.investments).length>0||Object.keys(S.cash).length>0;
+  // Pre-build history from cache so charts show immediately before Firebase loads
+  if(!cGet('sw3_history')||!cGet('sw3_history').length) _buildHistoryFromCache();
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -797,18 +795,59 @@ async function loadDebtors(){
 }
 
 async function loadHistoricalSummary(){
-  const local=cGet('sw3_history');
-  if(local&&local.length>0) return; // local always wins
+  // Always pull from Firebase — never skip with local-always-wins
   try{
     const snap=await db.collection('historicalSummary').orderBy('year').orderBy('month').get();
+    const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    let hist=[];
     if(snap&&snap.size>0){
-      const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      const hist=snap.docs.map(d=>{const h=d.data();return{year:h.year,month:h.month,
+      hist=snap.docs.map(d=>{const h=d.data();return{year:h.year,month:h.month,
         label:h.label||(MS2[(h.month||1)-1]+" '"+String(h.year).slice(2)),
         income:h.income||0,expenses:h.expenses||0};});
-      cSet('sw3_history',hist);
     }
-  }catch(e){/* keep local */}
+    // Augment with any months NOT in historicalSummary but present in localStorage cache
+    // This covers months entered live (Jan–May 2026) that aren't in the seeded historicalSummary
+    const histKeys=new Set(hist.map(h=>`${h.year}-${h.month}`));
+    // Scan localStorage for sw3_txns_* and sw3_inc_* keys
+    for(let y=2023;y<=new Date().getFullYear();y++){
+      for(let m=1;m<=12;m++){
+        const key=`${y}-${m}`;
+        if(histKeys.has(key)) continue; // already have it from Firebase
+        const txns=cGet(CK.txns(m,y));
+        const inc=cGet(CK.inc(m,y));
+        if(!txns&&!inc) continue;
+        const expenses=(txns||[]).reduce((s,t)=>s+(t.amount||0),0);
+        const income=(inc||[]).reduce((s,i)=>s+(i.amount||0),0);
+        if(!expenses&&!income) continue;
+        hist.push({year:y,month:m,
+          label:MS2[m-1]+" '"+String(y).slice(2),
+          income,expenses});
+      }
+    }
+    // Sort chronologically
+    hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);
+    if(hist.length) cSet('sw3_history',hist);
+  }catch(e){
+    // On error, try to build entirely from localStorage cache
+    _buildHistoryFromCache();
+  }
+}
+
+function _buildHistoryFromCache(){
+  const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const hist=[];
+  for(let y=2023;y<=new Date().getFullYear();y++){
+    for(let m=1;m<=12;m++){
+      const txns=cGet(CK.txns(m,y));
+      const inc=cGet(CK.inc(m,y));
+      if(!txns&&!inc) continue;
+      const expenses=(txns||[]).reduce((s,t)=>s+(t.amount||0),0);
+      const income=(inc||[]).reduce((s,i)=>s+(i.amount||0),0);
+      if(!expenses&&!income) continue;
+      hist.push({year:y,month:m,label:MS2[m-1]+" '"+String(y).slice(2),income,expenses});
+    }
+  }
+  if(hist.length) cSet('sw3_history',hist);
 }
 
 async function loadBudgets(m,y){
@@ -1627,8 +1666,8 @@ async function removeDeb(id){if(!confirm('Remove this debtor?')) return;try{awai
 // ══════════════════════════════════════════════════════════════════════════
 // PROJECTIONS
 // ══════════════════════════════════════════════════════════════════════════
-function renderProjections(){renderProjNW();renderProjRun();renderProjFees();renderProjHistory();}
-function projTab(tab,btn){['networth','runway','fees','history'].forEach(t=>{document.getElementById('proj-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
+function renderProjections(){renderProjNW();renderProjHistory();}
+function projTab(tab,btn){['networth','history'].forEach(t=>{document.getElementById('proj-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
 
 function renderProjNW(){
   const recent=getHistory().filter(h=>h.income&&h.expenses).slice(-6);
@@ -1786,8 +1825,8 @@ function expandHistRow(i){
 // ══════════════════════════════════════════════════════════════════════════
 // SETTINGS
 // ══════════════════════════════════════════════════════════════════════════
-function renderSettings(){renderSettBudget();renderSettExport();renderSettData();}
-function settTab(tab,btn){['budget','export','data'].forEach(t=>{document.getElementById('sett-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
+function renderSettings(){renderSettData();renderSettBudget();renderSettExport();}
+function settTab(tab,btn){['data','budget','export'].forEach(t=>{document.getElementById('sett-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
 function renderSettBudget(){
   const total=Object.values(S.budgets).reduce((s,v)=>s+(v||0),0);
   const prevM=S.expMonth===1?12:S.expMonth-1,prevY=S.expMonth===1?S.expYear-1:S.expYear;
@@ -1901,7 +1940,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.7.2</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.7.3</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
 }
 
