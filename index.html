@@ -180,7 +180,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl">v3.4.1</span>
+      <span class="ver-lbl">v3.5.0</span>
     </div>
   </div>
 </header>
@@ -377,18 +377,18 @@ datalist option{background:var(--bg2);color:var(--text)}
 <button class="fab" id="fab" onclick="fabAction()">+</button>
 <div class="toast" id="toast"></div>
 
-<!-- EXPENSE MODAL -->
-<div class="mbackdrop" id="exp-modal">
-  <!-- DRILLDOWN MODAL -->
-<div class="modal" id="drill-modal" onclick="if(event.target===this)closeMod('drill-modal')">
-  <div class="modal-box" style="max-height:80vh;overflow-y:auto">
-    <div class="modal-title" id="drill-title">Detail</div>
-    <div id="drill-body"></div>
+<!-- DRILLDOWN MODAL -->
+<div class="mbackdrop" id="drill-modal">
+  <div class="modal" onclick="event.stopPropagation()" style="max-height:85vh">
+    <div class="mhdr"><div class="mtitle" id="drill-title">Detail</div><button class="mclose" onclick="closeMod('drill-modal')">×</button></div>
+    <div id="drill-body" style="overflow-y:auto;max-height:calc(85vh - 100px);padding-bottom:8px"></div>
     <button class="btn btn-g btn-full" style="margin-top:12px" onclick="closeMod('drill-modal')">Close</button>
   </div>
 </div>
 
-<div class="modal" onclick="event.stopPropagation()">
+<!-- EXPENSE MODAL -->
+<div class="mbackdrop" id="exp-modal">
+  <div class="modal" onclick="event.stopPropagation()">
     <div class="mhdr"><div class="mtitle">New Expense</div><button class="mclose" onclick="closeMod('exp-modal')">×</button></div>
     <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" type="number" inputmode="decimal" id="e-amt" placeholder="0" style="font-size:1.2rem"></div>
     <div class="gform">
@@ -674,6 +674,9 @@ async function syncAll(){
 }
 
 async function loadTxns(m,y){
+  // Local always wins — only pull from Firebase if we have nothing locally
+  const local=cGet(CK.txns(m,y));
+  if(local&&local.length>0) return; // we have local data, keep it
   try{
     let snap;
     try{snap=await db.collection('transactions').where('year','==',y).where('month','==',m).orderBy('date','desc').get();}
@@ -687,6 +690,8 @@ async function loadTxns(m,y){
 }
 
 async function loadIncome(m,y){
+  const local=cGet(CK.inc(m,y));
+  if(local&&local.length>0) return;
   try{
     let snap;
     try{snap=await db.collection('income').where('year','==',y).where('month','==',m).orderBy('date','desc').get();}
@@ -700,65 +705,53 @@ async function loadIncome(m,y){
 }
 
 async function loadInvData(m,y){
+  // Local always wins
+  const local=cGet(CK.inv(m,y));
+  if(local&&Object.keys(local).length>2){
+    if(S.expMonth===m&&S.expYear===y) S.investments=local;
+    return;
+  }
+  // Nothing local — pull from Firebase
   try{
     const doc=await db.collection('investments').doc(sid(m,y)).get();
     if(doc.exists&&doc.data()&&Object.keys(doc.data()).length>2){
-      const fbData=doc.data();
-      // Sanity check: if any USD platform has a value < 5000, it's raw USD not NGN
-      // (NGN equivalent of $1 USD = ~1600, so any real balance should be >> 1000)
-      const usdPlatforms=['Risevest','Trove','Bamboo','USDHoldings'];
-      const looksLikeRawUSD=usdPlatforms.some(k=>fbData[k]>0&&fbData[k]<5000);
-      const local=cGet(CK.inv(m,y));
-      const localIsGood=local&&Object.keys(local).length>2&&
-        !usdPlatforms.some(k=>local[k]>0&&local[k]<5000);
-      if(looksLikeRawUSD&&localIsGood){
-        // Firebase has stale raw-USD data; keep local NGN data
-        return;
-      }
-      S.investments=fbData;cSet(CK.inv(m,y),S.investments);return;
+      S.investments=doc.data();cSet(CK.inv(m,y),S.investments);return;
     }
-    const local=cGet(CK.inv(m,y));
-    if(local&&Object.keys(local).length>2) return;
     const snap=await db.collection('investments').orderBy('year','desc').orderBy('month','desc').limit(1).get();
     if(!snap.empty){S.investments=snap.docs[0].data();cSet(CK.inv(m,y),S.investments);}
-  }catch(e){/* keep local */}
+  }catch(e){}
 }
 
 async function loadCashData(m,y){
+  // Local always wins
+  const local=cGet(CK.cash(m,y));
+  if(local&&Object.keys(local).length>2){
+    if(S.expMonth===m&&S.expYear===y) S.cash=local;
+    return;
+  }
   try{
     const doc=await db.collection('cashBalances').doc(sid(m,y)).get();
-    if(doc.exists&&doc.data()){
-      const fbCash=doc.data();
-      const local=cGet(CK.cash(m,y));
-      // If local has more populated accounts than Firebase, keep local
-      // (handles case where Firebase has stale/partial data)
-      const fbTotal=Object.values(fbCash).filter(v=>typeof v==='number').reduce((s,v)=>s+v,0);
-      const localTotal=local?Object.values(local).filter(v=>typeof v==='number').reduce((s,v)=>s+v,0):0;
-      if(local&&localTotal>fbTotal*2){return;}// local is significantly richer
-      S.cash=fbCash;cSet(CK.cash(m,y),S.cash);return;
-    }
-    const local=cGet(CK.cash(m,y));
-    if(local) return;
+    if(doc.exists&&doc.data()){S.cash=doc.data();cSet(CK.cash(m,y),S.cash);return;}
     const snap=await db.collection('cashBalances').orderBy('year','desc').orderBy('month','desc').limit(1).get();
     if(!snap.empty){S.cash=snap.docs[0].data();cSet(CK.cash(m,y),S.cash);}
-  }catch(e){/* keep local */}
+  }catch(e){}
 }
 
 async function loadDebtors(){
+  const local=cGet(CK.debtors);
+  if(local&&local.length>0){S.debtors=local;return;}
   try{
     const snap=await db.collection('debtors').get();
     if(snap&&snap.size>0){
       S.debtors=snap.docs.map(d=>({id:d.id,...d.data()}));
       cSet(CK.debtors,S.debtors);
-      // Reload debtors with Firestore ids so toggleRepay works correctly
     }
-  }catch(e){/* keep local */}
+  }catch(e){}
 }
 
 async function loadHistoricalSummary(){
-  // Only fetch if we have no local history yet (expensive all-docs read)
   const local=cGet('sw3_history');
-  if(local&&local.length>0) return; // already have data from seed import
+  if(local&&local.length>0) return; // local always wins
   try{
     const snap=await db.collection('historicalSummary').orderBy('year').orderBy('month').get();
     if(snap&&snap.size>0){
@@ -772,8 +765,11 @@ async function loadHistoricalSummary(){
 }
 
 async function loadBudgets(m,y){
-  try{const doc=await db.collection('budgets').doc(sid(m,y)).get();S.budgets=doc.exists&&doc.data().categories?{...DEF_BUDGETS,...doc.data().categories}:{...DEF_BUDGETS};cSet(CK.budgets(m,y),S.budgets);}
-  catch(e){S.budgets=cGet(CK.budgets(m,y))||{...DEF_BUDGETS};}
+  const local=cGet(CK.budgets(m,y));
+  if(local&&Object.keys(local).length>0){S.budgets=local;return;}
+  try{const doc=await db.collection('budgets').doc(sid(m,y)).get();
+    if(doc.exists&&doc.data()?.categories){S.budgets={...DEF_BUDGETS,...doc.data().categories};cSet(CK.budgets(m,y),S.budgets);}
+  }catch(e){}
 }
 
 function reloadMonth(m,y){
@@ -1563,14 +1559,22 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.4.1</div><div>Firebase: gen-lang-client-0371859680</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.5.0</div><div>Firebase: gen-lang-client-0371859680</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
 }
 async function forceSyncNow(){
   if(!db||!navigator.onLine){toast('Not connected');return;}
-  setSyncStatus('syncing');toast('Syncing…');
+  setSyncStatus('syncing');toast('Pulling from Firebase…');
+  // Force-sync: clear local cache first so loadX functions fetch from Firebase
+  const m=S.expMonth,y=S.expYear;
   try{
-    const m=S.expMonth,y=S.expYear;
+    // Pull fresh data by temporarily clearing local cache for current month
+    localStorage.removeItem(CK.txns(m,y));
+    localStorage.removeItem(CK.inc(m,y));
+    localStorage.removeItem(CK.inv(m,y));
+    localStorage.removeItem(CK.cash(m,y));
+    localStorage.removeItem(CK.debtors);
+    localStorage.removeItem('sw3_history');
     await syncAll();
     S.txns=cGet(CK.txns(m,y))||S.txns;
     S.income=cGet(CK.inc(m,y))||S.income;
