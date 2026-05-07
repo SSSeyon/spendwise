@@ -701,9 +701,13 @@ async function loadTxns(m,y){
     let snap;
     try{snap=await db.collection('transactions').where('year','==',y).where('month','==',m).orderBy('date','desc').get();}
     catch{snap=await db.collection('transactions').where('year','==',y).where('month','==',m).get();}
-    S.txns=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:1);
-    cSet(CK.txns(m,y),S.txns);
-  }catch(e){S.txns=cGet(CK.txns(m,y))||[];}
+    // Only overwrite local data if Firebase actually returned records
+    if(snap&&snap.size>0){
+      S.txns=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:1);
+      cSet(CK.txns(m,y),S.txns);
+    }
+    // else: keep whatever is already in S.txns / localStorage
+  }catch(e){/* network error — keep local */}
 }
 
 async function loadIncome(m,y){
@@ -711,35 +715,46 @@ async function loadIncome(m,y){
     let snap;
     try{snap=await db.collection('income').where('year','==',y).where('month','==',m).orderBy('date','desc').get();}
     catch{snap=await db.collection('income').where('year','==',y).where('month','==',m).get();}
-    S.income=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:1);
-    cSet(CK.inc(m,y),S.income);
-  }catch(e){S.income=cGet(CK.inc(m,y))||[];}
+    if(snap&&snap.size>0){
+      S.income=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:1);
+      cSet(CK.inc(m,y),S.income);
+    }
+  }catch(e){/* keep local */}
 }
 
 async function loadInvData(m,y){
   try{
     const doc=await db.collection('investments').doc(sid(m,y)).get();
-    if(doc.exists){S.investments=doc.data();cSet(CK.inv(m,y),S.investments);return;}
-    // Fall back to most recent
+    if(doc.exists&&doc.data()&&Object.keys(doc.data()).length>2){
+      S.investments=doc.data();cSet(CK.inv(m,y),S.investments);return;
+    }
+    // Only fall back if we don't already have local data
+    const local=cGet(CK.inv(m,y));
+    if(local&&Object.keys(local).length>2) return; // keep local, it's richer
     const snap=await db.collection('investments').orderBy('year','desc').orderBy('month','desc').limit(1).get();
-    S.investments=snap.empty?{}:snap.docs[0].data();
-    cSet(CK.inv(m,y),S.investments);
-  }catch(e){S.investments=cGet(CK.inv(m,y))||{};}
+    if(!snap.empty){S.investments=snap.docs[0].data();cSet(CK.inv(m,y),S.investments);}
+  }catch(e){/* keep local */}
 }
 
 async function loadCashData(m,y){
   try{
     const doc=await db.collection('cashBalances').doc(sid(m,y)).get();
-    if(doc.exists){S.cash=doc.data();cSet(CK.cash(m,y),S.cash);return;}
+    if(doc.exists&&doc.data()){S.cash=doc.data();cSet(CK.cash(m,y),S.cash);return;}
+    const local=cGet(CK.cash(m,y));
+    if(local) return; // keep local
     const snap=await db.collection('cashBalances').orderBy('year','desc').orderBy('month','desc').limit(1).get();
-    S.cash=snap.empty?{}:snap.docs[0].data();
-    cSet(CK.cash(m,y),S.cash);
-  }catch(e){S.cash=cGet(CK.cash(m,y))||{};}
+    if(!snap.empty){S.cash=snap.docs[0].data();cSet(CK.cash(m,y),S.cash);}
+  }catch(e){/* keep local */}
 }
 
 async function loadDebtors(){
-  try{const snap=await db.collection('debtors').get();S.debtors=snap.docs.map(d=>({id:d.id,...d.data()}));cSet(CK.debtors,S.debtors);}
-  catch(e){S.debtors=cGet(CK.debtors)||[];}
+  try{
+    const snap=await db.collection('debtors').get();
+    if(snap&&snap.size>0){
+      S.debtors=snap.docs.map(d=>({id:d.id,...d.data()}));
+      cSet(CK.debtors,S.debtors);
+    }
+  }catch(e){/* keep local */}
 }
 
 async function loadBudgets(m,y){
@@ -1253,7 +1268,7 @@ function renderDebtors(){
   const totalOwed=dbs.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0);
   document.getElementById('debtor-stats').innerHTML=`<div class="card card-sm" style="margin-bottom:0"><div class="clabel">Total Loaned</div><div class="cval-sm">${fN(totalLoaned)}</div></div><div class="card card-sm" style="margin-bottom:0"><div class="clabel">Expected Back</div><div class="cval-sm" style="color:var(--red)">${fN(totalOwed)}</div></div>`;
   if(!dbs.length){document.getElementById('debtor-list').innerHTML='<div class="empty"><div class="empty-i">⊟</div>No debtors yet</div>';return;}
-  document.getElementById('debtor-list').innerHTML=dbs.map(d=>{
+  document.getElementById('debtor-list').innerHTML=dbs.map((d,idx)=>{
     const expectRepay=d.expectRepayment!==false;
     const pct=d.amount>0?((d.paid||0)/d.amount)*100:0;
     const settled=pct>=100||!expectRepay;
@@ -1264,23 +1279,31 @@ function renderDebtors(){
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
         <div style="font-size:0.65rem;color:var(--text2)">Expecting repayment</div>
-        <div onclick="toggleRepay('${d.id}',${!expectRepay})" style="width:36px;height:20px;border-radius:10px;background:${expectRepay?'var(--accent)':'var(--border2)'};position:relative;cursor:pointer;transition:background 0.2s;flex-shrink:0">
+        <div onclick="toggleRepay('${d.id||idx}',${!expectRepay})" style="width:36px;height:20px;border-radius:10px;background:${expectRepay?'var(--accent)':'var(--border2)'};position:relative;cursor:pointer;transition:background 0.2s;flex-shrink:0">
           <div style="position:absolute;top:2px;${expectRepay?'right:2px':'left:2px'};width:16px;height:16px;border-radius:50%;background:${expectRepay?'var(--bg)':'var(--text3)'};transition:all 0.2s"></div>
         </div>
       </div>
       ${expectRepay&&!settled?`<div class="prog" style="margin-top:8px"><div class="pf ok" style="width:${Math.min(pct,100)}%"></div></div>`:''}
       ${d.notes?`<div style="font-size:0.65rem;color:var(--text2);margin-top:5px">${d.notes}</div>`:''}
       <div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">
-        ${expectRepay&&!settled?`<button class="btn btn-g btn-sm" onclick="recordPmt('${d.id}',${d.amount},${d.paid||0},${d.rate||DEF_RATES[d.currency]||1})">Record Payment</button>`:''}
-        <button class="btn btn-g btn-sm" onclick="openEditDeb('${d.id}')">Edit</button>
-        <button class="btn btn-d btn-sm" onclick="removeDeb('${d.id}')">Remove</button>
+        ${expectRepay&&!settled?`<button class="btn btn-g btn-sm" onclick="recordPmt('${d.id||idx}',${d.amount},${d.paid||0},${d.rate||DEF_RATES[d.currency]||1})">Record Payment</button>`:''}
+        <button class="btn btn-g btn-sm" onclick="openEditDeb('${d.id||idx}')">Edit</button>
+        <button class="btn btn-d btn-sm" onclick="removeDeb('${d.id||idx}')">Remove</button>
       </div>
     </div>`;
   }).join('');
 }
 async function toggleRepay(id,newVal){
-  const d=S.debtors.find(x=>x.id===id);
-  if(d){d.expectRepayment=newVal;cSet(CK.debtors,S.debtors);}
+  // Find by id, fall back to index for seed-imported debtors without a Firestore id
+  const d=id?S.debtors.find(x=>x.id===id):null;
+  if(d){
+    d.expectRepayment=newVal;
+  } else {
+    // id was the rendered index (for un-synced debtors)
+    const idx=parseInt(id);
+    if(!isNaN(idx)&&S.debtors[idx]) S.debtors[idx].expectRepayment=newVal;
+  }
+  cSet(CK.debtors,S.debtors);
   renderDebtors();
   if(id&&db){try{await db.collection('debtors').doc(id).update({expectRepayment:newVal});}catch(e){}}
 }
@@ -1341,20 +1364,75 @@ function renderProjFees(){
   const feeState=cGet(CK.schoolFees)||SCHOOL_FEES_DEFAULT.map((f,i)=>({...f,id:i}));
   const rem=feeState.filter(f=>!f.paid).reduce((s,f)=>s+f.amount,0);
   const paid=feeState.filter(f=>f.paid).reduce((s,f)=>s+f.amount,0);
-  const feeBreak=[{l:'Tuition',a:113750},{l:'Bus',a:50000},{l:'Snacks',a:21000},{l:'Swimming',a:50000},{l:'Books',a:35000},{l:'Music',a:50000},{l:'Others',a:30000}];
   document.getElementById('proj-fees').innerHTML=`
-    <div class="g2"><div class="card card-sm" style="margin-bottom:0"><div class="clabel">Remaining</div><div class="cval-sm" style="color:var(--red)">${fN(rem)}</div></div><div class="card card-sm" style="margin-bottom:0"><div class="clabel">Paid So Far</div><div class="cval-sm" style="color:var(--accent)">${fN(paid)}</div></div></div>
-    <div class="card"><div class="sh"><div class="clabel" style="margin-bottom:0">Fee Schedule</div><span style="font-size:0.65rem;color:var(--text2)">Tap to toggle</span></div>
-    ${feeState.map((f,i)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);${f.paid?'opacity:0.45':''}">
-      <div><div style="font-size:0.78rem;font-weight:600">${f.label}</div><div style="font-size:0.65rem;font-family:var(--mono);color:var(--text2)">${fN(f.amount)}</div></div>
-      <div style="display:flex;align-items:center;gap:8px">
-        ${f.paid?'<span class="badge bg">Paid</span>':''}
-        <div onclick="toggleFeePaid(${i})" style="width:36px;height:20px;border-radius:10px;background:${f.paid?'var(--accent)':'var(--border2)'};position:relative;cursor:pointer;flex-shrink:0"><div style="position:absolute;top:2px;${f.paid?'right:2px':'left:2px'};width:16px;height:16px;border-radius:50%;background:${f.paid?'var(--bg)':'var(--text3)'};transition:all 0.2s"></div></div>
-      </div></div>`).join('')}</div>
-    <div class="card"><div class="clabel" style="margin-bottom:10px">Per-term Breakdown</div>${feeBreak.map(f=>`<div class="pjrow"><span class="pjlabel">${f.l}</span><span class="pjval">${fN(f.a)}</span></div>`).join('')}</div>
+    <div class="g2" style="margin-bottom:10px">
+      <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Remaining</div><div class="cval-sm" style="color:var(--red)">${fN(rem)}</div></div>
+      <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Paid So Far</div><div class="cval-sm" style="color:var(--accent)">${fN(paid)}</div></div>
+    </div>
+    <div class="card">
+      <div class="sh" style="margin-bottom:8px"><div class="clabel" style="margin-bottom:0">Fee Schedule</div><button class="btn btn-g btn-sm" onclick="openAddFeeModal()">+ Add</button></div>
+      ${feeState.map((f,i)=>`
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)">
+          <div style="${f.paid?'opacity:0.45':''}">
+            <div style="font-size:0.78rem;font-weight:600">${f.label}</div>
+            <div style="font-size:0.65rem;font-family:var(--mono);color:var(--text2)">${fN(f.amount)}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:7px">
+            ${f.paid?'<span class="badge bg">Paid</span>':''}
+            <div onclick="toggleFeePaid(${i})" style="width:36px;height:20px;border-radius:10px;background:${f.paid?'var(--accent)':'var(--border2)'};position:relative;cursor:pointer;flex-shrink:0"><div style="position:absolute;top:2px;${f.paid?'right:2px':'left:2px'};width:16px;height:16px;border-radius:50%;background:${f.paid?'var(--bg)':'var(--text3)'};transition:all 0.2s"></div></div>
+            <button class="btn btn-g btn-sm" onclick="editFeeEntry(${i})" style="padding:2px 7px;font-size:0.62rem">Edit</button>
+            <button class="txi-del" onclick="removeFeeEntry(${i})">×</button>
+          </div>
+        </div>`).join('')}
+    </div>
+    <div class="card" id="fee-edit-card" style="display:none">
+      <div class="clabel" style="margin-bottom:10px" id="fee-edit-title">Add Fee</div>
+      <div class="ig"><label class="ilabel">Label</label><input class="ifield" id="fee-lbl" type="text" placeholder="e.g. Term 3 – Jun '26"></div>
+      <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" id="fee-amt" type="number" inputmode="decimal" placeholder="0"></div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button class="btn btn-p btn-sm" onclick="saveFeeEntry()">Save</button>
+        <button class="btn btn-g btn-sm" onclick="document.getElementById('fee-edit-card').style.display='none'">Cancel</button>
+      </div>
+      <input type="hidden" id="fee-edit-idx" value="-1">
+    </div>
   `;
 }
-function toggleFeePaid(idx){const fs=cGet(CK.schoolFees)||SCHOOL_FEES_DEFAULT.map((f,i)=>({...f,id:i}));fs[idx].paid=!fs[idx].paid;cSet(CK.schoolFees,fs);renderProjFees();}
+function toggleFeePaid(idx){
+  const fs=cGet(CK.schoolFees)||SCHOOL_FEES_DEFAULT.map((f,i)=>({...f,id:i}));
+  fs[idx].paid=!fs[idx].paid;cSet(CK.schoolFees,fs);renderProjFees();
+}
+function openAddFeeModal(){
+  document.getElementById('fee-edit-card').style.display='block';
+  document.getElementById('fee-edit-title').textContent='Add Fee Entry';
+  document.getElementById('fee-lbl').value='';
+  document.getElementById('fee-amt').value='';
+  document.getElementById('fee-edit-idx').value='-1';
+}
+function editFeeEntry(idx){
+  const fs=cGet(CK.schoolFees)||SCHOOL_FEES_DEFAULT.map((f,i)=>({...f,id:i}));
+  const f=fs[idx];if(!f) return;
+  document.getElementById('fee-edit-card').style.display='block';
+  document.getElementById('fee-edit-title').textContent='Edit Fee Entry';
+  document.getElementById('fee-lbl').value=f.label;
+  document.getElementById('fee-amt').value=f.amount;
+  document.getElementById('fee-edit-idx').value=idx;
+}
+function saveFeeEntry(){
+  const lbl=document.getElementById('fee-lbl').value.trim();
+  const amt=parseFloat(document.getElementById('fee-amt').value);
+  if(!lbl||!amt){toast('Enter label and amount');return;}
+  const idx=parseInt(document.getElementById('fee-edit-idx').value);
+  const fs=cGet(CK.schoolFees)||SCHOOL_FEES_DEFAULT.map((f,i)=>({...f,id:i}));
+  if(idx>=0){fs[idx].label=lbl;fs[idx].amount=amt;}
+  else{fs.push({label:lbl,amount:amt,paid:false,id:Date.now()});}
+  cSet(CK.schoolFees,fs);
+  document.getElementById('fee-edit-card').style.display='none';
+  renderProjFees();toast(idx>=0?'Fee updated':'Fee added');
+}
+function removeFeeEntry(idx){
+  const fs=cGet(CK.schoolFees)||SCHOOL_FEES_DEFAULT.map((f,i)=>({...f,id:i}));
+  fs.splice(idx,1);cSet(CK.schoolFees,fs);renderProjFees();toast('Removed');
+}
 
 function renderProjHistory(){
   document.getElementById('proj-history').innerHTML=`
