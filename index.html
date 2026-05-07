@@ -180,7 +180,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl">v3.6.1</span>
+      <span class="ver-lbl">v3.6.2</span>
     </div>
   </div>
 </header>
@@ -390,7 +390,7 @@ datalist option{background:var(--bg2);color:var(--text)}
 <div class="mbackdrop" id="exp-modal">
   <div class="modal" onclick="event.stopPropagation()">
     <div class="mhdr"><div class="mtitle">New Expense</div><button class="mclose" onclick="closeMod('exp-modal')">×</button></div>
-    <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" type="text" inputmode="decimal" id="e-amt" placeholder="0" style="font-size:1.2rem;font-family:var(--mono)" oninput="fmtAmtInput(this)"></div>
+    <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" type="number" inputmode="decimal" id="e-amt" placeholder="0" style="font-size:1.2rem"></div>
     <div class="gform">
       <div class="ig"><label class="ilabel">Category</label><select class="sfield" id="e-cat" onchange="updateExpenseLines()"></select></div>
       <div class="ig"><label class="ilabel">Bank</label>
@@ -417,7 +417,7 @@ datalist option{background:var(--bg2);color:var(--text)}
 <div class="mbackdrop" id="inc-modal">
   <div class="modal" onclick="event.stopPropagation()">
     <div class="mhdr"><div class="mtitle">Record Income</div><button class="mclose" onclick="closeMod('inc-modal')">×</button></div>
-    <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" type="text" inputmode="decimal" id="i-amt" placeholder="0" style="font-size:1.2rem;font-family:var(--mono)" oninput="fmtAmtInput(this)"></div>
+    <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" type="number" inputmode="decimal" id="i-amt" placeholder="0" style="font-size:1.2rem"></div>
     <div class="gform">
       <div class="ig"><label class="ilabel">Category</label>
         <select class="sfield" id="i-cat">
@@ -457,8 +457,8 @@ datalist option{background:var(--bg2);color:var(--text)}
       <div class="ig"><label class="ilabel">Type</label><select class="sfield" id="d-type"><option>Loan</option><option>Gift</option><option>Other</option></select></div>
     </div>
     <div class="gform">
-      <div class="ig"><label class="ilabel">Amount</label><input class="ifield" type="text" inputmode="decimal" id="d-amt" placeholder="0" style="font-family:var(--mono)" oninput="fmtAmtInput(this)"></div>
-      <div class="ig"><label class="ilabel">Paid So Far</label><input class="ifield" type="text" inputmode="decimal" id="d-paid" placeholder="0" style="font-family:var(--mono)" oninput="fmtAmtInput(this)"></div>
+      <div class="ig"><label class="ilabel">Amount</label><input class="ifield" type="number" inputmode="decimal" id="d-amt" placeholder="0"></div>
+      <div class="ig"><label class="ilabel">Paid So Far</label><input class="ifield" type="number" inputmode="decimal" id="d-paid" placeholder="0"></div>
     </div>
     <div class="ig"><label class="ilabel">Exchange Rate to ₦ (blank = default)</label><input class="ifield" type="number" inputmode="decimal" id="d-rate" placeholder="e.g. 1600"></div>
     <div class="ig"><label class="ilabel">Notes</label><input class="ifield" type="text" id="d-notes" placeholder="Optional"></div>
@@ -620,16 +620,6 @@ function fmtPlatformVal(rawVal,platformKey,currency,m,y){
 }
 
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);}
-
-// Format amount input with commas as user types; store raw digits in data-raw
-function fmtAmtInput(el){
-  const raw=el.value.replace(/[^0-9.]/g,'');
-  const parts=raw.split('.');
-  const intPart=parts[0].replace(/\B(?=(\d{3})+(?!\d))/g,',');
-  el.value=parts.length>1?intPart+'.'+parts[1]:intPart;
-}
-// Parse a possibly-comma-formatted amount field
-function parseAmt(id){return parseFloat((document.getElementById(id)?.value||'').replace(/,/g,''))||0;}
 function openMod(id){document.getElementById(id).classList.add('open');}
 function closeMod(id){document.getElementById(id).classList.remove('open');}
 
@@ -1057,15 +1047,88 @@ function renderExpenses(){
   const m=S.expMonth,y=S.expYear;
   const months=[];for(let i=curM();i>=1;i--) months.push(i);
   document.getElementById('exp-months').innerHTML=months.map(mo=>`<div class="mpill ${mo===m?'active':''}" onclick="reloadMonth(${mo},${y})">${MS[mo-1]}</div>`).join('');
-  const txns=S.txns,filtered=S.expCat==='All'?txns:txns.filter(t=>t.category===S.expCat);
+
+  // Sort all txns by date descending
+  const txns=[...S.txns].sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:0);
+  const filtered=S.expCat==='All'?txns:txns.filter(t=>t.category===S.expCat);
+
   const total=txns.reduce((s,t)=>s+(t.amount||0),0);
   const catSpend={};txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+(t.amount||0);});
+
+  // Summary bar
   document.getElementById('exp-summary').innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center${Object.keys(catSpend).length?';margin-bottom:12px':''}"><div><div class="clabel">Total — ${MONTHS[m-1]}</div><div class="cval">${fN(total)}</div></div><div style="text-align:right"><div class="clabel">Count</div><div class="cval">${txns.length}</div></div></div>${Object.keys(catSpend).length?`<div style="display:flex;flex-wrap:wrap;gap:5px">${Object.entries(catSpend).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([c,a])=>`<div onclick="setCatFilter('${c}')" style="padding:2px 9px;border-radius:20px;background:${S.expCat===c?'var(--adim)':'var(--bg2)'};border:1px solid ${S.expCat===c?'var(--accent)':'var(--border)'};font-size:0.63rem;color:${S.expCat===c?'var(--accent)':'var(--text2)'};cursor:pointer">${c} · ${fN(a)}</div>`).join('')}</div>`:''}`;
+
   document.getElementById('exp-filters').innerHTML=['All',...CATS].map(c=>`<div class="cfpill ${c===S.expCat?'active':''}" onclick="setCatFilter('${c}')">${c}</div>`).join('');
+
   const listEl=document.getElementById('exp-list');
   if(!filtered.length){listEl.innerHTML='<div class="empty"><div class="empty-i">↕</div>No transactions</div>';return;}
-  listEl.innerHTML='<div class="txlist">'+filtered.map(tx=>`<div class="txi"><div><div class="txi-cat">${tx.category}</div><div class="txi-meta">${tx.payee||'—'} · ${tx.date} · ${tx.bank||''}</div></div><div style="display:flex;align-items:center;gap:6px"><div class="txi-amt txi-exp">${fN(tx.amount)}</div><button class="txi-del" onclick="delExpense('${tx.id}')">×</button></div></div>`).join('')+'</div>';
+
+  if(S.expCat!=='All'){
+    // Single category selected — flat list sorted by date, no category header needed
+    listEl.innerHTML='<div class="txlist">'+filtered.map(tx=>`
+      <div class="txi">
+        <div>
+          <div class="txi-cat">${tx.payee||'—'}</div>
+          <div class="txi-meta">${tx.date} · ${tx.bank||''}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div class="txi-amt txi-exp">${fN(tx.amount)}</div>
+          <button class="txi-del" onclick="delExpense('${tx.id}')">×</button>
+        </div>
+      </div>`).join('')+'</div>';
+    return;
+  }
+
+  // All categories — group by category, each group collapsible
+  // Build ordered category list (preserving date order within each group)
+  const groups={};
+  const catOrder=[];
+  filtered.forEach(tx=>{
+    if(!groups[tx.category]){groups[tx.category]=[];catOrder.push(tx.category);}
+    groups[tx.category].push(tx);
+  });
+  // Remove duplicates from catOrder while preserving first-seen order
+  const orderedCats=[...new Set(catOrder)];
+
+  listEl.innerHTML=orderedCats.map(cat=>{
+    const items=groups[cat];
+    const catTotal=items.reduce((s,t)=>s+(t.amount||0),0);
+    const gid='grp-'+cat.replace(/[^a-zA-Z0-9]/g,'');
+    return`<div style="margin-bottom:6px">
+      <div onclick="toggleExpGrp('${gid}')" style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);cursor:pointer;user-select:none">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:0.63rem;color:var(--text3);transition:transform 0.15s" id="${gid}-arrow">▶</span>
+          <span style="font-size:0.8rem;font-weight:700">${cat}</span>
+          <span style="font-size:0.62rem;color:var(--text3);font-family:var(--mono)">${items.length}</span>
+        </div>
+        <span style="font-family:var(--mono);font-size:0.82rem;color:var(--red)">${fN(catTotal)}</span>
+      </div>
+      <div id="${gid}" style="display:none;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--rsm) var(--rsm);overflow:hidden">
+        ${items.map(tx=>`
+          <div class="txi" style="border-radius:0;border:none;border-bottom:1px solid var(--border)">
+            <div>
+              <div class="txi-cat" style="font-size:0.76rem">${tx.payee||'—'}</div>
+              <div class="txi-meta">${tx.date} · ${tx.bank||''}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <div class="txi-amt txi-exp">${fN(tx.amount)}</div>
+              <button class="txi-del" onclick="delExpense('${tx.id}')">×</button>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
 }
+
+function toggleExpGrp(gid){
+  const el=document.getElementById(gid);
+  const arrow=document.getElementById(gid+'-arrow');
+  if(!el) return;
+  const open=el.style.display!=='none';
+  el.style.display=open?'none':'block';
+  if(arrow) arrow.style.transform=open?'':'rotate(90deg)';
+}
+
 function setCatFilter(c){S.expCat=c;renderExpenses();}
 
 function getExpLines(cat){
@@ -1091,6 +1154,7 @@ function openExpModal(){
   const catSel=document.getElementById('e-cat');
   catSel.innerHTML=CATS.map(c=>`<option>${c}</option>`).join('');
   document.getElementById('e-date').value=todayStr();
+  document.getElementById('e-date').max=todayStr();
   ['e-amt','e-notes'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('e-payee-new').value='';
   document.getElementById('e-payee-new-wrap').style.display='none';
@@ -1101,7 +1165,7 @@ function openExpModal(){
 
 async function saveExpense(){
   if(S.saving) return;
-  const amt=parseAmt('e-amt');
+  const amt=parseFloat(document.getElementById('e-amt').value);
   if(!amt||amt<=0){toast('Enter a valid amount');return;}
   const paySel=document.getElementById('e-payee-sel').value;
   let payee=paySel;
@@ -1113,15 +1177,11 @@ async function saveExpense(){
     if(!S.customExpLines[cat].includes(payee)) S.customExpLines[cat].push(payee);
     cSet(CK.customLines,S.customExpLines);
   }
-  S.saving=true;const btn=document.getElementById('e-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
-  const bank=document.getElementById('e-bank').value;
+  const dateVal=document.getElementById('e-date').value;
+  if(dateVal>todayStr()){toast('Date cannot be in the future');return;}
   const data={amount:amt,category:document.getElementById('e-cat').value,bank,payee,notes:document.getElementById('e-notes').value,date:document.getElementById('e-date').value,month:S.expMonth,year:S.expYear,createdAt:firebase.firestore.FieldValue.serverTimestamp()};
   try{
-    const docRef=await db.collection('transactions').add(data);
-    // Optimistically update local state immediately so UI reflects the new entry
-    const newTxn={...data,id:docRef.id};
-    S.txns=[newTxn,...S.txns];
-    cSet(CK.txns(S.expMonth,S.expYear),S.txns);
+    await db.collection('transactions').add(data);
     // Deduct from bank
     const cashDoc=await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).get();
     const cashData=cashDoc.exists?{...cashDoc.data()}:{month:S.expMonth,year:S.expYear};
@@ -1129,7 +1189,7 @@ async function saveExpense(){
     await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).set(cashData,{merge:true});
     S.cash=cashData;cSet(CK.cash(S.expMonth,S.expYear),cashData);
     closeMod('exp-modal');toast(`Saved · ${bank} updated`);setSyncStatus('synced');
-    renderExpenses();renderDashboard();renderCashPage();
+    await loadTxns(S.expMonth,S.expYear);renderExpenses();renderDashboard();renderCashPage();
   }catch(e){toast('Error saving');setSyncStatus('error');}
   finally{S.saving=false;btn.textContent='Save Expense';btn.disabled=false;}
 }
@@ -1144,23 +1204,20 @@ async function delExpense(id){
 // ══════════════════════════════════════════════════════════════════════════
 function openIncModal(){
   document.getElementById('i-date').value=todayStr();
+  document.getElementById('i-date').max=todayStr();
   ['i-amt','i-notes'].forEach(id=>document.getElementById(id).value='');
   openMod('inc-modal');
   setTimeout(()=>document.getElementById('i-amt').focus(),300);
 }
 async function saveIncome(){
   if(S.saving) return;
-  const amt=parseAmt('i-amt');
+  const amt=parseFloat(document.getElementById('i-amt').value);
   if(!amt||amt<=0){toast('Enter a valid amount');return;}
   S.saving=true;const btn=document.getElementById('i-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
   const bank=document.getElementById('i-bank').value;
   const data={amount:amt,category:document.getElementById('i-cat').value,bank,notes:document.getElementById('i-notes').value,date:document.getElementById('i-date').value,month:S.expMonth,year:S.expYear,createdAt:firebase.firestore.FieldValue.serverTimestamp()};
   try{
-    const docRef=await db.collection('income').add(data);
-    // Optimistically update local state immediately
-    const newInc={...data,id:docRef.id};
-    S.income=[newInc,...S.income];
-    cSet(CK.inc(S.expMonth,S.expYear),S.income);
+    await db.collection('income').add(data);
     // Add to bank balance
     const cashDoc=await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).get();
     const cashData=cashDoc.exists?{...cashDoc.data()}:{month:S.expMonth,year:S.expYear};
@@ -1168,7 +1225,7 @@ async function saveIncome(){
     await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).set(cashData,{merge:true});
     S.cash=cashData;cSet(CK.cash(S.expMonth,S.expYear),cashData);
     closeMod('inc-modal');toast(`Income recorded · ${bank} updated`);setSyncStatus('synced');
-    renderDashboard();renderCashPage();
+    await loadIncome(S.expMonth,S.expYear);renderDashboard();renderCashPage();
   }catch(e){toast('Error saving income');setSyncStatus('error');}
   finally{S.saving=false;btn.textContent='Record Income';btn.disabled=false;}
 }
@@ -1338,11 +1395,11 @@ async function toggleRepay(id,newVal){
   if(id&&db){try{await db.collection('debtors').doc(id).update({expectRepayment:newVal});}catch(e){}}
 }
 function openDebMod(){document.getElementById('deb-mod-title').textContent='Add Debtor';document.getElementById('deb-save').textContent='Add Debtor';document.getElementById('d-eid').value='';['d-name','d-amt','d-paid','d-rate','d-notes'].forEach(i=>document.getElementById(i).value='');document.getElementById('d-cur').value='NGN';document.getElementById('d-type').value='Loan';openMod('deb-modal');}
-function openEditDeb(id){const d=S.debtors.find(x=>x.id===id);if(!d) return;document.getElementById('deb-mod-title').textContent='Edit Debtor';document.getElementById('deb-save').textContent='Update';document.getElementById('d-eid').value=id;document.getElementById('d-name').value=d.name||'';document.getElementById('d-cur').value=d.currency||'NGN';document.getElementById('d-type').value=d.category||'Loan';document.getElementById('d-amt').value=d.amount?(d.amount).toLocaleString('en-NG',{maximumFractionDigits:0}):'';document.getElementById('d-paid').value=d.paid?(d.paid).toLocaleString('en-NG',{maximumFractionDigits:0}):'';document.getElementById('d-rate').value=d.rate||'';document.getElementById('d-notes').value=d.notes||'';openMod('deb-modal');}
+function openEditDeb(id){const d=S.debtors.find(x=>x.id===id);if(!d) return;document.getElementById('deb-mod-title').textContent='Edit Debtor';document.getElementById('deb-save').textContent='Update';document.getElementById('d-eid').value=id;document.getElementById('d-name').value=d.name||'';document.getElementById('d-cur').value=d.currency||'NGN';document.getElementById('d-type').value=d.category||'Loan';document.getElementById('d-amt').value=d.amount||'';document.getElementById('d-paid').value=d.paid||'';document.getElementById('d-rate').value=d.rate||'';document.getElementById('d-notes').value=d.notes||'';openMod('deb-modal');}
 async function saveDebtor(){
-  if(S.saving) return;const name=document.getElementById('d-name').value.trim();const amt=parseAmt('d-amt');if(!name||!amt){toast('Name and amount required');return;}
+  if(S.saving) return;const name=document.getElementById('d-name').value.trim();const amt=parseFloat(document.getElementById('d-amt').value);if(!name||!amt){toast('Name and amount required');return;}
   S.saving=true;const btn=document.getElementById('deb-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
-  const cur=document.getElementById('d-cur').value,paid=parseAmt('d-paid'),rateIn=parseFloat(document.getElementById('d-rate').value),rate=isNaN(rateIn)?(DEF_RATES[cur]||1):rateIn,bal=amt-paid,eid=document.getElementById('d-eid').value;
+  const cur=document.getElementById('d-cur').value,paid=parseFloat(document.getElementById('d-paid').value)||0,rateIn=parseFloat(document.getElementById('d-rate').value),rate=isNaN(rateIn)?(DEF_RATES[cur]||1):rateIn,bal=amt-paid,eid=document.getElementById('d-eid').value;
   const data={name,currency:cur,amount:amt,paid,balance:bal,rate,ngnBalance:bal*rate,category:document.getElementById('d-type').value,notes:document.getElementById('d-notes').value,expectRepayment:true};
   try{if(eid){await db.collection('debtors').doc(eid).update(data);}else{data.createdAt=firebase.firestore.FieldValue.serverTimestamp();await db.collection('debtors').add(data);}closeMod('deb-modal');toast(eid?'Updated':'Debtor added');setSyncStatus('synced');await loadDebtors();renderDebtors();}
   catch(e){toast('Error saving');setSyncStatus('error');}
@@ -1391,17 +1448,16 @@ function renderProjRun(){
 }
 
 function renderProjFees(){
-  const feeState=cGet(CK.schoolFees)||[];
+  const feeState=cGet(CK.schoolFees)||SCHOOL_FEES_DEFAULT.map((f,i)=>({...f,id:i}));
   const rem=feeState.filter(f=>!f.paid).reduce((s,f)=>s+f.amount,0);
   const paid=feeState.filter(f=>f.paid).reduce((s,f)=>s+f.amount,0);
   document.getElementById('proj-fees').innerHTML=`
     <div class="g2" style="margin-bottom:10px">
-      <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Remaining</div><div class="cval-sm" style="color:var(--red)">${feeState.length?fN(rem):'—'}</div></div>
-      <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Paid So Far</div><div class="cval-sm" style="color:var(--accent)">${feeState.length?fN(paid):'—'}</div></div>
+      <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Remaining</div><div class="cval-sm" style="color:var(--red)">${fN(rem)}</div></div>
+      <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Paid So Far</div><div class="cval-sm" style="color:var(--accent)">${fN(paid)}</div></div>
     </div>
     <div class="card">
       <div class="sh" style="margin-bottom:8px"><div class="clabel" style="margin-bottom:0">Fee Schedule</div><button class="btn btn-g btn-sm" onclick="openAddFeeModal()">+ Add</button></div>
-      ${!feeState.length?'<div class="empty" style="padding:20px 0"><div class="empty-i">🎓</div>No fee entries yet — tap + Add to create one,<br>or import your seed JSON to restore previous entries.</div>':''}
       ${feeState.map((f,i)=>`
         <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)">
           <div style="${f.paid?'opacity:0.45':''}">
@@ -1419,7 +1475,7 @@ function renderProjFees(){
     <div class="card" id="fee-edit-card" style="display:none">
       <div class="clabel" style="margin-bottom:10px" id="fee-edit-title">Add Fee</div>
       <div class="ig"><label class="ilabel">Label</label><input class="ifield" id="fee-lbl" type="text" placeholder="e.g. Term 3 – Jun '26"></div>
-      <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" id="fee-amt" type="text" inputmode="decimal" placeholder="0" style="font-family:var(--mono)" oninput="fmtAmtInput(this)"></div>
+      <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" id="fee-amt" type="number" inputmode="decimal" placeholder="0"></div>
       <div style="display:flex;gap:8px;margin-top:4px">
         <button class="btn btn-p btn-sm" onclick="saveFeeEntry()">Save</button>
         <button class="btn btn-g btn-sm" onclick="document.getElementById('fee-edit-card').style.display='none'">Cancel</button>
@@ -1450,7 +1506,7 @@ function editFeeEntry(idx){
 }
 function saveFeeEntry(){
   const lbl=document.getElementById('fee-lbl').value.trim();
-  const amt=parseAmt('fee-amt');
+  const amt=parseFloat(document.getElementById('fee-amt').value);
   if(!lbl||!amt){toast('Enter label and amount');return;}
   const idx=parseInt(document.getElementById('fee-edit-idx').value);
   const fs=cGet(CK.schoolFees)||SCHOOL_FEES_DEFAULT.map((f,i)=>({...f,id:i}));
@@ -1466,11 +1522,6 @@ function removeFeeEntry(idx){
 }
 
 function renderProjHistory(){
-  const hist=getHistory();
-  if(!hist.length){
-    document.getElementById('proj-history').innerHTML=`<div class="card"><div class="empty" style="padding:24px 0"><div class="empty-i">◌</div>No history data yet.<br><span style="font-size:0.72rem;color:var(--text3)">Import your seed JSON via Settings › Data to populate history.</span></div></div>`;
-    return;
-  }
   document.getElementById('proj-history').innerHTML=`
     <div class="card">
       <div style="display:grid;grid-template-columns:80px 1fr 1fr;gap:0;padding-bottom:7px;border-bottom:1px solid var(--border);margin-bottom:4px">
@@ -1478,7 +1529,7 @@ function renderProjHistory(){
         <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:var(--accent);text-align:right;cursor:pointer" onclick="histSort('income')">Income ↕</div>
         <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:var(--red);text-align:right;cursor:pointer" onclick="histSort('expenses')">Expenses ↕</div>
       </div>
-      <div id="hist-rows">${buildHistRows(hist)}</div>
+      <div id="hist-rows">${buildHistRows(getHistory())}</div>
     </div>`;
 }
 function buildHistRows(data){
