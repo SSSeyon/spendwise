@@ -171,6 +171,23 @@ datalist option{background:var(--bg2);color:var(--text)}
 .swipe-del-bg{position:absolute;top:0;right:0;bottom:0;width:80px;background:var(--red);display:flex;align-items:center;justify-content:center;color:#fff;font-size:0.75rem;font-weight:700;letter-spacing:0.04em;border-radius:var(--rsm);opacity:0;transition:opacity 0.12s}
 .txi.swiping{transition:none}
 .txi{transition:transform 0.22s cubic-bezier(0.4,0,0.2,1)}
+/* Search bar */
+.search-bar{display:flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:8px 12px}
+.search-bar input{flex:1;background:none;border:none;outline:none;color:var(--text);font-family:var(--font);font-size:0.82rem}
+.search-bar input::placeholder{color:var(--text3)}
+.search-icon{color:var(--text3);font-size:0.9rem;flex-shrink:0}
+/* Filter drawer */
+.filter-drawer{position:fixed;inset:0;z-index:190;display:none}
+.filter-drawer.open{display:block}
+.filter-scrim{position:absolute;inset:0;background:rgba(0,0,0,0.6)}
+.filter-panel{position:absolute;bottom:0;left:0;right:0;background:var(--bg1);border-radius:var(--r) var(--r) 0 0;padding:20px 16px 32px;max-height:80vh;overflow-y:auto;animation:su 0.22s cubic-bezier(0.4,0,0.2,1)}
+.filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:12px}
+.filter-chip{padding:8px 10px;border-radius:var(--rsm);border:1px solid var(--border);background:var(--bg2);color:var(--text2);font-size:0.74rem;font-weight:600;cursor:pointer;text-align:center;transition:all 0.13s;font-family:var(--font)}
+.filter-chip.active{border-color:var(--accent);background:var(--adim);color:var(--accent)}
+/* MoM badge */
+.mom-badge{font-size:0.6rem;font-weight:700;padding:1px 5px;border-radius:4px;margin-left:6px;vertical-align:middle}
+.mom-up{background:var(--rdim);color:var(--red)}
+.mom-dn{background:var(--adim);color:var(--accent)}
 </style>
 </head>
 <body>
@@ -185,7 +202,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl">v3.7.1</span>
+      <span class="ver-lbl">v3.7.2</span>
     </div>
   </div>
 </header>
@@ -248,13 +265,19 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div id="dash-inv"></div>
     <div class="abar" id="dash-abar"></div>
   </div>
-  <!-- Trend -->
+  <!-- Net Worth Trend -->
   <div class="card">
-    <div class="sh"><div class="sh-title">6-Month Trend</div></div>
+    <div class="sh"><div class="sh-title">Net Worth Trend</div></div>
+    <canvas id="nw-trend-chart" style="max-height:140px"></canvas>
+  </div>
+  <!-- 6-Month Trend -->
+  <div class="card">
+    <div class="sh"><div class="sh-title">6-Month Income vs Expense</div></div>
     <canvas id="trend-chart" style="max-height:160px"></canvas>
-    <div style="display:flex;gap:12px;margin-top:8px">
+    <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
       <div style="display:flex;align-items:center;gap:5px;font-size:0.63rem;color:var(--text2)"><div style="width:8px;height:8px;border-radius:2px;background:var(--accent)"></div>Expenses</div>
       <div style="display:flex;align-items:center;gap:5px;font-size:0.63rem;color:var(--text2)"><div style="width:8px;height:8px;border-radius:2px;background:var(--blue);opacity:0.7"></div>Income</div>
+      <div style="display:flex;align-items:center;gap:5px;font-size:0.63rem;color:var(--text2)"><div style="width:8px;height:8px;border-radius:2px;background:var(--gold)"></div>Savings %</div>
     </div>
   </div>
   <!-- Recent -->
@@ -269,8 +292,27 @@ datalist option{background:var(--bg2);color:var(--text)}
   <div class="pg-title" style="margin-bottom:12px">Expenses</div>
   <div class="mrow" id="exp-months"></div>
   <div class="card" id="exp-summary"></div>
-  <div class="cfrow" id="exp-filters"></div>
+  <div style="display:flex;gap:8px;margin-bottom:10px">
+    <div class="search-bar" style="flex:1">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="exp-search" placeholder="Search payee or notes…" oninput="renderExpenses()">
+    </div>
+    <button class="btn btn-g btn-sm" onclick="openFilterDrawer()" style="flex-shrink:0;padding:8px 12px">Filter ↑</button>
+  </div>
   <div id="exp-list"></div>
+</div>
+
+<!-- FILTER DRAWER -->
+<div class="filter-drawer" id="filter-drawer">
+  <div class="filter-scrim" onclick="closeFilterDrawer()"></div>
+  <div class="filter-panel">
+    <div class="mhdr"><div class="mtitle">Filter by Category</div><button class="mclose" onclick="closeFilterDrawer()">×</button></div>
+    <div class="filter-grid" id="filter-grid"></div>
+    <div style="margin-top:14px;display:flex;gap:8px">
+      <button class="btn btn-p btn-sm" onclick="closeFilterDrawer()">Done</button>
+      <button class="btn btn-g btn-sm" onclick="clearFilter()">Clear</button>
+    </div>
+  </div>
 </div>
 
 <!-- INVESTMENTS -->
@@ -551,7 +593,7 @@ let S={
   cashMonth:now.getMonth()+1,cashYear:now.getFullYear(),
   dashMonth:now.getMonth()+1,dashYear:now.getFullYear(),dashCurrency:'NGN',
   txns:[],income:[],investments:{},cash:{},debtors:[],budgets:{...DEF_BUDGETS},
-  catChart:null,trendChart:null,invChart:null,
+  catChart:null,trendChart:null,invChart:null,nwChart:null,
   chartType:'doughnut',
   saving:false,isStale:false,lastSync:null,fbSyncVersion:null,
   customExpLines:{}, // user-added expense lines
@@ -934,9 +976,23 @@ function renderDashboard(){
   document.getElementById('dash-nw-sub').textContent=`Investments + Cash · ${MONTHS[m-1]} ${y}`;
 
   const st=bSt(spent,budgTotal);
+  // MoM comparison — pull previous month from cache/history
+  const prevM=m===1?12:m-1,prevY=m===1?y-1:y;
+  const prevTxns=cGet(CK.txns(prevM,prevY))||[];
+  const prevHist=getHistory().find(h=>h.year===prevY&&h.month===prevM);
+  const prevSpent=prevTxns.length?prevTxns.reduce((s,t)=>s+(t.amount||0),0):(prevHist?.expenses||0);
+  const prevIncHist=cGet(CK.inc(prevM,prevY))||[];
+  const prevIncAmt=prevIncHist.length?prevIncHist.reduce((s,i)=>s+(i.amount||0),0):(prevHist?.income||0);
+  const momBadge=(cur2,prev,invertGood)=>{
+    if(!prev||prev===0) return '';
+    const pct=Math.round((cur2-prev)/prev*100);
+    if(pct===0) return '';
+    const up=pct>0;const good=invertGood?!up:up;
+    return`<span class="mom-badge ${good?'mom-dn':'mom-up'}">${up?'+':''}${pct}%</span>`;
+  };
   document.getElementById('dash-stats').innerHTML=`
-    <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('expenses')"><div class="clabel">Spent ›</div><div class="cval-sm">${fmtCur(spent,cur,m,y)}</div><div class="prog"><div class="pf ${st}" style="width:${budgTotal?Math.min(spent/budgTotal*100,100):0}%"></div></div><div class="csub">${fmtCur(budgTotal-spent,cur,m,y)} left</div></div>
-    <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('income')"><div class="clabel">Income ›</div><div class="cval-sm" style="color:var(--accent)">${fmtCur(incomeDisplay,cur,m,y)}</div><div class="csub">This month</div></div>
+    <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('expenses')"><div class="clabel">Spent ›</div><div class="cval-sm">${fmtCur(spent,cur,m,y)}${momBadge(spent,prevSpent,true)}</div><div class="prog"><div class="pf ${st}" style="width:${budgTotal?Math.min(spent/budgTotal*100,100):0}%"></div></div><div class="csub">${fmtCur(budgTotal-spent,cur,m,y)} left</div></div>
+    <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('income')"><div class="clabel">Income ›</div><div class="cval-sm" style="color:var(--accent)">${fmtCur(incomeDisplay,cur,m,y)}${momBadge(incomeDisplay,prevIncAmt,false)}</div><div class="csub">This month</div></div>
     <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('cash')"><div class="clabel">Cash ›</div><div class="cval-sm">${cashTotal?fmtCur(cashTotal,cur,m,y):'—'}</div><div class="csub">All accounts</div></div>
     <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Portfolio</div><div class="cval-sm">${invTotal?fmtCur(invTotal,cur,m,y):'—'}</div><div class="csub">All platforms</div></div>
   `;
@@ -981,17 +1037,42 @@ function renderDashboard(){
   const active=PLATFORMS.filter(p=>inv[p.key]);
   document.getElementById('dash-abar').innerHTML=invTotal&&active.length?active.map(p=>`<div style="flex:${inv[p.key]};background:${p.color};opacity:0.8"></div>`).join(''):'';
 
-  // Trend (last 6 from HISTORY)
+  // 6-Month Trend (last 6 from HISTORY) with savings rate line
   const recent=getHistory().slice(-6);
   if(S.trendChart) S.trendChart.destroy();
-  const ctx=document.getElementById('trend-chart').getContext('2d');
-  S.trendChart=new Chart(ctx,{type:'bar',data:{labels:recent.map(d=>d.label),datasets:[{label:'Income',data:recent.map(d=>d.income||0),backgroundColor:'rgba(92,158,255,0.4)',borderRadius:3,borderSkipped:false},{label:'Expenses',data:recent.map(d=>d.expenses||0),backgroundColor:'rgba(200,245,66,0.8)',borderRadius:3,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>'₦'+c.parsed.y.toLocaleString()}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}},barPercentage:0.72}});
+  const tctx=document.getElementById('trend-chart').getContext('2d');
+  S.trendChart=new Chart(tctx,{type:'bar',data:{labels:recent.map(d=>d.label),datasets:[
+    {label:'Expenses',data:recent.map(d=>d.expenses||0),backgroundColor:'rgba(200,245,66,0.8)',borderRadius:3,borderSkipped:false,order:2},
+    {label:'Income',data:recent.map(d=>d.income||0),backgroundColor:'rgba(92,158,255,0.4)',borderRadius:3,borderSkipped:false,order:2},
+    {label:'Savings %',data:recent.map(d=>d.income>0?Math.round((d.income-d.expenses)/d.income*100):0),type:'line',borderColor:'#f5c842',backgroundColor:'transparent',borderWidth:2,pointBackgroundColor:'#f5c842',pointRadius:3,tension:0.3,yAxisID:'y2',order:1}
+  ]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>c.dataset.label==='Savings %'?c.parsed.y+'%':'₦'+c.parsed.y.toLocaleString()}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false},y2:{display:false,min:-20,max:100}},barPercentage:0.72}});
+
+  // Net Worth trend
+  renderNWTrendChart();
 
   // Recent transactions
   const recEl=document.getElementById('dash-recent');
   const combined=[...txns.slice(0,3).map(t=>({...t,type:'exp'})),...incList.slice(0,2).map(t=>({...t,type:'inc'}))].sort((a,b)=>a.date>b.date?-1:1).slice(0,5);
   if(!combined.length){recEl.innerHTML='<div class="empty"><div class="empty-i">↕</div>No transactions yet</div>';}
   else{recEl.innerHTML='<div class="txlist">'+combined.map(tx=>`<div class="txi"><div><div class="txi-cat">${tx.category||tx.payee||'—'}</div><div class="txi-meta">${tx.payee||tx.notes||'—'} · ${tx.date}</div></div><div class="${tx.type==='inc'?'txi-amt txi-inc':'txi-amt txi-exp'}">${tx.type==='inc'?'+':''}${fmtCur(tx.amount,cur,m,y)}</div></div>`).join('')+'</div>';}
+}
+
+function renderNWTrendChart(){
+  const hist=getHistory();
+  if(!hist.length) return;
+  const pts=hist.slice(-12).map(h=>{
+    const inv=cGet(CK.inv(h.month,h.year))||{};
+    const cash=cGet(CK.cash(h.month,h.year))||{};
+    const invT=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
+    const cashT=getCashAccounts().reduce((s,b)=>s+(cash[b]||0),0);
+    return{label:h.label,nw:invT+cashT};
+  }).filter(p=>p.nw>0);
+  if(pts.length<2) return;
+  const canvas=document.getElementById('nw-trend-chart');
+  if(!canvas) return;
+  if(S.nwChart) S.nwChart.destroy();
+  const ctx=canvas.getContext('2d');
+  S.nwChart=new Chart(ctx,{type:'line',data:{labels:pts.map(p=>p.label),datasets:[{data:pts.map(p=>p.nw),borderColor:'#c8f542',backgroundColor:'rgba(200,245,66,0.06)',borderWidth:2,pointBackgroundColor:'#c8f542',pointRadius:3,tension:0.35,fill:true}]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>fN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}}});
 }
 
 function renderDashFullYear(y,totalInc,totalExp,cur){
@@ -1087,32 +1168,102 @@ function renderExpenses(){
   const m=S.expMonth,y=S.expYear;
   const months=[];for(let i=curM();i>=1;i--) months.push(i);
   document.getElementById('exp-months').innerHTML=months.map(mo=>`<div class="mpill ${mo===m?'active':''}" onclick="reloadMonth(${mo},${y})">${MS[mo-1]}</div>`).join('');
-  const txns=S.txns,filtered=S.expCat==='All'?txns:txns.filter(t=>t.category===S.expCat);
+
+  // Sort all txns by date descending
+  const txns=[...S.txns].sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:0);
+  const searchQ=(document.getElementById('exp-search')?.value||'').toLowerCase().trim();
+
+  let filtered=txns;
+  if(S.expCat!=='All') filtered=filtered.filter(t=>t.category===S.expCat);
+  if(searchQ) filtered=filtered.filter(t=>(t.payee||'').toLowerCase().includes(searchQ)||(t.notes||'').toLowerCase().includes(searchQ));
+
   const total=txns.reduce((s,t)=>s+(t.amount||0),0);
   const catSpend={};txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+(t.amount||0);});
-  document.getElementById('exp-summary').innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center${Object.keys(catSpend).length?';margin-bottom:12px':''}"><div><div class="clabel">Total — ${MONTHS[m-1]}</div><div class="cval">${fN(total)}</div></div><div style="text-align:right"><div class="clabel">Count</div><div class="cval">${txns.length}</div></div></div>${Object.keys(catSpend).length?`<div style="display:flex;flex-wrap:wrap;gap:5px">${Object.entries(catSpend).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([c,a])=>`<div onclick="setCatFilter('${c}')" style="padding:2px 9px;border-radius:20px;background:${S.expCat===c?'var(--adim)':'var(--bg2)'};border:1px solid ${S.expCat===c?'var(--accent)':'var(--border)'};font-size:0.63rem;color:${S.expCat===c?'var(--accent)':'var(--text2)'};cursor:pointer">${c} · ${fN(a)}</div>`).join('')}</div>`:''}`;
-  document.getElementById('exp-filters').innerHTML=['All',...CATS].map(c=>`<div class="cfpill ${c===S.expCat?'active':''}" onclick="setCatFilter('${c}')">${c}</div>`).join('');
+
+  const filterDesc=S.expCat!=='All'?` · ${S.expCat}`:'';
+  document.getElementById('exp-summary').innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center${Object.keys(catSpend).length?';margin-bottom:12px':''}">
+      <div><div class="clabel">Total — ${MONTHS[m-1]}${filterDesc}</div><div class="cval">${fN(S.expCat!=='All'?filtered.reduce((s,t)=>s+(t.amount||0),0):total)}</div></div>
+      <div style="text-align:right"><div class="clabel">Count</div><div class="cval">${filtered.length}${filtered.length!==txns.length?`<span style="font-size:0.6rem;color:var(--text3)"> / ${txns.length}</span>`:''}</div></div>
+    </div>
+    ${Object.keys(catSpend).length?`<div style="display:flex;flex-wrap:wrap;gap:5px">${Object.entries(catSpend).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([c,a])=>`<div onclick="quickCatFilter('${c}')" style="padding:2px 9px;border-radius:20px;background:${S.expCat===c?'var(--adim)':'var(--bg2)'};border:1px solid ${S.expCat===c?'var(--accent)':'var(--border)'};font-size:0.63rem;color:${S.expCat===c?'var(--accent)':'var(--text2)'};cursor:pointer">${c} · ${fN(a)}</div>`).join('')}</div>`:''}`;
+
   const listEl=document.getElementById('exp-list');
-  if(!filtered.length){listEl.innerHTML='<div class="empty"><div class="empty-i">↕</div>No transactions</div>';return;}
-  listEl.innerHTML='<div class="txlist">'+filtered.map(tx=>`
+  if(!filtered.length){
+    listEl.innerHTML=`<div class="empty"><div class="empty-i">↕</div>${searchQ?`No results for "${searchQ}"`:S.expCat!=='All'?`No ${S.expCat} transactions`:'No transactions'}</div>`;
+    return;
+  }
+
+  // Helper to build a swipeable row
+  const swipeRow=(tx)=>`
     <div class="swipe-wrap" id="sw-${tx.id}">
       <div class="swipe-del-bg" id="swbg-${tx.id}">DELETE</div>
-      <div class="txi" id="txi-${tx.id}"
-           data-id="${tx.id}"
+      <div class="txi" id="txi-${tx.id}" data-id="${tx.id}"
            ontouchstart="swipeStart(event,'${tx.id}')"
            ontouchmove="swipeMove(event,'${tx.id}')"
            ontouchend="swipeEnd(event,'${tx.id}')">
-        <div><div class="txi-cat">${tx.category}</div><div class="txi-meta">${tx.payee||'—'} · ${tx.date} · ${tx.bank||''}</div></div>
-        <div style="display:flex;align-items:center;gap:6px">
+        <div style="flex:1;min-width:0">
+          <div class="txi-cat" style="font-size:0.76rem">${tx.payee||'—'}</div>
+          <div class="txi-meta">${tx.date} · ${tx.bank||''}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
           <div class="txi-amt txi-exp">${fN(tx.amount)}</div>
           <button class="txi-del" onclick="delExpense('${tx.id}')">×</button>
         </div>
       </div>
-    </div>`).join('')+'</div>';
-  // Attach swipe handlers after render
-  attachSwipeHandlers();
+    </div>`;
+
+  if(S.expCat!=='All'||searchQ){
+    // Flat list when filtered to single category or searching
+    listEl.innerHTML='<div class="txlist">'+filtered.map(swipeRow).join('')+'</div>';
+    return;
+  }
+
+  // All categories — group by category, each group collapsible, items sorted by date within group
+  const groups={};const catOrder=[];
+  filtered.forEach(tx=>{
+    if(!groups[tx.category]){groups[tx.category]=[];catOrder.push(tx.category);}
+    groups[tx.category].push(tx);
+  });
+  const orderedCats=[...new Set(catOrder)];
+
+  listEl.innerHTML=orderedCats.map(cat=>{
+    const items=groups[cat];
+    const catTotal=items.reduce((s,t)=>s+(t.amount||0),0);
+    const gid='grp-'+cat.replace(/[^a-zA-Z0-9]/g,'');
+    return`<div style="margin-bottom:6px">
+      <div onclick="toggleExpGrp('${gid}')" style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);cursor:pointer;user-select:none">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:0.63rem;color:var(--text3);transition:transform 0.15s" id="${gid}-arrow">▶</span>
+          <span style="font-size:0.8rem;font-weight:700">${cat}</span>
+          <span style="font-size:0.62rem;color:var(--text3);font-family:var(--mono)">${items.length}</span>
+        </div>
+        <span style="font-family:var(--mono);font-size:0.82rem;color:var(--red)">${fN(catTotal)}</span>
+      </div>
+      <div id="${gid}" style="display:none;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--rsm) var(--rsm);overflow:hidden">
+        ${items.map(swipeRow).join('')}
+      </div>
+    </div>`;
+  }).join('');
 }
+
+function toggleExpGrp(gid){
+  const el=document.getElementById(gid);
+  const arrow=document.getElementById(gid+'-arrow');
+  if(!el) return;
+  const open=el.style.display!=='none';
+  el.style.display=open?'none':'block';
+  if(arrow) arrow.style.transform=open?'':'rotate(90deg)';
+}
+function quickCatFilter(c){S.expCat=S.expCat===c?'All':c;const s=document.getElementById('exp-search');if(s)s.value='';renderExpenses();}
 function setCatFilter(c){S.expCat=c;renderExpenses();}
+function openFilterDrawer(){
+  const grid=document.getElementById('filter-grid');
+  grid.innerHTML=['All',...CATS].map(c=>`<div class="filter-chip ${c===S.expCat?'active':''}" onclick="setCatFilter('${c}');document.querySelectorAll('.filter-chip').forEach(x=>x.classList.remove('active'));this.classList.add('active')">${c}</div>`).join('');
+  document.getElementById('filter-drawer').classList.add('open');
+}
+function closeFilterDrawer(){document.getElementById('filter-drawer').classList.remove('open');renderExpenses();}
+function clearFilter(){S.expCat='All';closeFilterDrawer();}
 
 // ══════════════════════════════════════════════════════════════════════════
 // SWIPE-TO-DELETE
@@ -1639,7 +1790,23 @@ function renderSettings(){renderSettBudget();renderSettExport();renderSettData()
 function settTab(tab,btn){['budget','export','data'].forEach(t=>{document.getElementById('sett-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
 function renderSettBudget(){
   const total=Object.values(S.budgets).reduce((s,v)=>s+(v||0),0);
-  document.getElementById('sett-budget').innerHTML=`<div style="font-size:0.68rem;color:var(--text2);margin-bottom:12px">Budget for ${MONTHS[S.expMonth-1]} ${S.expYear}</div>${CATS.map(c=>{const k=ck(c);return`<div class="ig"><label class="ilabel">${c}</label><input class="ifield" type="number" inputmode="decimal" id="b-${k}" placeholder="0" value="${S.budgets[k]||''}"></div>`;}).join('')}<div style="display:flex;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);margin-bottom:12px;font-weight:700;font-size:0.84rem"><span>Total</span><span style="font-family:var(--mono);color:var(--accent)">${fN(total)}</span></div><button class="btn btn-p btn-full" onclick="saveBudget()">Save Budget</button>`;
+  const prevM=S.expMonth===1?12:S.expMonth-1,prevY=S.expMonth===1?S.expYear-1:S.expYear;
+  const hasPrevBudget=!!cGet(CK.budgets(prevM,prevY));
+  document.getElementById('sett-budget').innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="font-size:0.68rem;color:var(--text2)">Budget for ${MONTHS[S.expMonth-1]} ${S.expYear}</div>
+      ${hasPrevBudget?`<button class="btn btn-g btn-sm" onclick="copyLastBudget()">↩ Copy from ${MS[prevM-1]}</button>`:''}
+    </div>
+    ${CATS.map(c=>{const k=ck(c);return`<div class="ig"><label class="ilabel">${c}</label><input class="ifield" type="number" inputmode="decimal" id="b-${k}" placeholder="0" value="${S.budgets[k]||''}"></div>`;}).join('')}
+    <div style="display:flex;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);margin-bottom:12px;font-weight:700;font-size:0.84rem"><span>Total</span><span style="font-family:var(--mono);color:var(--accent)">${fN(total)}</span></div>
+    <button class="btn btn-p btn-full" onclick="saveBudget()">Save Budget</button>`;
+}
+function copyLastBudget(){
+  const prevM=S.expMonth===1?12:S.expMonth-1,prevY=S.expMonth===1?S.expYear-1:S.expYear;
+  const prev=cGet(CK.budgets(prevM,prevY));
+  if(!prev){toast('No budget found for last month');return;}
+  CATS.forEach(c=>{const k=ck(c);const el=document.getElementById('b-'+k);if(el)el.value=prev[k]||'';});
+  toast(`Copied from ${MONTHS[prevM-1]} — remember to save`);
 }
 async function saveBudget(){
   const cats={};CATS.forEach(c=>{const k=ck(c);const v=parseFloat(document.getElementById('b-'+k).value);cats[k]=isNaN(v)?0:v;});setSyncStatus('syncing');
@@ -1649,14 +1816,42 @@ async function saveBudget(){
 
 function renderSettExport(){
   document.getElementById('sett-export').innerHTML=`
-    <div class="exp-card"><div class="exp-card-title">Export All Transactions</div><div class="exp-card-sub">Every transaction ever entered — Date, Category, Actual Expense, Bank, Amount — with category totals at the bottom.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-exp btn-sm" onclick="exportAll('csv')">↓ CSV</button><button class="btn btn-exp btn-sm" onclick="exportAll('xlsx')">↓ Excel</button></div></div>
-    <div class="exp-card"><div class="exp-card-title">Export by Month</div><div class="exp-card-sub">Select a month and export just that month in your original monthly sheet format.</div>
+    <div class="exp-card"><div class="exp-card-title">Full Data Backup (JSON)</div><div class="exp-card-sub">Export everything — transactions, income, cash, investments, debtors, history — as a JSON file you can re-import later.</div><button class="btn btn-p btn-sm" onclick="exportFullBackup()">↓ Download Backup JSON</button></div>
+    <div class="exp-card"><div class="exp-card-title">Export All Transactions</div><div class="exp-card-sub">Every transaction — Date, Category, Actual Expense, Bank, Amount — with category totals.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-exp btn-sm" onclick="exportAll('csv')">↓ CSV</button><button class="btn btn-exp btn-sm" onclick="exportAll('xlsx')">↓ Excel</button></div></div>
+    <div class="exp-card"><div class="exp-card-title">Export by Month</div><div class="exp-card-sub">Select a month and export just that month.</div>
     <div class="gform" style="margin-bottom:10px">
       <div class="ig"><label class="ilabel">Month</label><select class="sfield" id="exp-mo-sel">${Array.from({length:curM()},(_,i)=>i+1).reverse().map(m=>`<option value="${m}">${MONTHS[m-1]}</option>`).join('')}</select></div>
       <div class="ig"><label class="ilabel">Year</label><select class="sfield" id="exp-yr-sel"><option value="2026">2026</option><option value="2025">2025</option><option value="2024">2024</option></select></div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-exp btn-sm" onclick="exportMonth('csv')">↓ CSV</button><button class="btn btn-exp btn-sm" onclick="exportMonth('xlsx')">↓ Excel</button></div></div>
   `;
+}
+
+async function exportFullBackup(){
+  toast('Building backup…');
+  try{
+    const [txSnap,incSnap,cashSnap,invSnap,debSnap,histSnap]=await Promise.all([
+      db.collection('transactions').orderBy('date','desc').get(),
+      db.collection('income').get(),
+      db.collection('cashBalances').get(),
+      db.collection('investments').get(),
+      db.collection('debtors').get(),
+      db.collection('historicalSummary').orderBy('year').orderBy('month').get(),
+    ]);
+    const backup={
+      _meta:{version:'3.7.2',generated:todayStr(),description:'SpendWise full backup'},
+      transactions:txSnap.docs.map(d=>({...d.data(),_id:d.id})),
+      income:incSnap.docs.map(d=>({...d.data(),_id:d.id})),
+      cashBalances:cashSnap.docs.map(d=>d.data()),
+      investments:invSnap.docs.map(d=>d.data()),
+      debtors:debSnap.docs.map(d=>({...d.data(),_id:d.id})),
+      historicalSummary:histSnap.docs.map(d=>d.data()),
+    };
+    const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download=`spendwise-backup-${todayStr()}.json`;a.click();
+    URL.revokeObjectURL(url);toast('Backup downloaded');haptic([8]);
+  }catch(e){toast('Error — check connection');console.error(e);}
 }
 function buildRows(txns,month,year){
   const rows=[[`SpendWise Export — ${month?MONTHS[month-1]+' '+year:'All Transactions'}`],[],['Date','Category','Actual Expense','Bank','Notes','Amount (₦)']];
@@ -1689,7 +1884,14 @@ function renderSettData(){
       <div class="pjrow"><span class="pjlabel">Transactions (this month)</span><span class="pjval">${S.txns.length}</span></div>
       <div class="pjrow"><span class="pjlabel">Income records</span><span class="pjval">${S.income.length}</span></div>
       <div class="pjrow"><span class="pjlabel">Debtors</span><span class="pjval">${S.debtors.length}</span></div>
-      <div style="margin-top:10px"><button class="btn btn-g btn-sm" onclick="forceSyncNow()">↻ Force re-sync from Firebase</button></div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-g btn-sm" onclick="forceSyncNow()">↻ Force re-sync from Firebase</button>
+      </div>
+    </div>
+    <div class="exp-card" style="margin-top:10px">
+      <div class="exp-card-title" style="margin-bottom:6px">App Update</div>
+      <div class="exp-card-sub" style="margin-bottom:10px">If the app shows an old version after a deployment, use this to clear the service worker cache and reload the latest files.</div>
+      <button class="btn btn-g btn-sm" onclick="forceHardRefresh()">⬆ Force Hard Refresh</button>
     </div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Import JSON Seed File</div>
@@ -1699,8 +1901,20 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.5.0</div><div>Firebase: gen-lang-client-0371859680</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.7.2</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
+}
+
+function forceHardRefresh(){
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.getRegistrations().then(regs=>{
+      Promise.all(regs.map(r=>r.unregister())).then(()=>{
+        caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).then(()=>window.location.reload(true));
+      });
+    });
+  } else {
+    window.location.reload(true);
+  }
 }
 async function forceSyncNow(){
   if(!db||!navigator.onLine){toast('Not connected');return;}
