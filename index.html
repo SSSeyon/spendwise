@@ -180,7 +180,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl">v3.4.0</span>
+      <span class="ver-lbl">v3.4.1</span>
     </div>
   </div>
 </header>
@@ -204,8 +204,8 @@ datalist option{background:var(--bg2);color:var(--text)}
     </select>
   </div>
   <!-- Net worth -->
-  <div class="card" style="margin-bottom:10px">
-    <div class="clabel">Net Worth</div>
+  <div class="card" style="margin-bottom:10px;cursor:pointer" onclick="drillDown('networth')">
+    <div class="clabel">Net Worth ›</div>
     <div class="nw-big" id="dash-nw">—</div>
     <div class="csub" id="dash-nw-sub"></div>
   </div>
@@ -224,7 +224,7 @@ datalist option{background:var(--bg2);color:var(--text)}
   </div>
   <!-- Spend vs budget -->
   <div class="card">
-    <div class="sh"><div class="sh-title">Spend vs Budget</div><span style="font-size:0.68rem;color:var(--text2)" id="dash-month-label"></span></div>
+    <div class="sh" style="cursor:pointer" onclick="drillDown('budget')"><div class="sh-title">Spend vs Budget ›</div><span style="font-size:0.68rem;color:var(--text2)" id="dash-month-label"></span></div>
     <div id="dash-cats"></div>
   </div>
   <!-- Income vs expense -->
@@ -234,12 +234,12 @@ datalist option{background:var(--bg2);color:var(--text)}
   </div>
   <!-- Cash positions -->
   <div class="card">
-    <div class="sh"><div class="sh-title">Cash Positions</div><span class="badge bb" id="dash-cash-total"></span></div>
+    <div class="sh" style="cursor:pointer" onclick="drillDown('cash')"><div class="sh-title">Cash Positions ›</div><span class="badge bb" id="dash-cash-total"></span></div>
     <div id="dash-cash"></div>
   </div>
   <!-- Investment portfolio -->
   <div class="card">
-    <div class="sh"><div class="sh-title">Investment Portfolio</div><span class="badge bg" id="dash-inv-total"></span></div>
+    <div class="sh" style="cursor:pointer" onclick="drillDown('investments')"><div class="sh-title">Investment Portfolio ›</div><span class="badge bg" id="dash-inv-total"></span></div>
     <div id="dash-inv"></div>
     <div class="abar" id="dash-abar"></div>
   </div>
@@ -379,7 +379,16 @@ datalist option{background:var(--bg2);color:var(--text)}
 
 <!-- EXPENSE MODAL -->
 <div class="mbackdrop" id="exp-modal">
-  <div class="modal" onclick="event.stopPropagation()">
+  <!-- DRILLDOWN MODAL -->
+<div class="modal" id="drill-modal" onclick="if(event.target===this)closeMod('drill-modal')">
+  <div class="modal-box" style="max-height:80vh;overflow-y:auto">
+    <div class="modal-title" id="drill-title">Detail</div>
+    <div id="drill-body"></div>
+    <button class="btn btn-g btn-full" style="margin-top:12px" onclick="closeMod('drill-modal')">Close</button>
+  </div>
+</div>
+
+<div class="modal" onclick="event.stopPropagation()">
     <div class="mhdr"><div class="mtitle">New Expense</div><button class="mclose" onclick="closeMod('exp-modal')">×</button></div>
     <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" type="number" inputmode="decimal" id="e-amt" placeholder="0" style="font-size:1.2rem"></div>
     <div class="gform">
@@ -558,6 +567,7 @@ const CK={
   fbSyncVer:'sw3_fb_sync_ver',
   customLines:'sw3_custom_lines',
   schoolFees:'sw3_school_fees',
+  currency:'sw3_dash_currency',
 };
 const cGet=k=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}};
 const cSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}};
@@ -572,6 +582,7 @@ function loadFromCache(){
   S.budgets=cGet(CK.budgets(m,y))||{...DEF_BUDGETS};
   S.lastSync=cGet(CK.lastSync);
   S.fbSyncVersion=cGet(CK.fbSyncVer);
+  S.dashCurrency=cGet(CK.currency)||'NGN';
   S.customExpLines=cGet(CK.customLines)||{};
   S.isStale=S.txns.length>0||Object.keys(S.investments).length>0||Object.keys(S.cash).length>0;
 }
@@ -692,11 +703,22 @@ async function loadInvData(m,y){
   try{
     const doc=await db.collection('investments').doc(sid(m,y)).get();
     if(doc.exists&&doc.data()&&Object.keys(doc.data()).length>2){
-      S.investments=doc.data();cSet(CK.inv(m,y),S.investments);return;
+      const fbData=doc.data();
+      // Sanity check: if any USD platform has a value < 5000, it's raw USD not NGN
+      // (NGN equivalent of $1 USD = ~1600, so any real balance should be >> 1000)
+      const usdPlatforms=['Risevest','Trove','Bamboo','USDHoldings'];
+      const looksLikeRawUSD=usdPlatforms.some(k=>fbData[k]>0&&fbData[k]<5000);
+      const local=cGet(CK.inv(m,y));
+      const localIsGood=local&&Object.keys(local).length>2&&
+        !usdPlatforms.some(k=>local[k]>0&&local[k]<5000);
+      if(looksLikeRawUSD&&localIsGood){
+        // Firebase has stale raw-USD data; keep local NGN data
+        return;
+      }
+      S.investments=fbData;cSet(CK.inv(m,y),S.investments);return;
     }
-    // Only fall back if we don't already have local data
     const local=cGet(CK.inv(m,y));
-    if(local&&Object.keys(local).length>2) return; // keep local, it's richer
+    if(local&&Object.keys(local).length>2) return;
     const snap=await db.collection('investments').orderBy('year','desc').orderBy('month','desc').limit(1).get();
     if(!snap.empty){S.investments=snap.docs[0].data();cSet(CK.inv(m,y),S.investments);}
   }catch(e){/* keep local */}
@@ -705,9 +727,18 @@ async function loadInvData(m,y){
 async function loadCashData(m,y){
   try{
     const doc=await db.collection('cashBalances').doc(sid(m,y)).get();
-    if(doc.exists&&doc.data()){S.cash=doc.data();cSet(CK.cash(m,y),S.cash);return;}
+    if(doc.exists&&doc.data()){
+      const fbCash=doc.data();
+      const local=cGet(CK.cash(m,y));
+      // If local has more populated accounts than Firebase, keep local
+      // (handles case where Firebase has stale/partial data)
+      const fbTotal=Object.values(fbCash).filter(v=>typeof v==='number').reduce((s,v)=>s+v,0);
+      const localTotal=local?Object.values(local).filter(v=>typeof v==='number').reduce((s,v)=>s+v,0):0;
+      if(local&&localTotal>fbTotal*2){return;}// local is significantly richer
+      S.cash=fbCash;cSet(CK.cash(m,y),S.cash);return;
+    }
     const local=cGet(CK.cash(m,y));
-    if(local) return; // keep local
+    if(local) return;
     const snap=await db.collection('cashBalances').orderBy('year','desc').orderBy('month','desc').limit(1).get();
     if(!snap.empty){S.cash=snap.docs[0].data();cSet(CK.cash(m,y),S.cash);}
   }catch(e){/* keep local */}
@@ -815,6 +846,7 @@ function dashPeriodChange(){
   const newCur=document.getElementById('dash-currency').value;
   const curOnly=(newYear===S.dashYear&&newMonth===S.dashMonth&&newCur!==S.dashCurrency);
   S.dashYear=newYear;S.dashMonth=newMonth;S.dashCurrency=newCur;
+  cSet(CK.currency,newCur);
   updateMonthOptions();
   if(curOnly){renderDashboard();return;}
   if(S.dashMonth>0){
@@ -857,6 +889,7 @@ function renderAll(){
 // ══════════════════════════════════════════════════════════════════════════
 function renderDashboard(){
   const m=S.dashMonth,y=S.dashYear,cur=S.dashCurrency;
+  const _cs=document.getElementById('dash-currency');if(_cs&&_cs.value!==cur)_cs.value=cur;
   const isFullYear=m===0;
   const periodLabel=isFullYear?`${y} — Full Year`:`${MONTHS[m-1]} ${y}`;
   document.getElementById('dash-period-label').textContent=periodLabel;
@@ -892,9 +925,9 @@ function renderDashboard(){
 
   const st=bSt(spent,budgTotal);
   document.getElementById('dash-stats').innerHTML=`
-    <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Spent</div><div class="cval-sm">${fmtCur(spent,cur,m,y)}</div><div class="prog"><div class="pf ${st}" style="width:${budgTotal?Math.min(spent/budgTotal*100,100):0}%"></div></div><div class="csub">${fmtCur(budgTotal-spent,cur,m,y)} left</div></div>
-    <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Income</div><div class="cval-sm" style="color:var(--accent)">${fmtCur(incomeDisplay,cur,m,y)}</div><div class="csub">This month</div></div>
-    <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Cash</div><div class="cval-sm">${cashTotal?fmtCur(cashTotal,cur,m,y):'—'}</div><div class="csub">All accounts</div></div>
+    <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('expenses')"><div class="clabel">Spent ›</div><div class="cval-sm">${fmtCur(spent,cur,m,y)}</div><div class="prog"><div class="pf ${st}" style="width:${budgTotal?Math.min(spent/budgTotal*100,100):0}%"></div></div><div class="csub">${fmtCur(budgTotal-spent,cur,m,y)} left</div></div>
+    <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('income')"><div class="clabel">Income ›</div><div class="cval-sm" style="color:var(--accent)">${fmtCur(incomeDisplay,cur,m,y)}</div><div class="csub">This month</div></div>
+    <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('cash')"><div class="clabel">Cash ›</div><div class="cval-sm">${cashTotal?fmtCur(cashTotal,cur,m,y):'—'}</div><div class="csub">All accounts</div></div>
     <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Portfolio</div><div class="cval-sm">${invTotal?fmtCur(invTotal,cur,m,y):'—'}</div><div class="csub">All platforms</div></div>
   `;
 
@@ -1530,7 +1563,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.4.0</div><div>Firebase: gen-lang-client-0371859680</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.4.1</div><div>Firebase: gen-lang-client-0371859680</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
 }
 async function forceSyncNow(){
@@ -1546,6 +1579,93 @@ async function forceSyncNow(){
     S.debtors=cGet(CK.debtors)||S.debtors;
     cSet(CK.lastSync,Date.now());setSyncStatus('synced');renderAll();toast('Sync complete');renderSettData();
   }catch(e){setSyncStatus('error');toast('Sync failed');}
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// DASHBOARD DRILLDOWN
+// ══════════════════════════════════════════════════════════════════════════
+function drillDown(type){
+  const m=S.dashMonth,y=S.dashYear,cur=S.dashCurrency;
+  let title='',body='';
+  const fmtRow=(label,val,color)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><span style="font-size:0.78rem;color:var(--text2)">${label}</span><span style="font-family:var(--mono);font-size:0.82rem;color:${color||'var(--fg)'}">${val}</span></div>`;
+
+  if(type==='expenses'){
+    title=`Expenses — ${MONTHS[m-1]} ${y}`;
+    const cats={};S.txns.forEach(t=>{cats[t.category]=(cats[t.category]||0)+(t.amount||0);});
+    const sorted=Object.entries(cats).sort((a,b)=>b[1]-a[1]);
+    const total=sorted.reduce((s,[,v])=>s+v,0);
+    body=sorted.map(([cat,val])=>fmtRow(cat,fmtCur(val,cur,m,y),'var(--red)')).join('');
+    body+=`<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700"><span>Total</span><span style="font-family:var(--mono);color:var(--red)">${fmtCur(total,cur,m,y)}</span></div>`;
+  }
+  else if(type==='income'){
+    title=`Income — ${MONTHS[m-1]} ${y}`;
+    const sorted=[...S.income].sort((a,b)=>(b.amount||0)-(a.amount||0));
+    const total=sorted.reduce((s,i)=>s+(i.amount||0),0);
+    body=sorted.map(i=>fmtRow(i.category||i.payee||'Income',fmtCur(i.amount,cur,m,y),'var(--accent)')).join('');
+    body+=`<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700"><span>Total</span><span style="font-family:var(--mono);color:var(--accent)">${fmtCur(total,cur,m,y)}</span></div>`;
+  }
+  else if(type==='savings'){
+    title=`Net Savings — ${MONTHS[m-1]} ${y}`;
+    const totalInc=S.income.reduce((s,i)=>s+(i.amount||0),0);
+    const totalExp=S.txns.reduce((s,t)=>s+(t.amount||0),0);
+    const net=totalInc-totalExp;
+    body=fmtRow('Total Income',fmtCur(totalInc,cur,m,y),'var(--accent)')+
+         fmtRow('Total Expenses',fmtCur(totalExp,cur,m,y),'var(--red)')+
+         `<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700"><span>Net</span><span style="font-family:var(--mono);color:${net>=0?'var(--accent)':'var(--red)'}">${fmtCur(Math.abs(net),cur,m,y)}</span></div>`;
+    const rate=totalInc>0?Math.round((net/totalInc)*100):0;
+    body+=`<div style="margin-top:8px;padding:10px;background:var(--bg2);border-radius:var(--rsm);font-size:0.72rem;color:var(--text2)">Savings rate: <strong style="color:${rate>20?'var(--accent)':rate>0?'var(--gold)':'var(--red)'}">${rate}%</strong></div>`;
+  }
+  else if(type==='networth'){
+    title=`Net Worth — ${MONTHS[m-1]} ${y}`;
+    const inv=S.investments,cash=S.cash;
+    const invTotal=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
+    const cashTotal=getCashAccounts().reduce((s,b)=>s+(cash[b]||0),0);
+    const debtOwed=S.debtors.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0);
+    body=`<div style="font-size:0.65rem;font-weight:700;color:var(--text3);text-transform:uppercase;padding:6px 0 4px">Investments</div>`;
+    body+=PLATFORMS.map(p=>fmtRow(p.label+` <span style="font-size:0.58rem;color:var(--text3)">${p.currency}</span>`,fmtPlatformVal(inv[p.key]||0,p.key,cur,m,y),p.color)).join('');
+    body+=`<div style="font-size:0.65rem;font-weight:700;color:var(--text3);text-transform:uppercase;padding:10px 0 4px">Cash</div>`;
+    body+=getCashAccounts().map(b=>fmtRow(b,fmtCur(cash[b]||0,cur,m,y),'var(--blue)')).join('');
+    if(debtOwed) body+=`<div style="font-size:0.65rem;font-weight:700;color:var(--text3);text-transform:uppercase;padding:10px 0 4px">Debtors (expected)</div>`+
+      S.debtors.filter(d=>d.expectRepayment!==false).map(d=>fmtRow(d.name,fmtCur(d.ngnBalance||0,cur,m,y),'var(--gold)')).join('');
+    body+=`<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700;border-top:1px solid var(--border);margin-top:4px"><span>Total Net Worth</span><span style="font-family:var(--mono);color:var(--accent)">${fmtCur(invTotal+cashTotal+debtOwed,cur==='NATIVE'?'NGN':cur,m,y)}</span></div>`;
+  }
+  else if(type==='cash'){
+    title=`Cash — ${MONTHS[m-1]} ${y}`;
+    const cash=S.cash;
+    const total=getCashAccounts().reduce((s,b)=>s+(cash[b]||0),0);
+    body=getCashAccounts().map(b=>fmtRow(b,fmtCur(cash[b]||0,cur,m,y),'var(--blue)')).join('');
+    body+=`<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700"><span>Total</span><span style="font-family:var(--mono);color:var(--blue)">${fmtCur(total,cur,m,y)}</span></div>`;
+  }
+  else if(type==='investments'){
+    title=`Investments — ${MONTHS[m-1]} ${y}`;
+    const inv=S.investments,total=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
+    body=PLATFORMS.map(p=>{
+      const val=inv[p.key]||0,pct=total>0?((val/total)*100).toFixed(1):'0.0';
+      return fmtRow(`${p.label} <span style="font-size:0.58rem;color:var(--text3)">${p.currency} · ${pct}%</span>`,fmtPlatformVal(val,p.key,cur,m,y),p.color);
+    }).join('');
+    body+=`<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700"><span>Total Portfolio</span><span style="font-family:var(--mono);color:var(--accent)">${fmtCur(total,cur==='NATIVE'?'NGN':cur,m,y)}</span></div>`;
+  }
+  else if(type==='budget'){
+    title=`Budget vs Actual — ${MONTHS[m-1]} ${y}`;
+    const cats=Object.keys(S.budgets);
+    const actuals={};S.txns.forEach(t=>{actuals[t.category]=(actuals[t.category]||0)+(t.amount||0);});
+    body=cats.filter(c=>S.budgets[c]>0).map(c=>{
+      const bud=S.budgets[c]||0,act=actuals[c]||0,over=act>bud;
+      return`<div style="padding:7px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:0.78rem">${c}</span>
+          <span style="font-family:var(--mono);font-size:0.72rem;color:${over?'var(--red)':'var(--accent)'}">${fmtCur(act,cur,m,y)} / ${fmtCur(bud,cur,m,y)}</span>
+        </div>
+        <div style="height:4px;background:var(--border);border-radius:2px">
+          <div style="height:4px;width:${Math.min(100,(act/bud)*100).toFixed(1)}%;background:${over?'var(--red)':'var(--accent)'};border-radius:2px"></div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  document.getElementById('drill-title').innerHTML=title;
+  document.getElementById('drill-body').innerHTML=body||'<div style="color:var(--text3);padding:12px 0">No data for this period.</div>';
+  openMod('drill-modal');
 }
 
 // ══════════════════════════════════════════════════════════════════════════
