@@ -180,7 +180,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl">v3.6.2</span>
+      <span class="ver-lbl">v3.6.3</span>
     </div>
   </div>
 </header>
@@ -339,13 +339,9 @@ datalist option{background:var(--bg2);color:var(--text)}
   <div class="pg-title" style="margin-bottom:12px">Projections</div>
   <div class="tabs">
     <button class="tab active" onclick="projTab('networth',this)">Net Worth</button>
-    <button class="tab" onclick="projTab('runway',this)">Runway</button>
-    <button class="tab" onclick="projTab('fees',this)">School Fees</button>
     <button class="tab" onclick="projTab('history',this)">History</button>
   </div>
   <div id="proj-networth"></div>
-  <div id="proj-runway" style="display:none"></div>
-  <div id="proj-fees" style="display:none"></div>
   <div id="proj-history" style="display:none"></div>
 </div>
 
@@ -1047,88 +1043,15 @@ function renderExpenses(){
   const m=S.expMonth,y=S.expYear;
   const months=[];for(let i=curM();i>=1;i--) months.push(i);
   document.getElementById('exp-months').innerHTML=months.map(mo=>`<div class="mpill ${mo===m?'active':''}" onclick="reloadMonth(${mo},${y})">${MS[mo-1]}</div>`).join('');
-
-  // Sort all txns by date descending
-  const txns=[...S.txns].sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:0);
-  const filtered=S.expCat==='All'?txns:txns.filter(t=>t.category===S.expCat);
-
+  const txns=S.txns,filtered=S.expCat==='All'?txns:txns.filter(t=>t.category===S.expCat);
   const total=txns.reduce((s,t)=>s+(t.amount||0),0);
   const catSpend={};txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+(t.amount||0);});
-
-  // Summary bar
   document.getElementById('exp-summary').innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center${Object.keys(catSpend).length?';margin-bottom:12px':''}"><div><div class="clabel">Total — ${MONTHS[m-1]}</div><div class="cval">${fN(total)}</div></div><div style="text-align:right"><div class="clabel">Count</div><div class="cval">${txns.length}</div></div></div>${Object.keys(catSpend).length?`<div style="display:flex;flex-wrap:wrap;gap:5px">${Object.entries(catSpend).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([c,a])=>`<div onclick="setCatFilter('${c}')" style="padding:2px 9px;border-radius:20px;background:${S.expCat===c?'var(--adim)':'var(--bg2)'};border:1px solid ${S.expCat===c?'var(--accent)':'var(--border)'};font-size:0.63rem;color:${S.expCat===c?'var(--accent)':'var(--text2)'};cursor:pointer">${c} · ${fN(a)}</div>`).join('')}</div>`:''}`;
-
   document.getElementById('exp-filters').innerHTML=['All',...CATS].map(c=>`<div class="cfpill ${c===S.expCat?'active':''}" onclick="setCatFilter('${c}')">${c}</div>`).join('');
-
   const listEl=document.getElementById('exp-list');
   if(!filtered.length){listEl.innerHTML='<div class="empty"><div class="empty-i">↕</div>No transactions</div>';return;}
-
-  if(S.expCat!=='All'){
-    // Single category selected — flat list sorted by date, no category header needed
-    listEl.innerHTML='<div class="txlist">'+filtered.map(tx=>`
-      <div class="txi">
-        <div>
-          <div class="txi-cat">${tx.payee||'—'}</div>
-          <div class="txi-meta">${tx.date} · ${tx.bank||''}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:6px">
-          <div class="txi-amt txi-exp">${fN(tx.amount)}</div>
-          <button class="txi-del" onclick="delExpense('${tx.id}')">×</button>
-        </div>
-      </div>`).join('')+'</div>';
-    return;
-  }
-
-  // All categories — group by category, each group collapsible
-  // Build ordered category list (preserving date order within each group)
-  const groups={};
-  const catOrder=[];
-  filtered.forEach(tx=>{
-    if(!groups[tx.category]){groups[tx.category]=[];catOrder.push(tx.category);}
-    groups[tx.category].push(tx);
-  });
-  // Remove duplicates from catOrder while preserving first-seen order
-  const orderedCats=[...new Set(catOrder)];
-
-  listEl.innerHTML=orderedCats.map(cat=>{
-    const items=groups[cat];
-    const catTotal=items.reduce((s,t)=>s+(t.amount||0),0);
-    const gid='grp-'+cat.replace(/[^a-zA-Z0-9]/g,'');
-    return`<div style="margin-bottom:6px">
-      <div onclick="toggleExpGrp('${gid}')" style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);cursor:pointer;user-select:none">
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:0.63rem;color:var(--text3);transition:transform 0.15s" id="${gid}-arrow">▶</span>
-          <span style="font-size:0.8rem;font-weight:700">${cat}</span>
-          <span style="font-size:0.62rem;color:var(--text3);font-family:var(--mono)">${items.length}</span>
-        </div>
-        <span style="font-family:var(--mono);font-size:0.82rem;color:var(--red)">${fN(catTotal)}</span>
-      </div>
-      <div id="${gid}" style="display:none;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--rsm) var(--rsm);overflow:hidden">
-        ${items.map(tx=>`
-          <div class="txi" style="border-radius:0;border:none;border-bottom:1px solid var(--border)">
-            <div>
-              <div class="txi-cat" style="font-size:0.76rem">${tx.payee||'—'}</div>
-              <div class="txi-meta">${tx.date} · ${tx.bank||''}</div>
-            </div>
-            <div style="display:flex;align-items:center;gap:6px">
-              <div class="txi-amt txi-exp">${fN(tx.amount)}</div>
-              <button class="txi-del" onclick="delExpense('${tx.id}')">×</button>
-            </div>
-          </div>`).join('')}
-      </div>
-    </div>`;
-  }).join('');
+  listEl.innerHTML='<div class="txlist">'+filtered.map(tx=>`<div class="txi"><div><div class="txi-cat">${tx.category}</div><div class="txi-meta">${tx.payee||'—'} · ${tx.date} · ${tx.bank||''}</div></div><div style="display:flex;align-items:center;gap:6px"><div class="txi-amt txi-exp">${fN(tx.amount)}</div><button class="txi-del" onclick="delExpense('${tx.id}')">×</button></div></div>`).join('')+'</div>';
 }
-
-function toggleExpGrp(gid){
-  const el=document.getElementById(gid);
-  const arrow=document.getElementById(gid+'-arrow');
-  if(!el) return;
-  const open=el.style.display!=='none';
-  el.style.display=open?'none':'block';
-  if(arrow) arrow.style.transform=open?'':'rotate(90deg)';
-}
-
 function setCatFilter(c){S.expCat=c;renderExpenses();}
 
 function getExpLines(cat){
@@ -1154,7 +1077,6 @@ function openExpModal(){
   const catSel=document.getElementById('e-cat');
   catSel.innerHTML=CATS.map(c=>`<option>${c}</option>`).join('');
   document.getElementById('e-date').value=todayStr();
-  document.getElementById('e-date').max=todayStr();
   ['e-amt','e-notes'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('e-payee-new').value='';
   document.getElementById('e-payee-new-wrap').style.display='none';
@@ -1177,15 +1099,15 @@ async function saveExpense(){
     if(!S.customExpLines[cat].includes(payee)) S.customExpLines[cat].push(payee);
     cSet(CK.customLines,S.customExpLines);
   }
-  const dateVal=document.getElementById('e-date').value;
-  if(dateVal>todayStr()){toast('Date cannot be in the future');return;}
+  S.saving=true;const btn=document.getElementById('e-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
+  const bank=document.getElementById('e-bank').value;
   const data={amount:amt,category:document.getElementById('e-cat').value,bank,payee,notes:document.getElementById('e-notes').value,date:document.getElementById('e-date').value,month:S.expMonth,year:S.expYear,createdAt:firebase.firestore.FieldValue.serverTimestamp()};
   try{
     await db.collection('transactions').add(data);
     // Deduct from bank
     const cashDoc=await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).get();
     const cashData=cashDoc.exists?{...cashDoc.data()}:{month:S.expMonth,year:S.expYear};
-    cashData[bank]=Math.max(0,(cashData[bank]||0)-amt);
+    cashData[bank]=(cashData[bank]||0)-amt;
     await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).set(cashData,{merge:true});
     S.cash=cashData;cSet(CK.cash(S.expMonth,S.expYear),cashData);
     closeMod('exp-modal');toast(`Saved · ${bank} updated`);setSyncStatus('synced');
@@ -1195,8 +1117,12 @@ async function saveExpense(){
 }
 async function delExpense(id){
   if(!confirm('Delete this transaction?')) return;
-  try{await db.collection('transactions').doc(id).delete();toast('Deleted');await loadTxns(S.expMonth,S.expYear);renderExpenses();renderDashboard();}
-  catch(e){toast('Error deleting');}
+  try{
+    await db.collection('transactions').doc(id).delete();
+    S.txns=S.txns.filter(t=>t.id!==id);
+    cSet(CK.txns(S.expMonth,S.expYear),S.txns);
+    toast('Deleted');renderExpenses();renderDashboard();
+  }catch(e){toast('Error deleting');}
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1204,7 +1130,6 @@ async function delExpense(id){
 // ══════════════════════════════════════════════════════════════════════════
 function openIncModal(){
   document.getElementById('i-date').value=todayStr();
-  document.getElementById('i-date').max=todayStr();
   ['i-amt','i-notes'].forEach(id=>document.getElementById(id).value='');
   openMod('inc-modal');
   setTimeout(()=>document.getElementById('i-amt').focus(),300);
@@ -1295,7 +1220,7 @@ function renderCashPage(){
   document.getElementById('cash-month-label').textContent=`${MONTHS[m-1]} ${y}`;
   const cash=S.cash,total=ACCTS.reduce((s,b)=>s+(cash[b]||0),0);
   document.getElementById('cash-summary').innerHTML=`<div class="clabel">Total Cash — ${MONTHS[m-1]} ${y}</div><div class="cval">${total?fN(total):'—'}</div><div class="csub">${ACCTS.join(' · ')}</div>`;
-  document.getElementById('cash-breakdown').innerHTML=ACCTS.map((b,i)=>{const val=cash[b]||0,pct=total?Math.round(val/total*100):0;return`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;${i<ACCTS.length-1?'border-bottom:1px solid var(--border)':''}"><div><div style="font-size:0.82rem;font-weight:600">${b}</div><div style="font-size:0.65rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${total?pct+'%':'—'}</div></div><div style="font-family:var(--mono);font-size:0.9rem;color:${val?'var(--blue)':'var(--text3)'}">${val?fN(val):'—'}</div></div>`;}).join('');
+  document.getElementById('cash-breakdown').innerHTML=ACCTS.map((b,i)=>{const val=cash[b]||0,pct=total?Math.round(val/total*100):0;return`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;${i<ACCTS.length-1?'border-bottom:1px solid var(--border)':''}"><div><div style="font-size:0.82rem;font-weight:600">${b}</div><div style="font-size:0.65rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${total?pct+'%':'—'}</div></div><div style="font-family:var(--mono);font-size:0.9rem;color:${val<0?'var(--red)':val?'var(--blue)':'var(--text3)'}">${val!==0?fN(val):'—'}</div></div>`;}).join('');
   document.getElementById('cash-inputs').innerHTML=`<div class="gform">${ACCTS.map(b=>`<div class="ig"><label class="ilabel">${b} (₦)</label><input class="ifield" type="number" inputmode="decimal" id="cash-${b.toLowerCase().replace(/\s+/g,'-')}" placeholder="0" value="${cash[b]||''}"></div>`).join('')}</div>`;
   const customAccts=ACCTS.filter(a=>!DEFAULT_CASH_ACCOUNTS.includes(a));
   const caEl=document.getElementById('custom-accts-list');
@@ -1337,7 +1262,6 @@ async function transferFunds(){
   if(!amt||amt<=0){toast('Enter a valid amount');return;}
   if(from===to){toast('Choose different accounts');return;}
   const cash={...S.cash};
-  if((cash[from]||0)<amt){toast(`Insufficient funds in ${from}`);return;}
   cash[from]=(cash[from]||0)-amt;cash[to]=(cash[to]||0)+amt;
   S.cash=cash;cSet(CK.cash(S.cashMonth,S.cashYear),cash);
   document.getElementById('xfr-amt').value='';toast(`Transferred ${fN(amt)} from ${from} to ${to}`);
@@ -1406,13 +1330,21 @@ async function saveDebtor(){
   finally{S.saving=false;btn.textContent=document.getElementById('d-eid').value?'Update':'Add Debtor';btn.disabled=false;}
 }
 async function recordPmt(id,amt,paid,rate){const in_=prompt('Enter payment amount:');if(!in_||isNaN(parseFloat(in_))) return;const pmt=parseFloat(in_),np=paid+pmt,bal=amt-np;try{await db.collection('debtors').doc(id).update({paid:np,balance:bal,ngnBalance:bal*rate});toast('Payment recorded');await loadDebtors();renderDebtors();}catch(e){toast('Error');}}
-async function removeDeb(id){if(!confirm('Remove this debtor?')) return;try{await db.collection('debtors').doc(id).delete();toast('Removed');await loadDebtors();renderDebtors();}catch(e){toast('Error removing');}}
+async function removeDeb(id){
+  if(!confirm('Remove this debtor?')) return;
+  try{
+    await db.collection('debtors').doc(id).delete();
+    S.debtors=S.debtors.filter(d=>d.id!==id);
+    cSet(CK.debtors,S.debtors);
+    toast('Removed');renderDebtors();
+  }catch(e){toast('Error removing');}
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // PROJECTIONS
 // ══════════════════════════════════════════════════════════════════════════
-function renderProjections(){renderProjNW();renderProjRun();renderProjFees();renderProjHistory();}
-function projTab(tab,btn){['networth','runway','fees','history'].forEach(t=>{document.getElementById('proj-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
+function renderProjections(){renderProjNW();renderProjHistory();}
+function projTab(tab,btn){['networth','history'].forEach(t=>{document.getElementById('proj-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
 
 function renderProjNW(){
   const recent=getHistory().filter(h=>h.income&&h.expenses).slice(-6);
@@ -1624,7 +1556,14 @@ function renderSettData(){
       <div class="pjrow"><span class="pjlabel">Transactions (this month)</span><span class="pjval">${S.txns.length}</span></div>
       <div class="pjrow"><span class="pjlabel">Income records</span><span class="pjval">${S.income.length}</span></div>
       <div class="pjrow"><span class="pjlabel">Debtors</span><span class="pjval">${S.debtors.length}</span></div>
-      <div style="margin-top:10px"><button class="btn btn-g btn-sm" onclick="forceSyncNow()">↻ Force re-sync from Firebase</button></div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-g btn-sm" onclick="forceSyncNow()">↻ Force re-sync from Firebase</button>
+      </div>
+    </div>
+    <div class="exp-card" style="margin-top:10px">
+      <div class="exp-card-title" style="margin-bottom:6px">App Update</div>
+      <div class="exp-card-sub" style="margin-bottom:10px">If the app is showing an old version after a GitHub deployment, force a full refresh to clear the service worker cache and reload the latest files.</div>
+      <button class="btn btn-g btn-sm" onclick="forceHardRefresh()">⬆ Force Hard Refresh</button>
     </div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Import JSON Seed File</div>
@@ -1634,7 +1573,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.5.0</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.6.3</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
 }
 async function forceSyncNow(){
@@ -1866,7 +1805,61 @@ window.addEventListener('online',()=>{
 window.addEventListener('offline',()=>{document.getElementById('offl').style.display='block';setSyncStatus('offline');});
 if(!navigator.onLine) document.getElementById('offl').style.display='block';
 ['exp-modal','inv-modal','deb-modal','inc-modal'].forEach(id=>{document.getElementById(id).addEventListener('click',function(e){if(e.target===this)closeMod(id);});});
-if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
+// Service worker — register and watch for updates
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('./sw.js').then(reg=>{
+    // Check for updates every time the page gains focus
+    reg.addEventListener('updatefound',()=>{
+      const newWorker=reg.installing;
+      newWorker.addEventListener('statechange',()=>{
+        if(newWorker.state==='installed'&&navigator.serviceWorker.controller){
+          // New version ready — show banner
+          showUpdateBanner();
+        }
+      });
+    });
+    // Also poll for updates on focus
+    window.addEventListener('focus',()=>reg.update().catch(()=>{}));
+  }).catch(()=>{});
+
+  // When the new SW takes control, reload the page
+  navigator.serviceWorker.addEventListener('controllerchange',()=>window.location.reload());
+}
+
+function showUpdateBanner(){
+  let banner=document.getElementById('update-banner');
+  if(!banner){
+    banner=document.createElement('div');
+    banner.id='update-banner';
+    banner.style.cssText='position:fixed;top:var(--hh);left:0;right:0;background:#1a1a2e;border-bottom:1px solid var(--accent);padding:8px 16px;display:flex;justify-content:space-between;align-items:center;z-index:150;font-size:0.75rem;';
+    banner.innerHTML='<span style="color:var(--accent);font-weight:600">⬆ New version available</span><button onclick="applyUpdate()" style="padding:4px 12px;border-radius:6px;background:var(--accent);color:var(--bg);border:none;font-weight:700;font-size:0.72rem;cursor:pointer;font-family:var(--font)">Update Now</button>';
+    document.body.appendChild(banner);
+  }
+}
+
+function applyUpdate(){
+  navigator.serviceWorker.getRegistration().then(reg=>{
+    if(reg&&reg.waiting){
+      reg.waiting.postMessage({type:'SKIP_WAITING'});
+    } else {
+      // No waiting SW — just hard reload to clear cache
+      window.location.reload(true);
+    }
+  });
+}
+
+function forceHardRefresh(){
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.getRegistrations().then(regs=>{
+      Promise.all(regs.map(r=>r.unregister())).then(()=>{
+        // Clear all caches then reload
+        caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).then(()=>window.location.reload(true));
+      });
+    });
+  } else {
+    window.location.reload(true);
+  }
+}
 
 // BOOT
 initFirebase();

@@ -1,6 +1,6 @@
 // SpendWise Service Worker
 // Cache-first for static assets, network-only for Firebase/Firestore
-const CACHE = 'spendwise-v5';
+const CACHE = 'spendwise-v6';
 
 const STATIC = [
   './',
@@ -20,16 +20,21 @@ const NETWORK_ONLY = [
   'identitytoolkit.googleapis.com',
   'securetoken.googleapis.com',
   'firebaseinstallations.googleapis.com',
-  'fonts.gstatic.com',  // font files — let browser cache handle these
+  'fonts.gstatic.com',
 ];
+
+// ── Skip waiting when told to (used by Force Hard Refresh and update banner) 
+self.addEventListener('message', event => {
+  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
+});
 
 // ── Install: pre-cache static assets ──────────────────────────────────────
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE).then(cache => {
-      // Add each URL individually so one failure doesn't block the rest
       return Promise.allSettled(STATIC.map(url => cache.add(url)));
-    }).then(() => self.skipWaiting())
+    })
+    // Do NOT call skipWaiting() here — wait for explicit message or forceHardRefresh
   );
 });
 
@@ -69,13 +74,12 @@ self.addEventListener('fetch', event => {
 
         // Only cache valid responses — clone BEFORE reading body
         if (networkResponse && networkResponse.status === 200 && networkResponse.type !== 'opaque') {
-          const toCache = networkResponse.clone(); // clone first, return original
-          cache.put(event.request, toCache);       // cache the clone
+          const toCache = networkResponse.clone();
+          cache.put(event.request, toCache);
         }
 
-        return networkResponse; // return the original (body still intact)
+        return networkResponse;
       } catch (err) {
-        // Offline and not cached — return a simple offline response
         return new Response('Offline — open SpendWise while connected to cache it.', {
           status: 503,
           headers: { 'Content-Type': 'text/plain' },
