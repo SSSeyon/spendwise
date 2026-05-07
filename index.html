@@ -180,7 +180,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl">v3.3.0</span>
+      <span class="ver-lbl">v3.4.0</span>
     </div>
   </div>
 </header>
@@ -519,48 +519,13 @@ const FX_RATES = {
 
 const DEF_BUDGETS={Utilities:90000,Energy:150000,Carmaintenance:50000,Itunu:0,Domestic:200000,Food:150000,Groceries:400000,Fife:200000,Internetservices:50000,Recreation:100000,Personalcare:50000,Giftsanddonations:200000,Loans:0,Others:50000,WorkTravel:0,Education:0};
 const FIXED_OBL=[{label:'Service Charge',amount:55000},{label:'Internet & Airtime',amount:30000},{label:'Power',amount:90000},{label:'Fuel',amount:150000}];
-const SCHOOL_FEES_DEFAULT=[
-  {label:"Term 2 — Jan '26",amount:359550,paid:true},
-  {label:"Term 2 — Feb '26",amount:273853,paid:true},
-  {label:"Term 2 — Mar '26",amount:189750,paid:true},
-  {label:"Term 3 — Apr '26",amount:199750,paid:false},
-  {label:"Term 3 — May '26",amount:405000,paid:false},
-  {label:"Term 1 '27",amount:359550,paid:false},
-];
+// School fees loaded from localStorage via seed JSON.
+const SCHOOL_FEES_DEFAULT=[];
 
-const HISTORY=[
-  {year:2023,month:11,label:"Nov '23",income:1504749.30,expenses:3109184},
-  {year:2023,month:12,label:"Dec '23",income:2514940.87,expenses:1797869},
-  {year:2024,month:1,label:"Jan '24",income:1526606.41,expenses:1616342.13},
-  {year:2024,month:2,label:"Feb '24",income:1530977.48,expenses:3386294.01},
-  {year:2024,month:3,label:"Mar '24",income:1526387.00,expenses:1575259},
-  {year:2024,month:4,label:"Apr '24",income:6195375.12,expenses:3940457},
-  {year:2024,month:5,label:"May '24",income:4636321.29,expenses:8190421},
-  {year:2024,month:6,label:"Jun '24",income:1851775.64,expenses:2628946.94},
-  {year:2024,month:7,label:"Jul '24",income:3025884.99,expenses:3148494},
-  {year:2024,month:8,label:"Aug '24",income:3842311.74,expenses:2188784.88},
-  {year:2024,month:9,label:"Sep '24",income:1881560.21,expenses:1885132.50},
-  {year:2024,month:10,label:"Oct '24",income:3300562.05,expenses:2514477},
-  {year:2024,month:11,label:"Nov '24",income:1845438.76,expenses:2966831.53},
-  {year:2024,month:12,label:"Dec '24",income:3406527.91,expenses:2866535.38},
-  {year:2025,month:1,label:"Jan '25",income:1847907.18,expenses:3048689.89},
-  {year:2025,month:2,label:"Feb '25",income:5872477.09,expenses:2862795},
-  {year:2025,month:3,label:"Mar '25",income:1869411.72,expenses:2900387},
-  {year:2025,month:4,label:"Apr '25",income:4861674.27,expenses:3336341},
-  {year:2025,month:5,label:"May '25",income:2669192.31,expenses:3826691},
-  {year:2025,month:6,label:"Jun '25",income:6714369.96,expenses:10530930},
-  {year:2025,month:7,label:"Jul '25",income:4621652.95,expenses:3143238.92},
-  {year:2025,month:8,label:"Aug '25",income:2625865.10,expenses:3213695},
-  {year:2025,month:9,label:"Sep '25",income:2618020.93,expenses:2313078.90},
-  {year:2025,month:10,label:"Oct '25",income:2617911.50,expenses:2407654.40},
-  {year:2025,month:11,label:"Nov '25",income:2615534.96,expenses:2210241},
-  {year:2025,month:12,label:"Dec '25",income:4595720.82,expenses:3397263},
-  {year:2026,month:1,label:"Jan '26",income:2630854.93,expenses:3602724},
-  {year:2026,month:2,label:"Feb '26",income:7579189.64,expenses:3043808.71},
-  {year:2026,month:3,label:"Mar '26",income:2952559.77,expenses:2863379.90},
-  {year:2026,month:4,label:"Apr '26",income:6215643.60,expenses:5002992.61},
-  {year:2026,month:5,label:"May '26",income:5961217.77,expenses:1519729.08},
-];
+// HISTORY is loaded from localStorage (seeded via JSON import).
+// Falls back to empty array — hardcoded defaults removed intentionally.
+const HISTORY_FALLBACK=[];
+function getHistory(){return cGet('sw3_history')||HISTORY_FALLBACK;}
 
 // ══════════════════════════════════════════════════════════════════════════
 // STATE
@@ -680,12 +645,13 @@ function initFirebase(){
     try{
       const m=S.expMonth,y=S.expYear;
       await syncAll();
-      if(S.expMonth===m&&S.expYear===y){
-        S.txns=cGet(CK.txns(m,y))||S.txns;
-        S.income=cGet(CK.inc(m,y))||S.income;
-        S.investments=cGet(CK.inv(m,y))||S.investments;
-        S.cash=cGet(CK.cash(m,y))||S.cash;
-      }
+      // Always reload S.* from cache after sync — loadX functions
+      // wrote fresh Firebase data to cache; we must pick it up here
+      S.txns=cGet(CK.txns(m,y))||S.txns;
+      S.income=cGet(CK.inc(m,y))||S.income;
+      S.investments=cGet(CK.inv(m,y))||S.investments;
+      S.cash=cGet(CK.cash(m,y))||S.cash;
+      S.debtors=cGet(CK.debtors)||S.debtors;
       cSet(CK.lastSync,Date.now());setSyncStatus('synced');hideStaleBar();renderAll();
     }catch(e){console.error(e);setSyncStatus('error');}
   })();
@@ -693,7 +659,7 @@ function initFirebase(){
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y)]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary()]);
 }
 
 async function loadTxns(m,y){
@@ -701,13 +667,12 @@ async function loadTxns(m,y){
     let snap;
     try{snap=await db.collection('transactions').where('year','==',y).where('month','==',m).orderBy('date','desc').get();}
     catch{snap=await db.collection('transactions').where('year','==',y).where('month','==',m).get();}
-    // Only overwrite local data if Firebase actually returned records
     if(snap&&snap.size>0){
-      S.txns=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:1);
-      cSet(CK.txns(m,y),S.txns);
+      const fresh=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:1);
+      cSet(CK.txns(m,y),fresh);
+      if(S.expMonth===m&&S.expYear===y) S.txns=fresh;
     }
-    // else: keep whatever is already in S.txns / localStorage
-  }catch(e){/* network error — keep local */}
+  }catch(e){/* keep local */}
 }
 
 async function loadIncome(m,y){
@@ -716,8 +681,9 @@ async function loadIncome(m,y){
     try{snap=await db.collection('income').where('year','==',y).where('month','==',m).orderBy('date','desc').get();}
     catch{snap=await db.collection('income').where('year','==',y).where('month','==',m).get();}
     if(snap&&snap.size>0){
-      S.income=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:1);
-      cSet(CK.inc(m,y),S.income);
+      const fresh=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:1);
+      cSet(CK.inc(m,y),fresh);
+      if(S.expMonth===m&&S.expYear===y) S.income=fresh;
     }
   }catch(e){/* keep local */}
 }
@@ -753,6 +719,23 @@ async function loadDebtors(){
     if(snap&&snap.size>0){
       S.debtors=snap.docs.map(d=>({id:d.id,...d.data()}));
       cSet(CK.debtors,S.debtors);
+      // Reload debtors with Firestore ids so toggleRepay works correctly
+    }
+  }catch(e){/* keep local */}
+}
+
+async function loadHistoricalSummary(){
+  // Only fetch if we have no local history yet (expensive all-docs read)
+  const local=cGet('sw3_history');
+  if(local&&local.length>0) return; // already have data from seed import
+  try{
+    const snap=await db.collection('historicalSummary').orderBy('year').orderBy('month').get();
+    if(snap&&snap.size>0){
+      const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const hist=snap.docs.map(d=>{const h=d.data();return{year:h.year,month:h.month,
+        label:h.label||(MS2[(h.month||1)-1]+" '"+String(h.year).slice(2)),
+        income:h.income||0,expenses:h.expenses||0};});
+      cSet('sw3_history',hist);
     }
   }catch(e){/* keep local */}
 }
@@ -883,7 +866,7 @@ function renderDashboard(){
   let txns=S.txns,incList=S.income;
   if(isFullYear){
     // For full year, use HISTORY data
-    const hYear=HISTORY.filter(h=>h.year===y);
+    const hYear=getHistory().filter(h=>h.year===y);
     const totalInc=hYear.reduce((s,h)=>s+(h.income||0),0);
     const totalExp=hYear.reduce((s,h)=>s+(h.expenses||0),0);
     txns=[];incList=[];
@@ -894,7 +877,7 @@ function renderDashboard(){
   const spent=txns.reduce((s,t)=>s+(t.amount||0),0);
   const incTotal=incList.reduce((s,t)=>s+(t.amount||0),0);
   // Also check HISTORY for this month
-  const histEntry=HISTORY.find(h=>h.year===y&&h.month===m);
+  const histEntry=getHistory().find(h=>h.year===y&&h.month===m);
   const incomeDisplay=incTotal>0?incTotal:(histEntry?histEntry.income:0);
 
   const budgTotal=Object.values(S.budgets).reduce((s,v)=>s+(v||0),0);
@@ -956,7 +939,7 @@ function renderDashboard(){
   document.getElementById('dash-abar').innerHTML=invTotal&&active.length?active.map(p=>`<div style="flex:${inv[p.key]};background:${p.color};opacity:0.8"></div>`).join(''):'';
 
   // Trend (last 6 from HISTORY)
-  const recent=HISTORY.slice(-6);
+  const recent=getHistory().slice(-6);
   if(S.trendChart) S.trendChart.destroy();
   const ctx=document.getElementById('trend-chart').getContext('2d');
   S.trendChart=new Chart(ctx,{type:'bar',data:{labels:recent.map(d=>d.label),datasets:[{label:'Income',data:recent.map(d=>d.income||0),backgroundColor:'rgba(92,158,255,0.4)',borderRadius:3,borderSkipped:false},{label:'Expenses',data:recent.map(d=>d.expenses||0),backgroundColor:'rgba(200,245,66,0.8)',borderRadius:3,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>'₦'+c.parsed.y.toLocaleString()}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}},barPercentage:0.72}});
@@ -969,7 +952,7 @@ function renderDashboard(){
 }
 
 function renderDashFullYear(y,totalInc,totalExp,cur){
-  const histYear=HISTORY.filter(h=>h.year===y);
+  const histYear=getHistory().filter(h=>h.year===y);
   document.getElementById('dash-nw').textContent='—';
   document.getElementById('dash-nw-sub').textContent=`Full year ${y} summary`;
   const net=totalInc-totalExp;
@@ -1328,7 +1311,7 @@ function renderProjections(){renderProjNW();renderProjRun();renderProjFees();ren
 function projTab(tab,btn){['networth','runway','fees','history'].forEach(t=>{document.getElementById('proj-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
 
 function renderProjNW(){
-  const recent=HISTORY.filter(h=>h.income&&h.expenses).slice(-6);
+  const recent=getHistory().filter(h=>h.income&&h.expenses).slice(-6);
   const avgSave=recent.length?recent.reduce((s,h)=>s+Math.max(0,(h.income-h.expenses)/h.income),0)/recent.length:0;
   const inv=S.investments,cash=S.cash;
   const invTotal=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
@@ -1353,7 +1336,7 @@ function renderProjNW(){
 
 function renderProjRun(){
   const cash=S.cash,cashTotal=getCashAccounts().reduce((s,b)=>s+(cash[b]||0),0);
-  const recent=HISTORY.filter(h=>h.expenses).slice(-6);
+  const recent=getHistory().filter(h=>h.expenses).slice(-6);
   const avgSpend=recent.length?recent.reduce((s,h)=>s+h.expenses,0)/recent.length:0;
   const runway=avgSpend?(cashTotal/avgSpend).toFixed(1):null;
   const fixedTotal=FIXED_OBL.reduce((s,o)=>s+o.amount,0);
@@ -1442,23 +1425,23 @@ function renderProjHistory(){
         <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:var(--accent);text-align:right;cursor:pointer" onclick="histSort('income')">Income ↕</div>
         <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:var(--red);text-align:right;cursor:pointer" onclick="histSort('expenses')">Expenses ↕</div>
       </div>
-      <div id="hist-rows">${buildHistRows(HISTORY)}</div>
+      <div id="hist-rows">${buildHistRows(getHistory())}</div>
     </div>`;
 }
 function buildHistRows(data){
   return data.map((d,i)=>`
-    <div style="display:grid;grid-template-columns:80px 1fr 1fr;gap:0;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer;align-items:center" onclick="expandHistRow(${HISTORY.indexOf(d)})">
+    <div style="display:grid;grid-template-columns:80px 1fr 1fr;gap:0;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer;align-items:center" onclick="expandHistRow(${getHistory().indexOf(d)})">
       <div style="font-size:0.75rem;font-weight:600">${d.label}</div>
       <div style="font-family:var(--mono);font-size:0.71rem;color:var(--accent);text-align:right">${fN(d.income)}</div>
       <div style="font-family:var(--mono);font-size:0.71rem;color:var(--red);text-align:right">${fN(d.expenses)}</div>
     </div>
-    <div id="hist-detail-${HISTORY.indexOf(d)}" style="display:none;background:var(--bg2);border-radius:6px;padding:8px 10px;margin:2px 0 4px;font-size:0.68rem"></div>
+    <div id="hist-detail-${getHistory().indexOf(d)}" style="display:none;background:var(--bg2);border-radius:6px;padding:8px 10px;margin:2px 0 4px;font-size:0.68rem"></div>
   `).join('');
 }
 let _histDir={income:1,expenses:1};
 function histSort(col){
   _histDir[col]*=-1;
-  const sorted=[...HISTORY].sort((a,b)=>_histDir[col]*(b[col]-a[col]));
+  const sorted=[...getHistory()].sort((a,b)=>_histDir[col]*(b[col]-a[col]));
   const el=document.getElementById('hist-rows');
   if(el) el.innerHTML=buildHistRows(sorted);
 }
@@ -1468,7 +1451,7 @@ function expandHistRow(i){
   const showing=el.style.display!=='none'&&el.innerHTML!=='';
   el.style.display=showing?'none':'block';
   if(showing) return;
-  const d=HISTORY[i];
+  const d=getHistory()[i];
   if(!d) return;
   const txns=cGet(CK.txns(d.month,d.year))||[];
   const inc=cGet(CK.inc(d.month,d.year))||[];
@@ -1547,7 +1530,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.3.0</div><div>Firebase: gen-lang-client-0371859680</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.4.0</div><div>Firebase: gen-lang-client-0371859680</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
 }
 async function forceSyncNow(){
@@ -1556,12 +1539,11 @@ async function forceSyncNow(){
   try{
     const m=S.expMonth,y=S.expYear;
     await syncAll();
-    if(S.expMonth===m&&S.expYear===y){
-      S.txns=cGet(CK.txns(m,y))||S.txns;
-      S.income=cGet(CK.inc(m,y))||S.income;
-      S.investments=cGet(CK.inv(m,y))||S.investments;
-      S.cash=cGet(CK.cash(m,y))||S.cash;
-    }
+    S.txns=cGet(CK.txns(m,y))||S.txns;
+    S.income=cGet(CK.inc(m,y))||S.income;
+    S.investments=cGet(CK.inv(m,y))||S.investments;
+    S.cash=cGet(CK.cash(m,y))||S.cash;
+    S.debtors=cGet(CK.debtors)||S.debtors;
     cSet(CK.lastSync,Date.now());setSyncStatus('synced');renderAll();toast('Sync complete');renderSettData();
   }catch(e){setSyncStatus('error');toast('Sync failed');}
 }
@@ -1608,6 +1590,16 @@ async function confirmSeedImport(){
   for(const c of(seed.cashBalances||[])) cSet(CK.cash(c.month,c.year),c);
   for(const i of(seed.investments||[])) cSet(CK.inv(i.month,i.year),i);
   if(seed.debtors?.length) cSet(CK.debtors,seed.debtors);
+  // Save historical summary as the HISTORY array used by charts/projections
+  if(seed.historicalSummary?.length){
+    const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const hist=seed.historicalSummary.map(h=>({
+      year:h.year,month:h.month,
+      label:h.label||(MS2[(h.month||1)-1]+" '"+String(h.year).slice(2)),
+      income:h.income||0,expenses:h.expenses||0
+    }));
+    cSet('sw3_history',hist);
+  }
   const ver=(seed._meta?.version||'imported')+' @ '+new Date().toLocaleDateString('en-GB');
   cSet(CK.fbSyncVer,ver);cSet(CK.lastSync,Date.now());
   // Reload S.* and render
