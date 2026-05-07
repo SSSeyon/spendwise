@@ -180,7 +180,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl">v3.5.0</span>
+      <span class="ver-lbl">v3.6.0</span>
     </div>
   </div>
 </header>
@@ -356,10 +356,12 @@ datalist option{background:var(--bg2);color:var(--text)}
     <button class="tab active" onclick="settTab('budget',this)">Budget</button>
     <button class="tab" onclick="settTab('export',this)">Export</button>
     <button class="tab" onclick="settTab('data',this)">Data</button>
+    <button class="tab" onclick="settTab('fx',this)">FX Rates</button>
   </div>
   <div id="sett-budget"></div>
   <div id="sett-export" style="display:none"></div>
   <div id="sett-data" style="display:none"></div>
+  <div id="sett-fx" style="display:none"></div>
 </div>
 
 </div></div>
@@ -549,7 +551,10 @@ let S={
   catChart:null,trendChart:null,invChart:null,
   chartType:'doughnut',
   saving:false,isStale:false,lastSync:null,fbSyncVersion:null,
-  customExpLines:{}, // user-added expense lines
+  customExpLines:{},
+  pendingWrites:0,      // count of in-flight Firebase writes
+  fbDbVersion:null,     // version doc read from Firestore sw3_meta/version
+  fxOverrides:{},       // user-edited FX rates, merged over FX_RATES
 };
 let db;
 
@@ -568,6 +573,7 @@ const CK={
   customLines:'sw3_custom_lines',
   schoolFees:'sw3_school_fees',
   currency:'sw3_dash_currency',
+  fxOverrides:'sw3_fx_overrides',
 };
 const cGet=k=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}};
 const cSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}};
@@ -584,6 +590,7 @@ function loadFromCache(){
   S.fbSyncVersion=cGet(CK.fbSyncVer);
   S.dashCurrency=cGet(CK.currency)||'NGN';
   S.customExpLines=cGet(CK.customLines)||{};
+  S.fxOverrides=cGet(CK.fxOverrides)||{};
   S.isStale=S.txns.length>0||Object.keys(S.investments).length>0||Object.keys(S.cash).length>0;
 }
 
@@ -600,10 +607,15 @@ const curM=()=>new Date().getMonth()+1;
 const curY=()=>new Date().getFullYear();
 const bSt=(s,b)=>!b?'ok':s/b>=1?'over':s/b>=0.8?'warn':'ok';
 
+function getEffectiveRates(m,y){
+  const key=fxKey(m||S.dashMonth,y||S.dashYear);
+  const base=FX_RATES[key]||{USD:1600,GBP:2050};
+  const ov=S.fxOverrides[key]||{};
+  return{USD:ov.USD||base.USD,GBP:ov.GBP||base.GBP};
+}
 function fmtCur(ngn, currency, m, y) {
   if(!currency||currency==='NGN'||currency==='NATIVE') return fN(ngn);
-  const key=fxKey(m||S.dashMonth,y||S.dashYear);
-  const rates=FX_RATES[key]||{USD:1600,GBP:2050};
+  const rates=getEffectiveRates(m,y);
   const sym=currency==='USD'?'$':'£';
   return sym+(ngn/(rates[currency]||1)).toLocaleString('en-NG',{maximumFractionDigits:0});
 }
@@ -612,7 +624,7 @@ function fmtPlatformVal(rawVal,platformKey,currency,m,y){
   if(!p) return fmtCur(rawVal,currency,m,y);
   if(currency==='NATIVE'){
     if(p.currency==='NGN') return fN(rawVal);
-    const rates=FX_RATES[fxKey(m||S.dashMonth,y||S.dashYear)]||{USD:1600,GBP:2050};
+    const rates=getEffectiveRates(m,y);
     const sym=p.currency==='USD'?'$':'£';
     return sym+(rawVal/(rates[p.currency]||1)).toLocaleString('en-NG',{maximumFractionDigits:2});
   }
@@ -640,7 +652,19 @@ function showStaleBar(){
 function hideStaleBar(){document.getElementById('stale-bar').style.display='none';}
 
 // ══════════════════════════════════════════════════════════════════════════
-// FIREBASE
+// PENDING WRITE TRACKER — shows sync status in Settings > Data
+// ══════════════════════════════════════════════════════════════════════════
+function pwStart(){S.pendingWrites++;updatePendingBadge();}
+function pwDone(){S.pendingWrites=Math.max(0,S.pendingWrites-1);updatePendingBadge();}
+function updatePendingBadge(){
+  const el=document.getElementById('pw-badge');
+  if(!el) return;
+  if(S.pendingWrites>0){el.textContent=`${S.pendingWrites} write${S.pendingWrites>1?'s':''} pending`;el.style.color='var(--gold)';}
+  else{el.textContent='All writes complete';el.style.color='var(--accent)';}
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// FIREBASE — Firebase is always authoritative on load
 // ══════════════════════════════════════════════════════════════════════════
 function initFirebase(){
   loadFromCache();
@@ -656,8 +680,6 @@ function initFirebase(){
     try{
       const m=S.expMonth,y=S.expYear;
       await syncAll();
-      // Always reload S.* from cache after sync — loadX functions
-      // wrote fresh Firebase data to cache; we must pick it up here
       S.txns=cGet(CK.txns(m,y))||S.txns;
       S.income=cGet(CK.inc(m,y))||S.income;
       S.investments=cGet(CK.inv(m,y))||S.investments;
@@ -670,13 +692,19 @@ function initFirebase(){
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary()]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadFbDbVersion()]);
 }
 
+// Load Firebase DB version from sw3_meta/version document
+async function loadFbDbVersion(){
+  try{
+    const doc=await db.collection('sw3_meta').doc('version').get();
+    if(doc.exists){S.fbDbVersion=doc.data()?.label||doc.data()?.version||null;}
+  }catch(e){}
+}
+
+// Firebase-always-wins: always pull from Firebase, update local cache
 async function loadTxns(m,y){
-  // Local always wins — only pull from Firebase if we have nothing locally
-  const local=cGet(CK.txns(m,y));
-  if(local&&local.length>0) return; // we have local data, keep it
   try{
     let snap;
     try{snap=await db.collection('transactions').where('year','==',y).where('month','==',m).orderBy('date','desc').get();}
@@ -686,12 +714,10 @@ async function loadTxns(m,y){
       cSet(CK.txns(m,y),fresh);
       if(S.expMonth===m&&S.expYear===y) S.txns=fresh;
     }
-  }catch(e){/* keep local */}
+  }catch(e){/* keep local on error */}
 }
 
 async function loadIncome(m,y){
-  const local=cGet(CK.inc(m,y));
-  if(local&&local.length>0) return;
   try{
     let snap;
     try{snap=await db.collection('income').where('year','==',y).where('month','==',m).orderBy('date','desc').get();}
@@ -701,57 +727,58 @@ async function loadIncome(m,y){
       cSet(CK.inc(m,y),fresh);
       if(S.expMonth===m&&S.expYear===y) S.income=fresh;
     }
-  }catch(e){/* keep local */}
+  }catch(e){}
 }
 
 async function loadInvData(m,y){
-  // Local always wins
-  const local=cGet(CK.inv(m,y));
-  if(local&&Object.keys(local).length>2){
-    if(S.expMonth===m&&S.expYear===y) S.investments=local;
-    return;
-  }
-  // Nothing local — pull from Firebase
   try{
     const doc=await db.collection('investments').doc(sid(m,y)).get();
     if(doc.exists&&doc.data()&&Object.keys(doc.data()).length>2){
-      S.investments=doc.data();cSet(CK.inv(m,y),S.investments);return;
+      const data=doc.data();
+      cSet(CK.inv(m,y),data);
+      if(S.expMonth===m&&S.expYear===y) S.investments=data;
+      return;
     }
+    // Fallback: most recent
     const snap=await db.collection('investments').orderBy('year','desc').orderBy('month','desc').limit(1).get();
-    if(!snap.empty){S.investments=snap.docs[0].data();cSet(CK.inv(m,y),S.investments);}
+    if(!snap.empty){
+      const data=snap.docs[0].data();
+      cSet(CK.inv(m,y),data);
+      if(S.expMonth===m&&S.expYear===y) S.investments=data;
+    }
   }catch(e){}
 }
 
 async function loadCashData(m,y){
-  // Local always wins
-  const local=cGet(CK.cash(m,y));
-  if(local&&Object.keys(local).length>2){
-    if(S.expMonth===m&&S.expYear===y) S.cash=local;
-    return;
-  }
   try{
     const doc=await db.collection('cashBalances').doc(sid(m,y)).get();
-    if(doc.exists&&doc.data()){S.cash=doc.data();cSet(CK.cash(m,y),S.cash);return;}
+    if(doc.exists&&doc.data()){
+      const data=doc.data();
+      cSet(CK.cash(m,y),data);
+      if(S.expMonth===m&&S.expYear===y) S.cash=data;
+      return;
+    }
     const snap=await db.collection('cashBalances').orderBy('year','desc').orderBy('month','desc').limit(1).get();
-    if(!snap.empty){S.cash=snap.docs[0].data();cSet(CK.cash(m,y),S.cash);}
+    if(!snap.empty){
+      const data=snap.docs[0].data();
+      cSet(CK.cash(m,y),data);
+      if(S.expMonth===m&&S.expYear===y) S.cash=data;
+    }
   }catch(e){}
 }
 
 async function loadDebtors(){
-  const local=cGet(CK.debtors);
-  if(local&&local.length>0){S.debtors=local;return;}
   try{
     const snap=await db.collection('debtors').get();
     if(snap&&snap.size>0){
-      S.debtors=snap.docs.map(d=>({id:d.id,...d.data()}));
-      cSet(CK.debtors,S.debtors);
+      const fresh=snap.docs.map(d=>({id:d.id,...d.data()}));
+      cSet(CK.debtors,fresh);
+      S.debtors=fresh;
     }
   }catch(e){}
 }
 
 async function loadHistoricalSummary(){
-  const local=cGet('sw3_history');
-  if(local&&local.length>0) return; // local always wins
   try{
     const snap=await db.collection('historicalSummary').orderBy('year').orderBy('month').get();
     if(snap&&snap.size>0){
@@ -761,14 +788,16 @@ async function loadHistoricalSummary(){
         income:h.income||0,expenses:h.expenses||0};});
       cSet('sw3_history',hist);
     }
-  }catch(e){/* keep local */}
+  }catch(e){}
 }
 
 async function loadBudgets(m,y){
-  const local=cGet(CK.budgets(m,y));
-  if(local&&Object.keys(local).length>0){S.budgets=local;return;}
   try{const doc=await db.collection('budgets').doc(sid(m,y)).get();
-    if(doc.exists&&doc.data()?.categories){S.budgets={...DEF_BUDGETS,...doc.data().categories};cSet(CK.budgets(m,y),S.budgets);}
+    if(doc.exists&&doc.data()?.categories){
+      const data={...DEF_BUDGETS,...doc.data().categories};
+      cSet(CK.budgets(m,y),data);
+      S.budgets=data;
+    }
   }catch(e){}
 }
 
@@ -1103,7 +1132,7 @@ async function saveExpense(){
     if(!S.customExpLines[cat].includes(payee)) S.customExpLines[cat].push(payee);
     cSet(CK.customLines,S.customExpLines);
   }
-  S.saving=true;const btn=document.getElementById('e-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
+  S.saving=true;const btn=document.getElementById('e-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');pwStart();
   const bank=document.getElementById('e-bank').value;
   const data={amount:amt,category:document.getElementById('e-cat').value,bank,payee,notes:document.getElementById('e-notes').value,date:document.getElementById('e-date').value,month:S.expMonth,year:S.expYear,createdAt:firebase.firestore.FieldValue.serverTimestamp()};
   try{
@@ -1114,9 +1143,9 @@ async function saveExpense(){
     cashData[bank]=Math.max(0,(cashData[bank]||0)-amt);
     await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).set(cashData,{merge:true});
     S.cash=cashData;cSet(CK.cash(S.expMonth,S.expYear),cashData);
-    closeMod('exp-modal');toast(`Saved · ${bank} updated`);setSyncStatus('synced');
-    await loadTxns(S.expMonth,S.expYear);renderExpenses();renderDashboard();renderCashPage();
-  }catch(e){toast('Error saving');setSyncStatus('error');}
+    closeMod('exp-modal');toast(`Saved · ${bank} updated`);setSyncStatus('synced');pwDone();
+    await loadTxns(S.expMonth,S.expYear);renderExpenses();renderDashboard();renderCashPage();renderSettData();
+  }catch(e){toast('Error saving');setSyncStatus('error');pwDone();}
   finally{S.saving=false;btn.textContent='Save Expense';btn.disabled=false;}
 }
 async function delExpense(id){
@@ -1138,7 +1167,7 @@ async function saveIncome(){
   if(S.saving) return;
   const amt=parseFloat(document.getElementById('i-amt').value);
   if(!amt||amt<=0){toast('Enter a valid amount');return;}
-  S.saving=true;const btn=document.getElementById('i-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
+  S.saving=true;const btn=document.getElementById('i-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');pwStart();
   const bank=document.getElementById('i-bank').value;
   const data={amount:amt,category:document.getElementById('i-cat').value,bank,notes:document.getElementById('i-notes').value,date:document.getElementById('i-date').value,month:S.expMonth,year:S.expYear,createdAt:firebase.firestore.FieldValue.serverTimestamp()};
   try{
@@ -1149,9 +1178,9 @@ async function saveIncome(){
     cashData[bank]=(cashData[bank]||0)+amt;
     await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).set(cashData,{merge:true});
     S.cash=cashData;cSet(CK.cash(S.expMonth,S.expYear),cashData);
-    closeMod('inc-modal');toast(`Income recorded · ${bank} updated`);setSyncStatus('synced');
-    await loadIncome(S.expMonth,S.expYear);renderDashboard();renderCashPage();
-  }catch(e){toast('Error saving income');setSyncStatus('error');}
+    closeMod('inc-modal');toast(`Income recorded · ${bank} updated`);setSyncStatus('synced');pwDone();
+    await loadIncome(S.expMonth,S.expYear);renderDashboard();renderCashPage();renderSettData();
+  }catch(e){toast('Error saving income');setSyncStatus('error');pwDone();}
   finally{S.saving=false;btn.textContent='Record Income';btn.disabled=false;}
 }
 
@@ -1187,13 +1216,13 @@ async function renderInvTrend(){
   try{const snap=await db.collection('investments').orderBy('year').orderBy('month').get();const data=snap.docs.map(d=>{const s=d.data();return{label:`${MS[s.month-1]} '${String(s.year).slice(2)}`,total:PLATFORMS.reduce((sum,p)=>sum+(s[p.key]||0),0)};});if(S.invChart) S.invChart.destroy();const ctx=document.getElementById('inv-chart').getContext('2d');S.invChart=new Chart(ctx,{type:'line',data:{labels:data.map(d=>d.label),datasets:[{data:data.map(d=>d.total),borderColor:'#c8f542',backgroundColor:'rgba(200,245,66,0.06)',borderWidth:2,pointBackgroundColor:'#c8f542',pointRadius:3,tension:0.3,fill:true}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>fN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}}});}catch(e){}
 }
 async function saveInvFromEdit(){
-  if(S.saving) return;S.saving=true;setSyncStatus('syncing');
+  if(S.saving) return;S.saving=true;setSyncStatus('syncing');pwStart();
   const data={month:S.expMonth,year:S.expYear};
   PLATFORMS.forEach(p=>{const el=document.getElementById('inv-edit-'+p.key);const v=el?parseFloat(el.value):NaN;data[p.key]=isNaN(v)?0:v;});
   S.investments=data;cSet(CK.inv(S.expMonth,S.expYear),data);
   renderInvestments();renderDashboard();
-  try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});toast('Balances saved');setSyncStatus('synced');}
-  catch(e){toast('Saved locally — sync pending');setSyncStatus('error');}
+  try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});toast('Balances saved');setSyncStatus('synced');pwDone();renderSettData();}
+  catch(e){toast('Saved locally — sync pending');setSyncStatus('error');pwDone();}
   finally{S.saving=false;}
 }
 function openInvMod(){
@@ -1202,10 +1231,10 @@ function openInvMod(){
   openMod('inv-modal');
 }
 async function saveInvestments(){
-  if(S.saving) return;S.saving=true;const btn=document.getElementById('inv-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
+  if(S.saving) return;S.saving=true;const btn=document.getElementById('inv-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');pwStart();
   const data={month:S.expMonth,year:S.expYear};PLATFORMS.forEach(p=>{const v=parseFloat(document.getElementById('inv-'+p.key).value);data[p.key]=isNaN(v)?0:v;});
-  try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});S.investments=data;cSet(CK.inv(S.expMonth,S.expYear),data);closeMod('inv-modal');toast('Balances saved');setSyncStatus('synced');renderInvestments();renderDashboard();}
-  catch(e){toast('Error saving');setSyncStatus('error');}
+  try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});S.investments=data;cSet(CK.inv(S.expMonth,S.expYear),data);closeMod('inv-modal');toast('Balances saved');setSyncStatus('synced');pwDone();renderInvestments();renderDashboard();renderSettData();}
+  catch(e){toast('Error saving');setSyncStatus('error');pwDone();}
   finally{S.saving=false;btn.textContent='Save Balances';btn.disabled=false;}
 }
 
@@ -1238,9 +1267,9 @@ async function saveCash(){
   const data={month:S.cashMonth,year:S.cashYear};
   ACCTS.forEach(b=>{const el=document.getElementById('cash-'+b.toLowerCase().replace(/\s+/g,'-'));data[b]=el?parseFloat(el.value)||0:0;});
   S.cash=data;cSet(CK.cash(S.cashMonth,S.cashYear),data);
-  renderCashPage();renderDashboard();toast('Cash balances saved');setSyncStatus('syncing');
-  try{await db.collection('cashBalances').doc(sid(S.cashMonth,S.cashYear)).set(data,{merge:true});setSyncStatus('synced');}
-  catch(e){toast('Saved locally — sync pending');setSyncStatus('error');}
+  renderCashPage();renderDashboard();toast('Cash balances saved');setSyncStatus('syncing');pwStart();
+  try{await db.collection('cashBalances').doc(sid(S.cashMonth,S.cashYear)).set(data,{merge:true});setSyncStatus('synced');pwDone();renderSettData();}
+  catch(e){toast('Saved locally — sync pending');setSyncStatus('error');pwDone();}
 }
 function addCashAccount(){
   const name=document.getElementById('new-acct-name').value.trim();
@@ -1266,9 +1295,9 @@ async function transferFunds(){
   cash[from]=(cash[from]||0)-amt;cash[to]=(cash[to]||0)+amt;
   S.cash=cash;cSet(CK.cash(S.cashMonth,S.cashYear),cash);
   document.getElementById('xfr-amt').value='';toast(`Transferred ${fN(amt)} from ${from} to ${to}`);
-  renderCashPage();renderDashboard();setSyncStatus('syncing');
-  try{await db.collection('cashBalances').doc(sid(S.cashMonth,S.cashYear)).set({...cash,month:S.cashMonth,year:S.cashYear},{merge:true});setSyncStatus('synced');}
-  catch(e){setSyncStatus('error');}
+  renderCashPage();renderDashboard();setSyncStatus('syncing');pwStart();
+  try{await db.collection('cashBalances').doc(sid(S.cashMonth,S.cashYear)).set({...cash,month:S.cashMonth,year:S.cashYear},{merge:true});setSyncStatus('synced');pwDone();renderSettData();}
+  catch(e){setSyncStatus('error');pwDone();}
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1323,11 +1352,11 @@ function openDebMod(){document.getElementById('deb-mod-title').textContent='Add 
 function openEditDeb(id){const d=S.debtors.find(x=>x.id===id);if(!d) return;document.getElementById('deb-mod-title').textContent='Edit Debtor';document.getElementById('deb-save').textContent='Update';document.getElementById('d-eid').value=id;document.getElementById('d-name').value=d.name||'';document.getElementById('d-cur').value=d.currency||'NGN';document.getElementById('d-type').value=d.category||'Loan';document.getElementById('d-amt').value=d.amount||'';document.getElementById('d-paid').value=d.paid||'';document.getElementById('d-rate').value=d.rate||'';document.getElementById('d-notes').value=d.notes||'';openMod('deb-modal');}
 async function saveDebtor(){
   if(S.saving) return;const name=document.getElementById('d-name').value.trim();const amt=parseFloat(document.getElementById('d-amt').value);if(!name||!amt){toast('Name and amount required');return;}
-  S.saving=true;const btn=document.getElementById('deb-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
+  S.saving=true;const btn=document.getElementById('deb-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');pwStart();
   const cur=document.getElementById('d-cur').value,paid=parseFloat(document.getElementById('d-paid').value)||0,rateIn=parseFloat(document.getElementById('d-rate').value),rate=isNaN(rateIn)?(DEF_RATES[cur]||1):rateIn,bal=amt-paid,eid=document.getElementById('d-eid').value;
   const data={name,currency:cur,amount:amt,paid,balance:bal,rate,ngnBalance:bal*rate,category:document.getElementById('d-type').value,notes:document.getElementById('d-notes').value,expectRepayment:true};
-  try{if(eid){await db.collection('debtors').doc(eid).update(data);}else{data.createdAt=firebase.firestore.FieldValue.serverTimestamp();await db.collection('debtors').add(data);}closeMod('deb-modal');toast(eid?'Updated':'Debtor added');setSyncStatus('synced');await loadDebtors();renderDebtors();}
-  catch(e){toast('Error saving');setSyncStatus('error');}
+  try{if(eid){await db.collection('debtors').doc(eid).update(data);}else{data.createdAt=firebase.firestore.FieldValue.serverTimestamp();await db.collection('debtors').add(data);}closeMod('deb-modal');toast(eid?'Updated':'Debtor added');setSyncStatus('synced');pwDone();await loadDebtors();renderDebtors();renderSettData();}
+  catch(e){toast('Error saving');setSyncStatus('error');pwDone();}
   finally{S.saving=false;btn.textContent=document.getElementById('d-eid').value?'Update':'Add Debtor';btn.disabled=false;}
 }
 async function recordPmt(id,amt,paid,rate){const in_=prompt('Enter payment amount:');if(!in_||isNaN(parseFloat(in_))) return;const pmt=parseFloat(in_),np=paid+pmt,bal=amt-np;try{await db.collection('debtors').doc(id).update({paid:np,balance:bal,ngnBalance:bal*rate});toast('Payment recorded');await loadDebtors();renderDebtors();}catch(e){toast('Error');}}
@@ -1495,16 +1524,16 @@ function expandHistRow(i){
 // ══════════════════════════════════════════════════════════════════════════
 // SETTINGS
 // ══════════════════════════════════════════════════════════════════════════
-function renderSettings(){renderSettBudget();renderSettExport();renderSettData();}
-function settTab(tab,btn){['budget','export','data'].forEach(t=>{document.getElementById('sett-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
+function renderSettings(){renderSettBudget();renderSettExport();renderSettData();renderSettFx();}
+function settTab(tab,btn){['budget','export','data','fx'].forEach(t=>{const el=document.getElementById('sett-'+t);if(el)el.style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
 function renderSettBudget(){
   const total=Object.values(S.budgets).reduce((s,v)=>s+(v||0),0);
   document.getElementById('sett-budget').innerHTML=`<div style="font-size:0.68rem;color:var(--text2);margin-bottom:12px">Budget for ${MONTHS[S.expMonth-1]} ${S.expYear}</div>${CATS.map(c=>{const k=ck(c);return`<div class="ig"><label class="ilabel">${c}</label><input class="ifield" type="number" inputmode="decimal" id="b-${k}" placeholder="0" value="${S.budgets[k]||''}"></div>`;}).join('')}<div style="display:flex;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);margin-bottom:12px;font-weight:700;font-size:0.84rem"><span>Total</span><span style="font-family:var(--mono);color:var(--accent)">${fN(total)}</span></div><button class="btn btn-p btn-full" onclick="saveBudget()">Save Budget</button>`;
 }
 async function saveBudget(){
-  const cats={};CATS.forEach(c=>{const k=ck(c);const v=parseFloat(document.getElementById('b-'+k).value);cats[k]=isNaN(v)?0:v;});setSyncStatus('syncing');
-  try{await db.collection('budgets').doc(sid(S.expMonth,S.expYear)).set({month:S.expMonth,year:S.expYear,categories:cats},{merge:true});S.budgets={...DEF_BUDGETS,...cats};cSet(CK.budgets(S.expMonth,S.expYear),S.budgets);toast('Budget saved');setSyncStatus('synced');renderDashboard();}
-  catch(e){toast('Error saving budget');setSyncStatus('error');}
+  const cats={};CATS.forEach(c=>{const k=ck(c);const v=parseFloat(document.getElementById('b-'+k).value);cats[k]=isNaN(v)?0:v;});setSyncStatus('syncing');pwStart();
+  try{await db.collection('budgets').doc(sid(S.expMonth,S.expYear)).set({month:S.expMonth,year:S.expYear,categories:cats},{merge:true});S.budgets={...DEF_BUDGETS,...cats};cSet(CK.budgets(S.expMonth,S.expYear),S.budgets);toast('Budget saved');setSyncStatus('synced');pwDone();renderDashboard();renderSettData();}
+  catch(e){toast('Error saving budget');setSyncStatus('error');pwDone();}
 }
 
 function renderSettExport(){
@@ -1541,15 +1570,25 @@ function renderSettData(){
   const ls=cGet(CK.lastSync);
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
+  const writeStatus=S.pendingWrites>0?`<span style="color:var(--gold)">${S.pendingWrites} write${S.pendingWrites>1?'s':''} pending…</span>`:`<span style="color:var(--accent)">✓ All writes complete</span>`;
   document.getElementById('sett-data').innerHTML=`
     <div class="exp-card">
       <div class="exp-card-title" style="margin-bottom:6px">Firebase Sync Status</div>
-      <div class="pjrow"><span class="pjlabel">Last sync</span><span class="pjval">${syncInfo}</span></div>
-      <div class="pjrow"><span class="pjlabel">Seed version</span><span class="pjval" style="color:var(--accent)">${fbVer||'—'}</span></div>
+      <div class="pjrow"><span class="pjlabel">Last pull from Firebase</span><span class="pjval">${syncInfo}</span></div>
+      <div class="pjrow"><span class="pjlabel">Seed version (local)</span><span class="pjval" style="color:var(--accent)">${fbVer||'—'}</span></div>
+      <div class="pjrow"><span class="pjlabel">Firebase DB version</span><span class="pjval" style="color:var(--blue)">${S.fbDbVersion||'—'}</span></div>
+      <div class="pjrow"><span class="pjlabel">Write status</span><span class="pjval" id="pw-badge">${writeStatus}</span></div>
       <div class="pjrow"><span class="pjlabel">Transactions (this month)</span><span class="pjval">${S.txns.length}</span></div>
       <div class="pjrow"><span class="pjlabel">Income records</span><span class="pjval">${S.income.length}</span></div>
       <div class="pjrow"><span class="pjlabel">Debtors</span><span class="pjval">${S.debtors.length}</span></div>
-      <div style="margin-top:10px"><button class="btn btn-g btn-sm" onclick="forceSyncNow()">↻ Force re-sync from Firebase</button></div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-g btn-sm" onclick="forceSyncNow()">↻ Force re-sync from Firebase</button>
+        <button class="btn btn-g btn-sm" onclick="refreshFbVersion()">↻ Refresh DB version</button>
+      </div>
+      <div style="margin-top:8px;font-size:0.65rem;color:var(--text3);line-height:1.6">
+        Firebase is always authoritative — every page load pulls the latest data.<br>
+        Use Force re-sync only if you believe the display is stale.
+      </div>
     </div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Import JSON Seed File</div>
@@ -1559,22 +1598,93 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.5.0</div><div>Firebase: gen-lang-client-0371859680</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.6.0</div><div>Firebase: gen-lang-client-0371859680</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
+}
+
+async function refreshFbVersion(){
+  if(!db||!navigator.onLine){toast('Not connected');return;}
+  await loadFbDbVersion();
+  renderSettData();
+  toast(S.fbDbVersion?`DB version: ${S.fbDbVersion}`:'No version doc found in Firebase');
+}
+
+function renderSettFx(){
+  const overrides=S.fxOverrides||{};
+  // Build list of all months that have either a FX_RATES entry or an override
+  const allKeys=new Set([...Object.keys(FX_RATES),...Object.keys(overrides)]);
+  const sorted=[...allKeys].sort().reverse().slice(0,18); // show last 18 months
+  const rows=sorted.map(k=>{
+    const base=FX_RATES[k]||{USD:1600,GBP:2050};
+    const ov=overrides[k]||{};
+    const usd=ov.USD||base.USD,gbp=ov.GBP||base.GBP;
+    const isOverridden=!!(ov.USD||ov.GBP);
+    return`<div style="display:grid;grid-template-columns:70px 1fr 1fr 36px;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+      <div style="font-size:0.72rem;font-family:var(--mono);color:${isOverridden?'var(--gold)':'var(--text2)'}">${k}</div>
+      <div class="ig" style="margin-bottom:0"><input class="ifield" type="number" inputmode="decimal" id="fx-usd-${k}" value="${usd}" placeholder="USD rate" style="padding:5px 8px;font-size:0.72rem"></div>
+      <div class="ig" style="margin-bottom:0"><input class="ifield" type="number" inputmode="decimal" id="fx-gbp-${k}" value="${gbp}" placeholder="GBP rate" style="padding:5px 8px;font-size:0.72rem"></div>
+      <button class="btn btn-g btn-sm" style="padding:4px 6px;font-size:0.65rem" onclick="clearFxOverride('${k}')">✕</button>
+    </div>`;
+  }).join('');
+  const el=document.getElementById('sett-fx');
+  if(!el) return;
+  el.innerHTML=`
+    <div class="exp-card">
+      <div class="exp-card-title" style="margin-bottom:4px">Exchange Rate Overrides</div>
+      <div class="exp-card-sub" style="margin-bottom:12px">Override the default ₦ rates for any month. Used in all currency conversions. Leave blank to use the built-in estimate.</div>
+      <div style="display:grid;grid-template-columns:70px 1fr 1fr 36px;gap:6px;padding-bottom:6px;border-bottom:1px solid var(--border2);margin-bottom:4px">
+        <div style="font-size:0.6rem;font-weight:700;color:var(--text3);text-transform:uppercase">Month</div>
+        <div style="font-size:0.6rem;font-weight:700;color:var(--text3);text-transform:uppercase">₦ per $1 USD</div>
+        <div style="font-size:0.6rem;font-weight:700;color:var(--text3);text-transform:uppercase">₦ per £1 GBP</div>
+        <div></div>
+      </div>
+      ${rows}
+      <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-p btn-sm" onclick="saveFxOverrides()">Save All Rates</button>
+        <button class="btn btn-g btn-sm" onclick="clearAllFxOverrides()">Clear All Overrides</button>
+      </div>
+      <div style="margin-top:8px;font-size:0.65rem;color:var(--text3)">Highlighted rows have active overrides. × clears just that month.</div>
+    </div>
+  `;
+}
+
+function saveFxOverrides(){
+  const allKeys=[...new Set([...Object.keys(FX_RATES),...Object.keys(S.fxOverrides)])].sort().reverse().slice(0,18);
+  const overrides={};
+  allKeys.forEach(k=>{
+    const u=parseFloat(document.getElementById(`fx-usd-${k}`)?.value);
+    const g=parseFloat(document.getElementById(`fx-gbp-${k}`)?.value);
+    const base=FX_RATES[k]||{USD:1600,GBP:2050};
+    const ov={};
+    if(!isNaN(u)&&u>0&&u!==base.USD) ov.USD=u;
+    if(!isNaN(g)&&g>0&&g!==base.GBP) ov.GBP=g;
+    if(Object.keys(ov).length) overrides[k]=ov;
+  });
+  S.fxOverrides=overrides;
+  cSet(CK.fxOverrides,overrides);
+  renderSettFx();renderDashboard();renderInvestments();
+  toast(`FX rates saved — ${Object.keys(overrides).length} override${Object.keys(overrides).length!==1?'s':''} active`);
+}
+
+function clearFxOverride(k){
+  delete S.fxOverrides[k];
+  cSet(CK.fxOverrides,S.fxOverrides);
+  renderSettFx();renderDashboard();
+  toast(`Cleared override for ${k}`);
+}
+
+function clearAllFxOverrides(){
+  if(!confirm('Clear all FX rate overrides and revert to built-in estimates?')) return;
+  S.fxOverrides={};
+  cSet(CK.fxOverrides,{});
+  renderSettFx();renderDashboard();renderInvestments();
+  toast('All FX overrides cleared');
 }
 async function forceSyncNow(){
   if(!db||!navigator.onLine){toast('Not connected');return;}
   setSyncStatus('syncing');toast('Pulling from Firebase…');
-  // Force-sync: clear local cache first so loadX functions fetch from Firebase
   const m=S.expMonth,y=S.expYear;
   try{
-    // Pull fresh data by temporarily clearing local cache for current month
-    localStorage.removeItem(CK.txns(m,y));
-    localStorage.removeItem(CK.inc(m,y));
-    localStorage.removeItem(CK.inv(m,y));
-    localStorage.removeItem(CK.cash(m,y));
-    localStorage.removeItem(CK.debtors);
-    localStorage.removeItem('sw3_history');
     await syncAll();
     S.txns=cGet(CK.txns(m,y))||S.txns;
     S.income=cGet(CK.inc(m,y))||S.income;
@@ -1759,6 +1869,10 @@ async function confirmSeedImport(){
       await clearM('income',incMs);
       await batchSet('income',seed.income.map(i=>({...i,createdAt:now})),null);
       if(seed.debtors?.length){const ex=await db.collection('debtors').get();if(!ex.empty){const b=db.batch();ex.docs.forEach(d=>b.delete(d.ref));await b.commit();}await batchSet('debtors',seed.debtors.map(d=>({...d,createdAt:now})),null);}
+      // Write version document so other devices can see what's in Firebase
+      const seedLabel=(seed._meta?.version||'imported')+' @ '+new Date().toLocaleDateString('en-GB');
+      await db.collection('sw3_meta').doc('version').set({label:seedLabel,importedAt:now});
+      S.fbDbVersion=seedLabel;
       cSet(CK.lastSync,Date.now());setSyncStatus('synced');hideStaleBar();
       if(statusEl) statusEl.innerHTML=`<span style="color:var(--accent)">✓ Firebase sync complete</span>`;
       toast('Firebase sync complete');renderSettData();
