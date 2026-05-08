@@ -298,7 +298,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.7.4</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.8.0</span>
     </div>
     <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" aria-label="Toggle theme">
       <div class="theme-btn-knob"></div>
@@ -326,7 +326,7 @@ datalist option{background:var(--bg2);color:var(--text)}
       <option value="NATIVE">◈ Effective</option>
     </select>
   </div>
-  <!-- Net worth -->
+  <!-- Net worth hero -->
   <div class="card nw-hero" style="cursor:pointer" onclick="drillDown('networth')">
     <div class="clabel">Net Worth ›</div>
     <div class="nw-big" id="dash-nw">—</div>
@@ -334,57 +334,55 @@ datalist option{background:var(--bg2);color:var(--text)}
   </div>
   <!-- 4 stat cards -->
   <div class="g2" id="dash-stats"></div>
-  <!-- Expense chart -->
+  <!-- Recent transactions — moved up -->
   <div class="card">
-    <div class="sh"><div class="sh-title">Expenses by Category</div></div>
-    <div class="chart-btns" id="chart-btns">
-      <button class="chart-btn active" onclick="setChartType('doughnut',this)">Donut</button>
-      <button class="chart-btn" onclick="setChartType('pie',this)">Pie</button>
-      <button class="chart-btn" onclick="setChartType('bar',this)">Bar</button>
-      <button class="chart-btn" onclick="setChartType('hbar',this)">H-Bar</button>
-    </div>
-    <canvas id="cat-chart" style="max-height:220px"></canvas>
+    <div class="sh"><div class="sh-title">Recent Transactions</div><span class="sh-link" onclick="navTo('expenses')">View all →</span></div>
+    <div id="dash-recent"></div>
   </div>
   <!-- Spend vs budget -->
   <div class="card">
     <div class="sh" style="cursor:pointer" onclick="drillDown('budget')"><div class="sh-title">Spend vs Budget ›</div><span style="font-size:0.68rem;color:var(--text2)" id="dash-month-label"></span></div>
     <div id="dash-cats"></div>
   </div>
-  <!-- Income vs expense -->
+  <!-- Combined charts card with tabs -->
   <div class="card">
-    <div class="sh"><div class="sh-title">Income vs Expense</div><button class="btn btn-inc btn-sm" onclick="openIncModal()">+ Income</button></div>
-    <div id="dash-inc-exp"></div>
-  </div>
-  <!-- Cash positions -->
-  <div class="card">
-    <div class="sh" style="cursor:pointer" onclick="drillDown('cash')"><div class="sh-title">Cash Positions ›</div><span class="badge bb" id="dash-cash-total"></span></div>
-    <div id="dash-cash"></div>
-  </div>
-  <!-- Investment portfolio -->
-  <div class="card">
-    <div class="sh" style="cursor:pointer" onclick="drillDown('investments')"><div class="sh-title">Investment Portfolio ›</div><span class="badge bg" id="dash-inv-total"></span></div>
-    <div id="dash-inv"></div>
-    <div class="abar" id="dash-abar"></div>
-  </div>
-  <!-- Net Worth Trend -->
-  <div class="card">
-    <div class="sh"><div class="sh-title">Net Worth Trend</div></div>
-    <canvas id="nw-trend-chart" style="max-height:140px"></canvas>
-  </div>
-  <!-- 6-Month Trend -->
-  <div class="card">
-    <div class="sh"><div class="sh-title">6-Month Income vs Expense</div></div>
-    <canvas id="trend-chart" style="max-height:160px"></canvas>
-    <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
-      <div style="display:flex;align-items:center;gap:5px;font-size:0.63rem;color:var(--text2)"><div style="width:8px;height:8px;border-radius:2px;background:var(--accent)"></div>Expenses</div>
-      <div style="display:flex;align-items:center;gap:5px;font-size:0.63rem;color:var(--text2)"><div style="width:8px;height:8px;border-radius:2px;background:var(--blue);opacity:0.7"></div>Income</div>
-      <div style="display:flex;align-items:center;gap:5px;font-size:0.63rem;color:var(--text2)"><div style="width:8px;height:8px;border-radius:2px;background:var(--gold)"></div>Savings %</div>
+    <div class="tabs" style="margin-bottom:14px">
+      <button class="tab active" onclick="dashChartTab('breakdown',this)">Breakdown</button>
+      <button class="tab" onclick="dashChartTab('trend',this)">6-Month</button>
+      <button class="tab" onclick="dashChartTab('networth',this)">Net Worth</button>
+    </div>
+    <!-- Breakdown tab -->
+    <div id="dash-tab-breakdown">
+      <div class="chart-btns" id="chart-btns">
+        <button class="chart-btn active" onclick="setChartType('doughnut',this)">Donut</button>
+        <button class="chart-btn" onclick="setChartType('pie',this)">Pie</button>
+        <button class="chart-btn" onclick="setChartType('bar',this)">Bar</button>
+        <button class="chart-btn" onclick="setChartType('hbar',this)">H-Bar</button>
+      </div>
+      <canvas id="cat-chart" style="max-height:220px"></canvas>
+    </div>
+    <!-- 6-Month tab -->
+    <div id="dash-tab-trend" style="display:none">
+      <canvas id="trend-chart" style="max-height:180px"></canvas>
+      <div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:5px;font-size:0.63rem;color:var(--text2)"><div style="width:8px;height:8px;border-radius:2px;background:var(--accent)"></div>Expenses</div>
+        <div style="display:flex;align-items:center;gap:5px;font-size:0.63rem;color:var(--text2)"><div style="width:8px;height:8px;border-radius:2px;background:var(--blue);opacity:0.7"></div>Income</div>
+        <div style="display:flex;align-items:center;gap:5px;font-size:0.63rem;color:var(--text2)"><div style="width:8px;height:8px;border-radius:2px;background:var(--gold)"></div>Savings %</div>
+      </div>
+    </div>
+    <!-- Net Worth tab -->
+    <div id="dash-tab-networth" style="display:none">
+      <canvas id="nw-trend-chart" style="max-height:160px"></canvas>
     </div>
   </div>
-  <!-- Recent -->
+  <!-- Accounts summary (cash + investments combined) -->
   <div class="card">
-    <div class="sh"><div class="sh-title">Recent Transactions</div><span class="sh-link" onclick="navTo('expenses')">View all →</span></div>
-    <div id="dash-recent"></div>
+    <div class="sh"><div class="sh-title">Accounts</div><span class="sh-link" onclick="navTo('accounts')">Manage →</span></div>
+    <div id="dash-cash" style="margin-bottom:10px"></div>
+    <div style="height:1px;background:var(--border);margin-bottom:10px"></div>
+    <div class="sh" style="margin-bottom:6px"><div style="font-size:0.75rem;font-weight:600;color:var(--text2)">Investments</div><span class="badge bg" id="dash-inv-total"></span></div>
+    <div id="dash-inv"></div>
+    <div class="abar" id="dash-abar"></div>
   </div>
 </div>
 
@@ -445,34 +443,87 @@ datalist option{background:var(--bg2);color:var(--text)}
   </div>
 </div>
 
-<!-- CASH -->
-<div class="pg" id="pg-cash">
-  <div class="pg-title" style="margin-bottom:12px">Cash & Renmoney</div>
-  <div class="mrow" id="cash-months"></div>
-  <div class="card" id="cash-summary"></div>
-  <div class="card"><div class="clabel" style="margin-bottom:12px">Balance by Account</div><div id="cash-breakdown"></div></div>
-  <div class="card">
-    <div class="clabel" style="margin-bottom:10px">Update — <span id="cash-month-label"></span></div>
-    <div id="cash-inputs"></div>
-    <button class="btn btn-p btn-full" onclick="saveCash()">Save Cash Balances</button>
+<!-- ACCOUNTS (Cash + Investments merged) -->
+<div class="pg" id="pg-accounts">
+  <div class="pg-title" style="margin-bottom:12px">Accounts</div>
+  <div class="tabs">
+    <button class="tab active" onclick="acctTab('cash',this)">Cash</button>
+    <button class="tab" onclick="acctTab('invest',this)">Investments</button>
   </div>
-  <div class="card">
-    <div class="clabel" style="margin-bottom:10px">Add New Account</div>
-    <div class="gform">
-      <div class="ig"><label class="ilabel">Account Name</label><input class="ifield" type="text" id="new-acct-name" placeholder="e.g. Kuda"></div>
-      <div class="ig" style="display:flex;align-items:flex-end"><button class="btn btn-g btn-full" onclick="addCashAccount()">Add Account</button></div>
+
+  <!-- CASH TAB -->
+  <div id="acct-cash">
+    <div class="mrow" id="cash-months"></div>
+    <div class="card" id="cash-summary"></div>
+    <div class="card"><div class="clabel" style="margin-bottom:12px">Balance by Account</div><div id="cash-breakdown"></div></div>
+    <!-- Edit mode toggle -->
+    <button class="btn btn-g btn-full" style="margin-bottom:10px" onclick="toggleCashEdit()">✎ Edit Balances</button>
+    <div id="cash-edit-section" style="display:none">
+      <div class="card">
+        <div class="clabel" style="margin-bottom:10px">Update — <span id="cash-month-label"></span></div>
+        <div id="cash-inputs"></div>
+        <button class="btn btn-p btn-full" onclick="saveCash()">Save Cash Balances</button>
+      </div>
+      <div class="card">
+        <div class="clabel" style="margin-bottom:10px">Transfer Between Accounts</div>
+        <div class="gform">
+          <div class="ig"><label class="ilabel">From</label><select class="sfield" id="xfr-from"></select></div>
+          <div class="ig"><label class="ilabel">To</label><select class="sfield" id="xfr-to"></select></div>
+        </div>
+        <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" type="number" inputmode="decimal" id="xfr-amt" placeholder="0"></div>
+        <button class="btn btn-g btn-full" onclick="transferFunds()">Transfer Funds</button>
+      </div>
+      <div class="card">
+        <div class="clabel" style="margin-bottom:10px">Add New Account</div>
+        <div class="gform">
+          <div class="ig"><label class="ilabel">Account Name</label><input class="ifield" type="text" id="new-acct-name" placeholder="e.g. Kuda"></div>
+          <div class="ig" style="display:flex;align-items:flex-end"><button class="btn btn-g btn-full" onclick="addCashAccount()">Add</button></div>
+        </div>
+        <div id="custom-accts-list" style="margin-top:8px"></div>
+      </div>
     </div>
-    <div id="custom-accts-list" style="margin-top:8px"></div>
   </div>
-  <div class="card">
-    <div class="clabel" style="margin-bottom:10px">Transfer Between Accounts</div>
-    <div class="gform">
-      <div class="ig"><label class="ilabel">From</label><select class="sfield" id="xfr-from"></select></div>
-      <div class="ig"><label class="ilabel">To</label><select class="sfield" id="xfr-to"></select></div>
+
+  <!-- INVESTMENTS TAB -->
+  <div id="acct-invest" style="display:none">
+    <div class="tabs" style="margin-top:0">
+      <button class="tab active" onclick="invTab('current',this)">Current</button>
+      <button class="tab" onclick="invTab('trend',this)">Trend</button>
+      <button class="tab" onclick="invTab('edit',this)">Edit</button>
     </div>
-    <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" type="number" inputmode="decimal" id="xfr-amt" placeholder="0"></div>
-    <button class="btn btn-g btn-full" onclick="transferFunds()">Transfer Funds</button>
+    <div id="inv-current">
+      <div class="card" id="inv-total"></div>
+      <div id="inv-platforms"></div>
+      <div class="card" id="inv-alloc" style="display:none">
+        <div class="clabel" style="margin-bottom:8px">Allocation</div>
+        <div class="abar" id="inv-abar"></div>
+        <div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:8px" id="inv-legend"></div>
+      </div>
+    </div>
+    <div id="inv-trend" style="display:none">
+      <div class="card"><div class="clabel" style="margin-bottom:12px">Portfolio Growth</div><canvas id="inv-chart" style="max-height:200px"></canvas></div>
+    </div>
+    <div id="inv-edit" style="display:none">
+      <div class="card">
+        <div class="clabel" style="margin-bottom:10px">Update Balances — <span id="inv-edit-label"></span></div>
+        <div id="inv-edit-fields"></div>
+        <button class="btn btn-p btn-full" onclick="saveInvFromEdit()">Save Balances</button>
+      </div>
+    </div>
   </div>
+</div>
+
+<!-- FORECAST (was Projections) -->
+<div class="pg" id="pg-forecast">
+  <div class="pg-title" style="margin-bottom:12px">Forecast</div>
+  <div class="tabs">
+    <button class="tab active" onclick="projTab('networth',this)">Net Worth</button>
+    <button class="tab" onclick="projTab('history',this)">History</button>
+    <button class="tab" onclick="projTab('obligations',this)">Fixed Bills</button>
+  </div>
+  <div id="proj-networth"></div>
+  <div id="proj-history" style="display:none"></div>
+  <div id="proj-obligations" style="display:none"></div>
 </div>
 
 <!-- DEBTORS -->
@@ -480,17 +531,6 @@ datalist option{background:var(--bg2);color:var(--text)}
   <div class="pg-title" style="margin-bottom:12px">Debtors</div>
   <div class="g2" id="debtor-stats" style="margin-bottom:10px"></div>
   <div id="debtor-list"></div>
-</div>
-
-<!-- PROJECTIONS -->
-<div class="pg" id="pg-projections">
-  <div class="pg-title" style="margin-bottom:12px">Projections</div>
-  <div class="tabs">
-    <button class="tab active" onclick="projTab('networth',this)">Net Worth</button>
-    <button class="tab" onclick="projTab('history',this)">History</button>
-  </div>
-  <div id="proj-networth"></div>
-  <div id="proj-history" style="display:none"></div>
 </div>
 
 <!-- SETTINGS -->
@@ -511,11 +551,9 @@ datalist option{background:var(--bg2);color:var(--text)}
 <nav class="bnav">
   <div class="bn active" data-pg="dashboard" onclick="navTo('dashboard')"><div class="bn-icon">◈</div>Home</div>
   <div class="bn" data-pg="expenses" onclick="navTo('expenses')"><div class="bn-icon">↕</div>Expenses</div>
-  <div class="bn" data-pg="investments" onclick="navTo('investments')"><div class="bn-icon">◎</div>Invest</div>
-  <div class="bn" data-pg="cash" onclick="navTo('cash')"><div class="bn-icon">⬡</div>Cash</div>
-  <div class="bn" data-pg="debtors" onclick="navTo('debtors')"><div class="bn-icon">⊟</div>Debtors</div>
-  <div class="bn" data-pg="projections" onclick="navTo('projections')"><div class="bn-icon">◌</div>Plans</div>
-  <div class="bn" data-pg="settings" onclick="navTo('settings')"><div class="bn-icon">⊕</div>Settings</div>
+  <div class="bn" data-pg="accounts" onclick="navTo('accounts')"><div class="bn-icon">⬡</div>Accounts</div>
+  <div class="bn" data-pg="forecast" onclick="navTo('forecast')"><div class="bn-icon">◌</div>Forecast</div>
+  <div class="bn" data-pg="settings" onclick="navTo('settings')"><div class="bn-icon">⊕</div>More</div>
 </nav>
 
 <button class="fab" id="fab" onclick="fabAction()">+</button>
@@ -1005,15 +1043,12 @@ function navTo(pg, deepCat){
   document.querySelectorAll('.bn').forEach(n=>n.classList.toggle('active',n.dataset.pg===pg));
   document.getElementById('app-body').scrollTop=0;
   const fab=document.getElementById('fab');
-  if(['expenses','debtors','investments'].includes(pg)) fab.className='fab'; else fab.className='fab hidden';
-  if(pg==='investments') fab.onclick=()=>{const btn=document.querySelector('#pg-investments .tabs .tab:last-child');if(btn){invTab('edit',btn);}};
-  else if(pg==='debtors') fab.onclick=()=>openDebMod();
+  if(['expenses','debtors'].includes(pg)) fab.className='fab'; else fab.className='fab hidden';
+  if(pg==='debtors') fab.onclick=()=>openDebMod();
   else fab.onclick=()=>openExpModal();
-  // Deep-link: if a category is passed, filter expenses to that category
   if(pg==='expenses'&&deepCat){
     S.expCat=deepCat;
     renderExpenses();
-    // Scroll filter into view briefly so user sees the filter applied
     setTimeout(()=>{const el=document.getElementById('exp-summary');if(el)el.scrollIntoView({behavior:'smooth',block:'start'});},80);
   }
 }
@@ -1084,7 +1119,7 @@ function renderAll(){
   const n=new Date();
   const _hdrDate=document.getElementById('hdr-date');if(_hdrDate)_hdrDate.textContent=MS[n.getMonth()].toUpperCase()+' '+n.getFullYear();
   initPeriodSelector();
-  renderDashboard();renderExpenses();renderInvestments();renderCashPage();renderDebtors();renderProjections();renderSettings();
+  renderDashboard();renderExpenses();renderInvestments();renderCashPage();renderDebtors();renderForecast();renderSettings();
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1163,19 +1198,9 @@ function renderDashboard(){
     return`<div class="cr"><div class="cr-top"><span class="cr-name">${r.cat}</span><div class="cr-vals"><span class="cr-spent" style="color:${st==='over'?'var(--red)':st==='warn'?'var(--gold)':'var(--text)'}">${fmtCur(r.spent,cur,m,y)}</span>${r.budg?`<span class="cr-budg">/ ${fmtCur(r.budg,cur,m,y)}</span>`:''}</div></div><div class="prog"><div class="pf ${st}" style="width:${pct}%"></div></div></div>`;
   }).join(''):'<div class="empty"><div class="empty-i">↕</div>No expenses this month</div>';
 
-  // Income vs expense
-  const net=incomeDisplay-spent;
-  document.getElementById('dash-inc-exp').innerHTML=`
-    <div class="inc-row"><span class="pjlabel">Income</span><span style="font-family:var(--mono);font-size:0.84rem;color:var(--accent)">${fmtCur(incomeDisplay,cur,m,y)}</span></div>
-    <div class="inc-row"><span class="pjlabel">Expenses</span><span style="font-family:var(--mono);font-size:0.84rem;color:var(--red)">${fmtCur(spent,cur,m,y)}</span></div>
-    <div class="inc-row" style="font-weight:700"><span>Net</span><span style="font-family:var(--mono);font-size:0.88rem;color:${net>=0?'var(--accent)':'var(--red)'}">${fmtCur(Math.abs(net),cur,m,y)} ${net>=0?'saved':'deficit'}</span></div>
-    ${incList.length?`<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">${incList.map(i=>`<div style="font-size:0.63rem;padding:2px 8px;border-radius:20px;background:var(--adim);border:1px solid var(--ab);color:var(--accent)">${i.category}: ${fmtCur(i.amount,cur,m,y)}</div>`).join('')}</div>`:''}
-  `;
-
-  // Cash
-  document.getElementById('dash-cash-total').textContent=cashTotal?fmtCur(cashTotal,cur,m,y):'—';
+  // Cash (accounts summary)
   const cashAccts=getCashAccounts();
-  document.getElementById('dash-cash').innerHTML=cashAccts.map((b,i)=>{const val=cash[b]||0;const pct=cashTotal?Math.round(val/cashTotal*100):0;return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;${i<cashAccts.length-1?'border-bottom:1px solid var(--border)':''}"><div><div style="font-size:0.8rem;font-weight:600">${b}</div><div style="font-size:0.63rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}% of total</div></div><div style="font-family:var(--mono);font-size:0.88rem;color:${val?'var(--blue)':'var(--text3)'}">${val?fmtCur(val,cur,m,y):'—'}</div></div>`;}).join('');
+  document.getElementById('dash-cash').innerHTML=`<div class="sh" style="margin-bottom:6px;cursor:pointer" onclick="navTo('accounts')"><div style="font-size:0.75rem;font-weight:600;color:var(--text2)">Cash</div><span class="badge bb">${cashTotal?fmtCur(cashTotal,cur,m,y):'—'}</span></div>`+cashAccts.map((b,i)=>{const val=cash[b]||0;const pct=cashTotal?Math.round(val/cashTotal*100):0;return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;${i<cashAccts.length-1?'border-bottom:1px solid var(--border)':''}"><div><div style="font-size:0.78rem;font-weight:600">${b}</div><div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}% of total</div></div><div style="font-family:var(--mono);font-size:0.86rem;color:${val?'var(--blue)':'var(--text3)'}">${val?fmtCur(val,cur,m,y):'—'}</div></div>`;}).join('');
 
   // Investments
   document.getElementById('dash-inv-total').textContent=invTotal?fmtCur(invTotal,cur==='NATIVE'?'NGN':cur,m,y):'—';
@@ -1188,15 +1213,15 @@ function renderDashboard(){
   const active=PLATFORMS.filter(p=>inv[p.key]);
   document.getElementById('dash-abar').innerHTML=invTotal&&active.length?active.map(p=>`<div style="flex:${inv[p.key]};background:${p.color};opacity:0.8"></div>`).join(''):'';
 
-  // 6-Month Trend (last 6 from HISTORY) with savings rate line
+  // 6-Month Trend
   const recent=getHistory().slice(-6);
   if(S.trendChart) S.trendChart.destroy();
   const tctx=document.getElementById('trend-chart').getContext('2d');
   S.trendChart=new Chart(tctx,{type:'bar',data:{labels:recent.map(d=>d.label),datasets:[
-    {label:'Expenses',data:recent.map(d=>d.expenses||0),backgroundColor:'rgba(200,245,66,0.8)',borderRadius:3,borderSkipped:false,order:2},
-    {label:'Income',data:recent.map(d=>d.income||0),backgroundColor:'rgba(92,158,255,0.4)',borderRadius:3,borderSkipped:false,order:2},
-    {label:'Savings %',data:recent.map(d=>d.income>0?Math.round((d.income-d.expenses)/d.income*100):0),type:'line',borderColor:'#f5c842',backgroundColor:'transparent',borderWidth:2,pointBackgroundColor:'#f5c842',pointRadius:3,tension:0.3,yAxisID:'y2',order:1}
-  ]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>c.dataset.label==='Savings %'?c.parsed.y+'%':'₦'+c.parsed.y.toLocaleString()}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false},y2:{display:false,min:-20,max:100}},barPercentage:0.72}});
+    {label:'Expenses',data:recent.map(d=>d.expenses||0),backgroundColor:'rgba(20,184,166,0.75)',borderRadius:3,borderSkipped:false,order:2},
+    {label:'Income',data:recent.map(d=>d.income||0),backgroundColor:'rgba(96,165,250,0.4)',borderRadius:3,borderSkipped:false,order:2},
+    {label:'Savings %',data:recent.map(d=>d.income>0?Math.round((d.income-d.expenses)/d.income*100):0),type:'line',borderColor:'#fbbf24',backgroundColor:'transparent',borderWidth:2,pointBackgroundColor:'#fbbf24',pointRadius:3,tension:0.3,yAxisID:'y2',order:1}
+  ]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#161b25',borderColor:'#252d3d',borderWidth:1,callbacks:{label:c=>c.dataset.label==='Savings %'?c.parsed.y+'%':'₦'+c.parsed.y.toLocaleString()}}},scales:{x:{grid:{display:false},ticks:{color:'#7d8fa8',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false},y2:{display:false,min:-20,max:100}},barPercentage:0.72}});
 
   // Net Worth trend
   renderNWTrendChart();
@@ -1242,14 +1267,14 @@ function renderDashFullYear(y,totalInc,totalExp,cur){
   document.getElementById('chart-btns').style.display='none';
   document.getElementById('dash-cats').innerHTML='<div class="csub" style="padding:8px 0">Category breakdown available for individual months</div>';
   document.getElementById('dash-inc-exp').innerHTML=histYear.map(h=>`<div class="inc-row"><span class="pjlabel">${h.label}</span><div style="text-align:right"><div style="font-size:0.72rem;font-family:var(--mono);color:var(--accent)">${fmtCur(h.income,cur,h.month,y)}</div><div style="font-size:0.68rem;font-family:var(--mono);color:var(--red)">${fmtCur(h.expenses,cur,h.month,y)}</div></div></div>`).join('');
-  document.getElementById('dash-cash-total').textContent='—';
+  const _ct=document.getElementById('dash-cash-total');if(_ct)_ct.textContent='—';
   document.getElementById('dash-cash').innerHTML='<div class="csub">Cash shown for individual months</div>';
   document.getElementById('dash-inv-total').textContent='—';
   document.getElementById('dash-inv').innerHTML='<div class="csub">Investments shown for individual months</div>';
   document.getElementById('dash-abar').innerHTML='';
   if(S.trendChart) S.trendChart.destroy();
   const ctx=document.getElementById('trend-chart').getContext('2d');
-  S.trendChart=new Chart(ctx,{type:'bar',data:{labels:histYear.map(d=>d.label),datasets:[{label:'Income',data:histYear.map(d=>d.income||0),backgroundColor:'rgba(92,158,255,0.4)',borderRadius:3,borderSkipped:false},{label:'Expenses',data:histYear.map(d=>d.expenses||0),backgroundColor:'rgba(200,245,66,0.8)',borderRadius:3,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>'₦'+c.parsed.y.toLocaleString()}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}},barPercentage:0.72}});
+  S.trendChart=new Chart(ctx,{type:'bar',data:{labels:histYear.map(d=>d.label),datasets:[{label:'Income',data:histYear.map(d=>d.income||0),backgroundColor:'rgba(96,165,250,0.4)',borderRadius:3,borderSkipped:false},{label:'Expenses',data:histYear.map(d=>d.expenses||0),backgroundColor:'rgba(20,184,166,0.75)',borderRadius:3,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#161b25',borderColor:'#252d3d',borderWidth:1,callbacks:{label:c=>'₦'+c.parsed.y.toLocaleString()}}},scales:{x:{grid:{display:false},ticks:{color:'#7d8fa8',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}},barPercentage:0.72}});
   document.getElementById('dash-recent').innerHTML='<div class="csub">Recent transactions shown for individual months</div>';
 }
 
@@ -1776,10 +1801,93 @@ async function recordPmt(id,amt,paid,rate){const in_=prompt('Enter payment amoun
 async function removeDeb(id){if(!confirm('Remove this debtor?')) return;try{await db.collection('debtors').doc(id).delete();toast('Removed');await loadDebtors();renderDebtors();}catch(e){toast('Error removing');}}
 
 // ══════════════════════════════════════════════════════════════════════════
-// PROJECTIONS
+// ACCOUNTS PAGE (Cash + Investments)
 // ══════════════════════════════════════════════════════════════════════════
-function renderProjections(){renderProjNW();renderProjHistory();}
-function projTab(tab,btn){['networth','history'].forEach(t=>{document.getElementById('proj-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
+function acctTab(tab, btn){
+  ['cash','invest'].forEach(t=>{const el=document.getElementById('acct-'+t);if(el)el.style.display=t===tab?'block':'none';});
+  btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+}
+function toggleCashEdit(){
+  const s=document.getElementById('cash-edit-section');
+  const open=s.style.display!=='none';
+  s.style.display=open?'none':'block';
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// DASHBOARD CHART TABS
+// ══════════════════════════════════════════════════════════════════════════
+function dashChartTab(tab, btn){
+  ['breakdown','trend','networth'].forEach(t=>{const el=document.getElementById('dash-tab-'+t);if(el)el.style.display=t===tab?'block':'none';});
+  btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// FORECAST (was Projections)
+// ══════════════════════════════════════════════════════════════════════════
+function renderForecast(){renderProjNW();renderProjHistory();renderProjObligations();}
+function projTab(tab,btn){['networth','history','obligations'].forEach(t=>{document.getElementById('proj-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
+
+function renderProjObligations(){
+  const el=document.getElementById('proj-obligations');
+  if(!el) return;
+  const fixedTotal=FIXED_OBL.reduce((s,o)=>s+o.amount,0);
+  // Load custom obligations from localStorage
+  const custom=cGet('sw3_custom_obl')||[];
+  const allObl=[...FIXED_OBL,...custom];
+  const grandTotal=allObl.reduce((s,o)=>s+o.amount,0);
+  const recent=getHistory().filter(h=>h.income&&h.expenses).slice(-3);
+  const avgInc=recent.length?recent.reduce((s,h)=>s+h.income,0)/recent.length:0;
+  const oblPct=avgInc?Math.round((grandTotal/avgInc)*100):null;
+  el.innerHTML=`
+    <div class="card">
+      <div class="clabel">Total Fixed Monthly</div>
+      <div class="cval" style="color:var(--gold)">${fN(grandTotal)}</div>
+      ${oblPct!==null?`<div class="csub">${oblPct}% of avg. monthly income</div>`:''}
+    </div>
+    <div class="card">
+      <div class="sh"><div class="sh-title">Fixed Bills</div><button class="btn btn-g btn-sm" onclick="addObligation()">+ Add</button></div>
+      ${FIXED_OBL.map(o=>`
+        <div class="pjrow">
+          <span class="pjlabel">${o.label}</span>
+          <span class="pjval" style="color:var(--gold)">${fN(o.amount)}</span>
+        </div>`).join('')}
+      ${custom.map((o,i)=>`
+        <div class="pjrow">
+          <span class="pjlabel">${o.label} <button class="txi-del" style="font-size:0.7rem" onclick="removeObligation(${i})">×</button></span>
+          <span class="pjval" style="color:var(--gold)">${fN(o.amount)}</span>
+        </div>`).join('')}
+      <div class="pjrow" style="font-weight:700;border-top:1px solid var(--border2);margin-top:6px;padding-top:10px">
+        <span>Total</span><span class="pjval" style="color:var(--gold)">${fN(grandTotal)}</span>
+      </div>
+    </div>
+    <div class="card" id="obl-add-card" style="display:none">
+      <div class="clabel" style="margin-bottom:10px">Add Fixed Bill</div>
+      <div class="ig"><label class="ilabel">Label</label><input class="ifield" id="obl-lbl" type="text" placeholder="e.g. School fees"></div>
+      <div class="ig"><label class="ilabel">Monthly Amount (₦)</label><input class="ifield" id="obl-amt" type="number" inputmode="decimal" placeholder="0"></div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button class="btn btn-p btn-sm" onclick="saveObligation()">Save</button>
+        <button class="btn btn-g btn-sm" onclick="document.getElementById('obl-add-card').style.display='none'">Cancel</button>
+      </div>
+    </div>`;
+}
+function addObligation(){document.getElementById('obl-add-card').style.display='block';document.getElementById('obl-lbl').value='';document.getElementById('obl-amt').value='';}
+function saveObligation(){
+  const lbl=document.getElementById('obl-lbl').value.trim();
+  const amt=parseFloat(document.getElementById('obl-amt').value);
+  if(!lbl||!amt){toast('Enter label and amount');return;}
+  const custom=cGet('sw3_custom_obl')||[];
+  custom.push({label:lbl,amount:amt});
+  cSet('sw3_custom_obl',custom);
+  document.getElementById('obl-add-card').style.display='none';
+  renderProjObligations();toast('Fixed bill added');
+}
+function removeObligation(i){
+  const custom=cGet('sw3_custom_obl')||[];
+  custom.splice(i,1);cSet('sw3_custom_obl',custom);
+  renderProjObligations();toast('Removed');
+}
 
 function renderProjNW(){
   const recent=getHistory().filter(h=>h.income&&h.expenses).slice(-6);
@@ -2052,7 +2160,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.7.4</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.8.0</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
 }
 
