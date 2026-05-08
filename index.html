@@ -1082,7 +1082,7 @@ function dashPeriodChange(){
 // ══════════════════════════════════════════════════════════════════════════
 function renderAll(){
   const n=new Date();
-  document.getElementById('hdr-date').textContent=MS[n.getMonth()].toUpperCase()+' '+n.getFullYear();
+  const _hdrDate=document.getElementById('hdr-date');if(_hdrDate)_hdrDate.textContent=MS[n.getMonth()].toUpperCase()+' '+n.getFullYear();
   initPeriodSelector();
   renderDashboard();renderExpenses();renderInvestments();renderCashPage();renderDebtors();renderProjections();renderSettings();
 }
