@@ -230,13 +230,20 @@ body.light .theme-icon-sun{opacity:1}
 .notif-badge{position:absolute;top:0;right:0;min-width:14px;height:14px;border-radius:7px;background:var(--red);color:#fff;font-size:0.5rem;font-weight:700;font-family:var(--mono);display:flex;align-items:center;justify-content:center;padding:0 3px;pointer-events:none;transform:translate(2px,-2px)}
 .notif-panel{position:fixed;top:calc(var(--hh) + 6px);right:10px;width:min(340px, calc(100vw - 20px));background:var(--bg1);border:1px solid var(--border);border-radius:var(--r);z-index:200;box-shadow:0 8px 32px rgba(0,0,0,0.35);max-height:70vh;overflow-y:auto;display:none}
 .notif-panel.open{display:block;animation:fadeIn 0.14s ease}
-.notif-panel-hdr{padding:12px 16px 8px;font-size:0.7rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)}
-.notif-item{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start}
-.notif-item:last-child{border-bottom:none}
+.notif-panel-hdr{padding:10px 16px;font-size:0.7rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.notif-clear-btn{font-size:0.62rem;font-weight:600;color:var(--accent);cursor:pointer;text-transform:none;letter-spacing:0;padding:2px 6px;border-radius:4px;border:1px solid var(--ab);background:var(--adim)}
+.notif-item{padding:12px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.15s}
+.notif-item:hover{background:var(--bg2)}
+.notif-item-row{display:flex;gap:10px;align-items:flex-start}
 .notif-item-icon{font-size:1.1rem;flex-shrink:0;margin-top:1px}
 .notif-item-body{flex:1;min-width:0}
 .notif-item-title{font-size:0.76rem;font-weight:700;color:var(--text);margin-bottom:2px}
 .notif-item-sub{font-size:0.67rem;color:var(--text2);line-height:1.4}
+.notif-item-detail{font-size:0.67rem;color:var(--text2);line-height:1.5;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:none}
+.notif-item.expanded .notif-item-detail{display:block}
+.notif-item-actions{display:flex;gap:8px;margin-top:8px}
+.notif-dismiss-btn{font-size:0.6rem;color:var(--text3);cursor:pointer;padding:2px 6px;border-radius:3px;border:1px solid var(--border);background:none}
+.notif-dismiss-btn:hover{color:var(--red);border-color:var(--red)}
 .notif-item.warn .notif-item-title{color:var(--gold)}
 .notif-item.danger .notif-item-title{color:var(--red)}
 .notif-item.info .notif-item-title{color:var(--blue)}
@@ -335,7 +342,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.9.7</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.9.8</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       🔔
@@ -349,7 +356,10 @@ datalist option{background:var(--bg2);color:var(--text)}
   </div>
 </header>
 <div class="notif-panel" id="notif-panel">
-  <div class="notif-panel-hdr">Alerts &amp; Notifications</div>
+  <div class="notif-panel-hdr">
+    <span>Alerts &amp; Notifications</span>
+    <span class="notif-clear-btn" onclick="clearAllNotifs()">Clear all</span>
+  </div>
   <div id="notif-list"><div class="notif-empty">No alerts right now</div></div>
 </div>
 <div id="notif-scrim" style="display:none;position:fixed;inset:0;z-index:199" onclick="closeNotifPanel()"></div>
@@ -437,7 +447,7 @@ datalist option{background:var(--bg2);color:var(--text)}
             <span style="font-size:0.82rem;font-weight:700">Cash</span>
             <span class="badge bb" id="dash-cash-badge"></span>
           </div>
-          <div style="display:flex;align-items:center;gap:10px">
+          <div style="display:flex;align-items:center;gap:20px">
             <span class="sh-link" onclick="event.stopPropagation();navTo('accounts')" style="font-size:0.66rem">Manage →</span>
             <span class="chevron">▼</span>
           </div>
@@ -452,7 +462,7 @@ datalist option{background:var(--bg2);color:var(--text)}
             <span style="font-size:0.82rem;font-weight:700">Investments</span>
             <span class="badge bg" id="dash-inv-total"></span>
           </div>
-          <div style="display:flex;align-items:center;gap:10px">
+          <div style="display:flex;align-items:center;gap:20px">
             <span class="sh-link" onclick="event.stopPropagation();navTo('accounts')" style="font-size:0.66rem">Manage →</span>
             <span class="chevron">▼</span>
           </div>
@@ -1073,6 +1083,9 @@ function loadFromCache(){
 const sid=(m,y)=>`${y}-${String(m).padStart(2,'0')}`;
 const fxKey=(m,y)=>`${y}-${String(m).padStart(2,'0')}`;
 const fN=n=>n==null||isNaN(n)?'—':'₦'+Number(n).toLocaleString('en-NG',{maximumFractionDigits:0});
+function fmtChartNGN(v){if(Math.abs(v)>=1e6)return'₦'+(v/1e6).toFixed(2)+'M';if(Math.abs(v)>=1e3)return'₦'+(v/1e3).toFixed(1)+'K';return'₦'+v.toFixed(0);}
+function fmtChartUSD(v){if(Math.abs(v)>=1e3)return'$'+(v/1e3).toFixed(2)+'K';return'$'+v.toFixed(2);}
+function fmtChartMoney(v){return fmtChartNGN(v);}
 const fNum=n=>n==null||isNaN(n)?'—':Number(n).toLocaleString('en-NG',{maximumFractionDigits:0});
 const ck=c=>c.replace(/[^a-zA-Z]/g,'');
 const todayStr=()=>new Date().toISOString().slice(0,10);
@@ -1509,7 +1522,7 @@ function renderDashboard(){
     {label:'Expenses',data:recent.map(d=>d.expenses||0),backgroundColor:'rgba(20,184,166,0.75)',borderRadius:3,borderSkipped:false,order:2},
     {label:'Income',data:recent.map(d=>d.income||0),backgroundColor:'rgba(96,165,250,0.4)',borderRadius:3,borderSkipped:false,order:2},
     {label:'Savings %',data:recent.map(d=>d.income>0?Math.round((d.income-d.expenses)/d.income*100):0),type:'line',borderColor:'#fbbf24',backgroundColor:'transparent',borderWidth:2,pointBackgroundColor:'#fbbf24',pointRadius:3,tension:0.3,yAxisID:'y2',order:1}
-  ]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#161b25',borderColor:'#252d3d',borderWidth:1,callbacks:{label:c=>c.dataset.label==='Savings %'?c.parsed.y+'%':'₦'+c.parsed.y.toLocaleString()}}},scales:{x:{grid:{display:false},ticks:{color:'#7d8fa8',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false},y2:{display:false,min:-20,max:100}},barPercentage:0.72}});
+  ]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#161b25',borderColor:'#252d3d',borderWidth:1,callbacks:{label:c=>c.dataset.label==='Savings %'?c.parsed.y.toFixed(1)+'%':fmtChartNGN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#7d8fa8',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false},y2:{display:false,min:-20,max:100}},barPercentage:0.72}});
 
   // Net Worth trend
   renderNWTrendChart();
@@ -1538,22 +1551,97 @@ function closeNotifPanel(){
   document.getElementById('notif-panel').classList.remove('open');
   document.getElementById('notif-scrim').style.display='none';
 }
+// Store current alerts for dismiss/detail
+let _currentAlerts = [];
+let _dismissedIds = new Set(JSON.parse(localStorage.getItem('sw3_dismissed_notifs')||'[]'));
+
+function _alertId(a){ return a.type+'|'+a.title; }
+
 function updateNotifPanel(alerts){
+  // Filter out dismissed
+  _currentAlerts = alerts.filter(a=>!_dismissedIds.has(_alertId(a)));
   const badge=document.getElementById('notif-badge');
   const list=document.getElementById('notif-list');
   if(!badge||!list) return;
-  const count=alerts.length;
+  const count=_currentAlerts.length;
   badge.textContent=count>9?'9+':count;
   badge.style.display=count?'flex':'none';
-  if(!count){list.innerHTML='<div class="notif-empty">✓ No alerts right now</div>';return;}
-  list.innerHTML=alerts.map(a=>`
-    <div class="notif-item ${a.type}">
-      <div class="notif-item-icon">${a.icon}</div>
-      <div class="notif-item-body">
-        <div class="notif-item-title">${a.title}</div>
-        <div class="notif-item-sub">${a.sub}${a.link?` <span style="cursor:pointer;text-decoration:underline;font-weight:600" onclick="closeNotifPanel();${a.link.fn}">${a.link.label}</span>`:''}</div>
+  _renderNotifList();
+  // Device push for new alerts
+  _pushDeviceNotifs(alerts);
+}
+
+function _renderNotifList(){
+  const list=document.getElementById('notif-list');
+  if(!list) return;
+  if(!_currentAlerts.length){list.innerHTML='<div class="notif-empty">✓ No alerts right now</div>';return;}
+  list.innerHTML=_currentAlerts.map((a,i)=>`
+    <div class="notif-item ${a.type}" id="nitem-${i}" onclick="toggleNotifDetail(${i})">
+      <div class="notif-item-row">
+        <div class="notif-item-icon">${a.icon}</div>
+        <div class="notif-item-body">
+          <div class="notif-item-title">${a.title}</div>
+          <div class="notif-item-sub">${a.sub.split('·')[0].trim()}</div>
+          <div class="notif-item-detail">${a.sub}${a.link?`<br><span style="cursor:pointer;color:var(--accent);font-weight:600;text-decoration:underline" onclick="event.stopPropagation();closeNotifPanel();${a.link.fn}">${a.link.label}</span>`:''}</div>
+          <div class="notif-item-actions">
+            <span class="notif-dismiss-btn" onclick="event.stopPropagation();dismissNotif(${i})">✕ Dismiss</span>
+          </div>
+        </div>
       </div>
     </div>`).join('');
+}
+
+function toggleNotifDetail(i){
+  const el=document.getElementById('nitem-'+i);
+  if(el) el.classList.toggle('expanded');
+}
+
+function dismissNotif(i){
+  const a=_currentAlerts[i];
+  if(!a) return;
+  _dismissedIds.add(_alertId(a));
+  localStorage.setItem('sw3_dismissed_notifs', JSON.stringify([..._dismissedIds]));
+  _currentAlerts.splice(i,1);
+  const badge=document.getElementById('notif-badge');
+  if(badge){badge.textContent=_currentAlerts.length>9?'9+':_currentAlerts.length;badge.style.display=_currentAlerts.length?'flex':'none';}
+  _renderNotifList();
+}
+
+function clearAllNotifs(){
+  _currentAlerts.forEach(a=>_dismissedIds.add(_alertId(a)));
+  localStorage.setItem('sw3_dismissed_notifs', JSON.stringify([..._dismissedIds]));
+  _currentAlerts=[];
+  const badge=document.getElementById('notif-badge');
+  if(badge){badge.textContent='0';badge.style.display='none';}
+  _renderNotifList();
+}
+
+// Device push notifications via Web Notifications API
+let _notifPermission='default';
+async function _requestNotifPermission(){
+  if(!('Notification' in window)) return;
+  if(Notification.permission==='granted'){_notifPermission='granted';return;}
+  if(Notification.permission!=='denied'){
+    const p=await Notification.requestPermission();
+    _notifPermission=p;
+  }
+}
+const _sentPushIds=new Set();
+function _pushDeviceNotifs(alerts){
+  if(!('Notification' in window)||Notification.permission!=='granted') return;
+  alerts.forEach(a=>{
+    const id=_alertId(a);
+    if(_sentPushIds.has(id)||_dismissedIds.has(id)) return;
+    _sentPushIds.add(id);
+    try{
+      new Notification('SpendWise — '+a.title,{
+        body:a.sub.replace(/<[^>]+>/g,'').slice(0,120),
+        icon:'/favicon.ico',
+        tag:id,
+        silent:false
+      });
+    }catch(e){}
+  });
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1586,7 +1674,22 @@ let _dragSrc=null;
 function toggleDashEdit(){
   _dashEditMode=!_dashEditMode;
   const btn=document.getElementById('dash-edit-btn');
-  if(btn) btn.textContent=_dashEditMode?'Done':'Edit';
+  if(btn) btn.textContent=_dashEditMode?'Editing…':'Edit';
+  // Show/hide floating done bar
+  let doneBar=document.getElementById('dash-done-bar');
+  if(_dashEditMode){
+    if(!doneBar){
+      doneBar=document.createElement('div');
+      doneBar.id='dash-done-bar';
+      doneBar.style.cssText='position:fixed;bottom:calc(var(--nh) + 10px);left:50%;transform:translateX(-50%);z-index:150;background:var(--accent);color:#fff;font-weight:700;font-size:0.78rem;padding:10px 28px;border-radius:24px;box-shadow:0 4px 16px rgba(20,184,166,0.4);cursor:pointer;letter-spacing:0.02em';
+      doneBar.textContent='✓ Done Reordering';
+      doneBar.onclick=toggleDashEdit;
+      document.body.appendChild(doneBar);
+    }
+    doneBar.style.display='block';
+  } else {
+    if(doneBar) doneBar.style.display='none';
+  }
   const container=document.getElementById('dash-cards-container');
   if(!container) return;
   container.querySelectorAll('.dash-card-wrap').forEach(wrap=>{
@@ -1597,7 +1700,7 @@ function toggleDashEdit(){
         const handle=document.createElement('div');
         handle.className='reorder-handle';
         handle.innerHTML=`<span style="font-size:0.62rem;color:var(--text3);font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-right:4px">${DASH_CARD_LABELS[cardId]||cardId}</span>⠿`;
-        handle.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:6px 4px 2px;cursor:grab';
+        handle.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:6px 4px 2px;cursor:grab;user-select:none';
         wrap.insertBefore(handle, wrap.firstChild);
         // Touch drag
         handle.addEventListener('touchstart', e=>_dragStart(e, wrap), {passive:true});
@@ -1760,7 +1863,7 @@ function renderNWTrendChart(){
   if(!canvas) return;
   if(S.nwChart) S.nwChart.destroy();
   const ctx=canvas.getContext('2d');
-  S.nwChart=new Chart(ctx,{type:'line',data:{labels:pts.map(p=>p.label),datasets:[{data:pts.map(p=>p.nw),borderColor:'#c8f542',backgroundColor:'rgba(200,245,66,0.06)',borderWidth:2,pointBackgroundColor:'#c8f542',pointRadius:3,tension:0.35,fill:true}]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>fN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}}});
+  S.nwChart=new Chart(ctx,{type:'line',data:{labels:pts.map(p=>p.label),datasets:[{data:pts.map(p=>p.nw),borderColor:'#c8f542',backgroundColor:'rgba(200,245,66,0.06)',borderWidth:2,pointBackgroundColor:'#c8f542',pointRadius:3,tension:0.35,fill:true}]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>fmtChartNGN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}}});
 }
 
 function renderDashFullYear(y,totalInc,totalExp,cur){
@@ -1786,7 +1889,7 @@ function renderDashFullYear(y,totalInc,totalExp,cur){
   document.getElementById('dash-abar').innerHTML='';
   if(S.trendChart) S.trendChart.destroy();
   const ctx=document.getElementById('trend-chart').getContext('2d');
-  S.trendChart=new Chart(ctx,{type:'bar',data:{labels:histYear.map(d=>d.label),datasets:[{label:'Income',data:histYear.map(d=>d.income||0),backgroundColor:'rgba(96,165,250,0.4)',borderRadius:3,borderSkipped:false},{label:'Expenses',data:histYear.map(d=>d.expenses||0),backgroundColor:'rgba(20,184,166,0.75)',borderRadius:3,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#161b25',borderColor:'#252d3d',borderWidth:1,callbacks:{label:c=>'₦'+c.parsed.y.toLocaleString()}}},scales:{x:{grid:{display:false},ticks:{color:'#7d8fa8',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}},barPercentage:0.72}});
+  S.trendChart=new Chart(ctx,{type:'bar',data:{labels:histYear.map(d=>d.label),datasets:[{label:'Income',data:histYear.map(d=>d.income||0),backgroundColor:'rgba(96,165,250,0.4)',borderRadius:3,borderSkipped:false},{label:'Expenses',data:histYear.map(d=>d.expenses||0),backgroundColor:'rgba(20,184,166,0.75)',borderRadius:3,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#161b25',borderColor:'#252d3d',borderWidth:1,callbacks:{label:c=>fmtChartNGN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#7d8fa8',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}},barPercentage:0.72}});
   document.getElementById('dash-recent').innerHTML='<div class="csub">Recent transactions shown for individual months</div>';
 }
 
@@ -1814,14 +1917,14 @@ function renderCatChart(catSpend,cur,m,y){
   const colors=labels.map((_,i)=>CAT_COLORS[i%CAT_COLORS.length]);
   const ctx=canvas.getContext('2d');
 
-  // Deep-link click handler — clicking a chart segment navigates to that category
+  // Chart click: open category breakdown popup
   const onChartClick=(_evt,elements)=>{
     if(!elements.length) return;
     const idx=elements[0].index;
     const cat=labels[idx];
     if(!cat) return;
     haptic([10]);
-    navTo('expenses', cat);
+    openCatPopup(cat, S.txns.filter(t=>t.category===cat), S.dashCurrency, m, y);
   };
 
   const commonOpts={
@@ -1830,10 +1933,15 @@ function renderCatChart(catSpend,cur,m,y){
     onClick:onChartClick,
     plugins:{
       legend:{display:S.chartType!=='bar',position:'bottom',labels:{color:'#8888bb',font:{family:'DM Mono',size:9},boxWidth:8,padding:8}},
-      tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>{const v=typeof c.parsed==='object'?c.parsed.v||c.parsed.y||c.raw:c.parsed;return (c.label||'')+': ₦'+Number(v).toLocaleString();}},
-        // Show pointer hint in footer
-        footer:()=>['Tap to view expenses →']
-      }
+      tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{
+        label:c=>{
+          const total=c.chart.data.datasets[0].data.reduce((s,v)=>s+(v||0),0);
+          const v=typeof c.parsed==='object'?c.parsed.v||c.parsed.y||c.raw:c.parsed;
+          const pct=total>0?((v/total)*100).toFixed(1):'0.0';
+          return (c.label||'')+': '+pct+'% (₦'+Number(v).toLocaleString()+')';
+        },
+        footer:()=>['Tap for details →']
+      }}
     }
   };
 
@@ -2242,7 +2350,7 @@ function invTab(tab,btn){
   if(tab==='edit') renderInvestments();
 }
 async function renderInvTrend(){
-  try{const snap=await db.collection('investments').orderBy('year').orderBy('month').get();const data=snap.docs.map(d=>{const s=d.data();return{label:`${MS[s.month-1]} '${String(s.year).slice(2)}`,total:PLATFORMS.reduce((sum,p)=>sum+(s[p.key]||0),0)};});if(S.invChart) S.invChart.destroy();const ctx=document.getElementById('inv-chart').getContext('2d');S.invChart=new Chart(ctx,{type:'line',data:{labels:data.map(d=>d.label),datasets:[{data:data.map(d=>d.total),borderColor:'#c8f542',backgroundColor:'rgba(200,245,66,0.06)',borderWidth:2,pointBackgroundColor:'#c8f542',pointRadius:3,tension:0.3,fill:true}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>fN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}}});}catch(e){}
+  try{const snap=await db.collection('investments').orderBy('year').orderBy('month').get();const data=snap.docs.map(d=>{const s=d.data();return{label:`${MS[s.month-1]} '${String(s.year).slice(2)}`,total:PLATFORMS.reduce((sum,p)=>sum+(s[p.key]||0),0)};});if(S.invChart) S.invChart.destroy();const ctx=document.getElementById('inv-chart').getContext('2d');S.invChart=new Chart(ctx,{type:'line',data:{labels:data.map(d=>d.label),datasets:[{data:data.map(d=>d.total),borderColor:'#c8f542',backgroundColor:'rgba(200,245,66,0.06)',borderWidth:2,pointBackgroundColor:'#c8f542',pointRadius:3,tension:0.3,fill:true}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>fmtChartNGN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}}});}catch(e){}
 }
 async function saveInvFromEdit(){
   if(S.saving) return;S.saving=true;setSyncStatus('syncing');
@@ -2480,11 +2588,12 @@ function renderProjTreasury(){
       <div class="csub" style="margin-top:8px">Conservative = income −10%, spend +10%. Optimistic = income +5%, spend −5%.</div>
     </div>
     <div class="card">
-      <div class="sh" style="margin-bottom:10px"><div class="sh-title">Savings Rate Trend</div></div>
-      <div style="display:flex;align-items:flex-end;gap:4px;height:60px">
+      <div class="sh" style="margin-bottom:14px"><div class="sh-title">Savings Rate Trend</div></div>
+      <div style="display:flex;align-items:flex-end;gap:5px;height:100px;padding-bottom:2px">
         ${savingsRates.map((r,i)=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">
-          <div style="width:100%;background:${r>25?'var(--accent)':r>10?'var(--gold)':'var(--red)'};border-radius:3px 3px 0 0;height:${Math.max(4,Math.round(r/50*56))}px;opacity:0.85"></div>
-          <div style="font-size:0.48rem;font-family:var(--mono);color:var(--text3)">${hist[i]?hist[i].label.slice(0,3):''}</div>
+          <div style="font-size:0.52rem;font-family:var(--mono);color:var(--text2);font-weight:600">${r>0?r.toFixed(1)+'%':''}</div>
+          <div style="width:100%;background:${r>25?'var(--accent)':r>10?'var(--gold)':'var(--red)'};border-radius:3px 3px 0 0;height:${Math.max(6,Math.round(r/60*80))}px;opacity:0.85"></div>
+          <div style="font-size:0.5rem;font-family:var(--mono);color:var(--text3)">${hist[i]?hist[i].label.slice(0,3):''}</div>
         </div>`).join('')}
       </div>
     </div>`;
@@ -2867,7 +2976,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.9.7</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.9.8</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
 }
 
@@ -2993,6 +3102,46 @@ function drillDown(type){
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// CATEGORY DETAIL POPUP (from chart click)
+// ══════════════════════════════════════════════════════════════════════════
+let _catPopupTxns=[], _catPopupSort='amount';
+
+function openCatPopup(cat, txns, cur, m, y){
+  _catPopupTxns=[...txns];
+  _catPopupSort='amount';
+  document.getElementById('drill-title').innerHTML=`${CAT_ICONS[cat]||''} ${cat}`;
+  _renderCatPopup(cur, m, y);
+  openMod('drill-modal');
+}
+
+function _renderCatPopup(cur, m, y){
+  cur=cur||S.dashCurrency; m=m||S.dashMonth; y=y||S.dashYear;
+  const sorted=_catPopupSort==='amount'
+    ?[..._catPopupTxns].sort((a,b)=>(b.amount||0)-(a.amount||0))
+    :[..._catPopupTxns].sort((a,b)=>a.date>b.date?-1:1);
+  const total=_catPopupTxns.reduce((s,t)=>s+(t.amount||0),0);
+  document.getElementById('drill-body').innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0 12px">
+      <div style="font-family:var(--mono);font-size:0.88rem;color:var(--accent);font-weight:500">${fmtCur(total,cur,m,y)}<span style="font-size:0.62rem;color:var(--text3);margin-left:6px">${_catPopupTxns.length} transaction${_catPopupTxns.length!==1?'s':''}</span></div>
+      <div style="display:flex;gap:6px">
+        <button onclick="_catPopupSort='amount';_renderCatPopup()" class="btn btn-sm ${_catPopupSort==='amount'?'btn-p':'btn-g'}" style="font-size:0.62rem;padding:4px 8px">Largest</button>
+        <button onclick="_catPopupSort='date';_renderCatPopup()" class="btn btn-sm ${_catPopupSort==='date'?'btn-p':'btn-g'}" style="font-size:0.62rem;padding:4px 8px">Recent</button>
+      </div>
+    </div>
+    <div class="txlist">
+      ${sorted.map(tx=>`
+        <div class="txi" onclick="openEditExpense('${tx.id}');closeMod('drill-modal')">
+          <div style="flex:1;min-width:0">
+            <div class="txi-cat" style="font-size:0.76rem">${tx.payee||'—'}</div>
+            <div class="txi-meta">${tx.date}${tx.bank?' · '+tx.bank:''}${tx.notes?' · '+tx.notes:''}</div>
+          </div>
+          <div class="txi-amt txi-exp">${fmtCur(tx.amount,cur,m,y)}</div>
+        </div>`).join('')}
+    </div>`;
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
 // SEED / JSON IMPORT
 // ══════════════════════════════════════════════════════════════════════════
 let _pendingSeed=null;
@@ -3115,6 +3264,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').cat
 
 // BOOT
 initFirebase();
+_requestNotifPermission();
 </script>
 </body>
 </html>
