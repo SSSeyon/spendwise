@@ -83,7 +83,7 @@ body.light .theme-icon-sun{opacity:1}
 /* ── LAYOUT ── */
 .app{display:flex;flex-direction:column;height:100vh;padding-top:var(--hh);padding-bottom:var(--nh)}
 .app-body{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
-.pg{display:none;padding:18px 16px 28px;animation:fadeIn 0.16s ease}
+.pg{display:none;padding:18px 16px calc(var(--nh) + 80px);animation:fadeIn 0.16s ease}
 .pg.active{display:block}
 @keyframes fadeIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
 .pg-title{font-size:1.3rem;font-weight:800;letter-spacing:-0.04em;margin-bottom:16px;color:var(--text)}
@@ -203,7 +203,7 @@ body.light .theme-icon-sun{opacity:1}
 .btn:disabled{opacity:0.4;cursor:not-allowed;transform:none!important}
 
 /* ── FAB ── */
-.fab{position:fixed;bottom:calc(14px + 56px + 10px);right:18px;width:48px;height:48px;border-radius:50%;background:var(--accent);color:#fff;border:none;font-size:1.5rem;cursor:pointer;z-index:90;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(20,184,166,0.45);transition:all 0.18s}
+.fab{position:fixed;bottom:calc(var(--nh) + 16px);right:18px;width:48px;height:48px;border-radius:50%;background:var(--accent);color:#fff;border:none;font-size:1.5rem;cursor:pointer;z-index:90;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(20,184,166,0.45);transition:all 0.18s}
 .fab:hover{transform:scale(1.07)}
 .fab.hidden{display:none}
 
@@ -357,7 +357,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.10.2</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.10.3</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -619,22 +619,22 @@ datalist option{background:var(--bg2);color:var(--text)}
       <button class="tab" onclick="invTab('trend',this)">Trend</button>
       <button class="tab" onclick="invTab('edit',this)">Edit</button>
     </div>
-    <div id="inv-current">
-      <div class="card" id="inv-total"></div>
-      <div id="inv-platforms"></div>
-      <div class="card" id="inv-alloc" style="display:none">
+    <div id="inv-current-2">
+      <div class="card" id="inv-total-2"></div>
+      <div id="inv-platforms-2"></div>
+      <div class="card" id="inv-alloc-2" style="display:none">
         <div class="clabel" style="margin-bottom:8px">Allocation</div>
-        <div class="abar" id="inv-abar"></div>
-        <div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:8px" id="inv-legend"></div>
+        <div class="abar" id="inv-abar-2"></div>
+        <div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:8px" id="inv-legend-2"></div>
       </div>
     </div>
-    <div id="inv-trend" style="display:none">
-      <div class="card"><div class="clabel" style="margin-bottom:12px">Portfolio Growth</div><canvas id="inv-chart" style="max-height:200px"></canvas></div>
+    <div id="inv-trend-2" style="display:none">
+      <div class="card"><div class="clabel" style="margin-bottom:12px">Portfolio Growth</div><canvas id="inv-chart-2" style="max-height:200px"></canvas></div>
     </div>
-    <div id="inv-edit" style="display:none">
+    <div id="inv-edit-2" style="display:none">
       <div class="card">
-        <div class="clabel" style="margin-bottom:10px">Update Balances — <span id="inv-edit-label"></span></div>
-        <div id="inv-edit-fields"></div>
+        <div class="clabel" style="margin-bottom:10px">Update Balances — <span id="inv-edit-label-2"></span></div>
+        <div id="inv-edit-fields-2"></div>
         <button class="btn btn-p btn-full" onclick="saveInvFromEdit()">Save Balances</button>
       </div>
     </div>
@@ -1919,9 +1919,10 @@ function toggleCollapsible(bodyId, hdrId){
   const body=document.getElementById(bodyId);
   const hdr=document.getElementById(hdrId);
   if(!body||!hdr) return;
-  const isOpen=body.style.display!=='none'&&body.style.display!=='';
+  // Use hdr class as single source of truth — avoids double-click on first load
+  const isOpen=hdr.classList.contains('open');
   body.style.display=isOpen?'none':'block';
-  if(isOpen){hdr.classList.remove('open');}else{hdr.classList.add('open');}
+  hdr.classList.toggle('open',!isOpen);
 }
 
 // ── SMART DASHBOARD ALERTS ─────────────────────────────────────────────────
@@ -2476,47 +2477,70 @@ async function saveIncome(){
 // ══════════════════════════════════════════════════════════════════════════
 // INVESTMENTS
 // ══════════════════════════════════════════════════════════════════════════
-function renderInvestments(){
-  // Always refresh from cache for current expMonth
+function _getInvData(){
+  // Always use freshest data: cache for current month, fallback to any cached month
   const _cached=cGet(CK.inv(S.expMonth,S.expYear));
   if(_cached&&Object.keys(_cached).some(k=>!['month','year'].includes(k)&&_cached[k]>0)){
     S.investments={..._cached};
   } else if(!S.investments||!Object.keys(S.investments).filter(k=>!['month','year'].includes(k)).length){
-    // Try the nearest loaded month from any cache
     const allCacheKeys=Object.keys(localStorage).filter(k=>k.startsWith('sw3_inv_'));
     for(const k of allCacheKeys){const v=cGet(k);if(v&&Object.keys(v).some(ky=>!['month','year'].includes(ky)&&v[ky]>0)){S.investments={...v};break;}}
   }
-  const inv=S.investments,total=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
+  return S.investments;
+}
+function _renderInvInto(suffix){
+  // suffix = '' for pg-investments, '-2' for pg-accounts acct-invest tab
+  const s=suffix;
+  const inv=_getInvData(),total=PLATFORMS.reduce((acc,p)=>acc+(inv[p.key]||0),0);
   const cur=S.dashCurrency,m=S.expMonth,y=S.expYear;
-  document.getElementById('inv-total').innerHTML=`<div class="clabel">Total Portfolio — ${MONTHS[m-1]} ${y}</div><div class="cval">${total?fmtCur(total,cur==='NATIVE'?'NGN':cur,m,y):'—'}</div><div class="csub">${PLATFORMS.length} platforms</div>`;
-  document.getElementById('inv-platforms').innerHTML=PLATFORMS.map(p=>{
+  const elTotal=document.getElementById('inv-total'+s);
+  const elPlatforms=document.getElementById('inv-platforms'+s);
+  const elAlloc=document.getElementById('inv-alloc'+s);
+  const elAbar=document.getElementById('inv-abar'+s);
+  const elLegend=document.getElementById('inv-legend'+s);
+  const elEditLabel=document.getElementById('inv-edit-label'+s);
+  const elEditFields=document.getElementById('inv-edit-fields'+s);
+  if(elTotal) elTotal.innerHTML=`<div class="clabel">Total Portfolio — ${MONTHS[m-1]} ${y}</div><div class="cval">${total?fmtCur(total,cur==='NATIVE'?'NGN':cur,m,y):'—'}</div><div class="csub">${PLATFORMS.length} platforms</div>`;
+  if(elPlatforms) elPlatforms.innerHTML=PLATFORMS.map(p=>{
     const val=inv[p.key]||0;const pct=total>0?((val/total)*100).toFixed(1):'0.0';
     const dispVal=fmtPlatformVal(val,p.key,cur,m,y);
     const badge=`<span style="font-size:0.56rem;padding:1px 4px;border-radius:3px;background:var(--bg3);color:var(--text3);margin-left:4px">${p.currency}</span>`;
     return`<div class="prow" style="display:flex;align-items:center;gap:10px"><div style="flex-shrink:0">${platformLogoEl(p.key,p.color,26)}</div><div style="flex:1;min-width:0"><div class="pname">${p.label}${badge}</div><div class="ppct">${pct}%</div></div><div class="pval" style="color:${val?p.color:'var(--text3)'}">${val?dispVal:'—'}</div></div>`;
   }).join('');
   const active=PLATFORMS.filter(p=>inv[p.key]);
-  if(active.length&&total){document.getElementById('inv-alloc').style.display='block';document.getElementById('inv-abar').innerHTML=active.map(p=>`<div style="flex:${inv[p.key]};background:${p.color};opacity:0.82"></div>`).join('');document.getElementById('inv-legend').innerHTML=active.map(p=>`<div style="display:flex;align-items:center;gap:4px;font-size:0.62rem;color:var(--text2)"><div style="width:7px;height:7px;border-radius:2px;background:${p.color}"></div>${p.label}</div>`).join('');}
-  else document.getElementById('inv-alloc').style.display='none';
-  // Populate Edit tab
-  const editLabel=document.getElementById('inv-edit-label');
-  const editFields=document.getElementById('inv-edit-fields');
-  if(editLabel) editLabel.textContent=`${MONTHS[m-1]} ${y}`;
-  if(editFields) editFields.innerHTML=PLATFORMS.map(p=>`<div class="ig"><label class="ilabel" style="display:flex;align-items:center;gap:6px">${platformLogoEl(p.key,p.color,16)} ${p.label} (${p.currency==='NGN'?'₦ NGN':'NGN equiv.'})</label><input class="ifield" type="number" inputmode="decimal" id="inv-edit-${p.key}" placeholder="0" value="${inv[p.key]||''}"></div>`).join('');
+  if(elAlloc){
+    if(active.length&&total){
+      elAlloc.style.display='block';
+      if(elAbar) elAbar.innerHTML=active.map(p=>`<div style="flex:${inv[p.key]};background:${p.color};opacity:0.82"></div>`).join('');
+      if(elLegend) elLegend.innerHTML=active.map(p=>`<div style="display:flex;align-items:center;gap:4px;font-size:0.62rem;color:var(--text2)"><div style="width:7px;height:7px;border-radius:2px;background:${p.color}"></div>${p.label}</div>`).join('');
+    } else elAlloc.style.display='none';
+  }
+  if(elEditLabel) elEditLabel.textContent=`${MONTHS[m-1]} ${y}`;
+  if(elEditFields) elEditFields.innerHTML=PLATFORMS.map(p=>`<div class="ig"><label class="ilabel" style="display:flex;align-items:center;gap:6px">${platformLogoEl(p.key,p.color,16)} ${p.label} (${p.currency==='NGN'?'₦ NGN':'NGN equiv.'})</label><input class="ifield" type="number" inputmode="decimal" id="inv-edit-${p.key}${s}" placeholder="0" value="${inv[p.key]||''}"></div>`).join('');
+}
+function renderInvestments(){
+  _renderInvInto('');    // pg-investments page (legacy, may not be visible)
+  _renderInvInto('-2');  // acct-invest tab inside pg-accounts (the live one)
 }
 function invTab(tab,btn){
-  ['current','trend','edit'].forEach(t=>{const el=document.getElementById('inv-'+t);if(el)el.style.display=t===tab?'block':'none';});
+  // Handle both ID sets — whichever is in the DOM near this button
+  const tabs=['current','trend','edit'];
+  // Determine suffix from context
+  const inAccounts=btn.closest('#acct-invest')!=null;
+  const s=inAccounts?'-2':'';
+  tabs.forEach(t=>{const el=document.getElementById('inv-'+t+s);if(el)el.style.display=t===tab?'block':'none';});
   btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');
-  if(tab==='trend') renderInvTrend();
+  if(tab==='trend') renderInvTrend(s);
   if(tab==='edit') renderInvestments();
 }
-async function renderInvTrend(){
-  try{const snap=await db.collection('investments').orderBy('year').orderBy('month').get();const data=snap.docs.map(d=>{const s=d.data();return{label:`${MS[s.month-1]} '${String(s.year).slice(2)}`,total:PLATFORMS.reduce((sum,p)=>sum+(s[p.key]||0),0)};});if(S.invChart) S.invChart.destroy();const ctx=document.getElementById('inv-chart').getContext('2d');S.invChart=new Chart(ctx,{type:'line',data:{labels:data.map(d=>d.label),datasets:[{data:data.map(d=>d.total),borderColor:'#c8f542',backgroundColor:'rgba(200,245,66,0.06)',borderWidth:2,pointBackgroundColor:'#c8f542',pointRadius:3,tension:0.3,fill:true}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>fmtChartNGN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}}});}catch(e){}
+async function renderInvTrend(suffix){
+  const s=suffix||'';
+  try{const snap=await db.collection('investments').orderBy('year').orderBy('month').get();const data=snap.docs.map(d=>{const doc=d.data();return{label:`${MS[doc.month-1]} '${String(doc.year).slice(2)}`,total:PLATFORMS.reduce((sum,p)=>sum+(doc[p.key]||0),0)};});if(S.invChart) S.invChart.destroy();const chartEl=document.getElementById('inv-chart'+s)||document.getElementById('inv-chart');if(!chartEl)return;const ctx=chartEl.getContext('2d');S.invChart=new Chart(ctx,{type:'line',data:{labels:data.map(d=>d.label),datasets:[{data:data.map(d=>d.total),borderColor:'#c8f542',backgroundColor:'rgba(200,245,66,0.06)',borderWidth:2,pointBackgroundColor:'#c8f542',pointRadius:3,tension:0.3,fill:true}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>fmtChartNGN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}}});}catch(e){}
 }
 async function saveInvFromEdit(){
   if(S.saving) return;S.saving=true;setSyncStatus('syncing');
   const data={month:S.expMonth,year:S.expYear};
-  PLATFORMS.forEach(p=>{const el=document.getElementById('inv-edit-'+p.key);const v=el?parseFloat(el.value):NaN;data[p.key]=isNaN(v)?0:v;});
+  PLATFORMS.forEach(p=>{const el=document.getElementById('inv-edit-'+p.key+'-2')||document.getElementById('inv-edit-'+p.key);const v=el?parseFloat(el.value):NaN;data[p.key]=isNaN(v)?0:v;});
   S.investments=data;cSet(CK.inv(S.expMonth,S.expYear),data);
   renderInvestments();renderDashboard();
   try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});toast('Balances saved');haptic([8,40,8]);setSyncStatus('synced');}
@@ -3217,7 +3241,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.10.2</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.10.3</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
 }
 
