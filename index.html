@@ -298,7 +298,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.9.1</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.9.2</span>
     </div>
     <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" aria-label="Toggle theme">
       <div class="theme-btn-knob"></div>
@@ -2467,6 +2467,11 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
     <div class="exp-card">
+      <div class="exp-card-title" style="margin-bottom:6px">Debtors</div>
+      <div class="exp-card-sub" style="margin-bottom:10px">Track money owed to you across ${S.debtors.length} debtor${S.debtors.length===1?'':'s'}.</div>
+      <button class="btn btn-p btn-sm" onclick="navTo('debtors')">View Debtors →</button>
+    </div>
+    <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Firebase Sync Status</div>
       <div class="pjrow"><span class="pjlabel">Last sync</span><span class="pjval">${syncInfo}</span></div>
       <div class="pjrow"><span class="pjlabel">Seed version</span><span class="pjval" style="color:var(--accent)">${fbVer||'—'}</span></div>
@@ -2490,7 +2495,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.9.1</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.9.2</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
 }
 
