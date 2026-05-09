@@ -224,6 +224,13 @@ body.light .theme-icon-sun{opacity:1}
 /* ── ALERTS ── */
 .offl{display:none;position:fixed;top:var(--hh);left:0;right:0;background:var(--gdim);border-bottom:1px solid var(--gold);padding:6px;text-align:center;font-size:0.68rem;color:var(--gold);font-weight:600;z-index:99}
 
+/* ── FORMATTED NUMBER INPUT ── */
+.num-wrap{position:relative;display:flex;align-items:center}
+.num-wrap .ifield{padding-right:8px}
+.num-display{position:absolute;left:0;top:0;right:0;bottom:0;border-radius:var(--rsm);padding:10px 12px;font-size:0.82rem;font-family:var(--mono);color:var(--text);pointer-events:none;display:flex;align-items:center;background:transparent}
+/* ── CAT MANAGEMENT ── */
+.cat-manage-row{display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--border)}
+.cat-remove-btn{color:var(--red);cursor:pointer;font-size:0.9rem;flex-shrink:0;padding:0 4px;background:none;border:none;line-height:1}
 /* ── NOTIFICATION BELL ── */
 .notif-btn{position:relative;background:none;border:none;cursor:pointer;padding:6px;display:flex;align-items:center;justify-content:center;color:var(--text2);transition:color 0.18s;border-radius:var(--rsm)}
 .notif-btn:hover{color:var(--text);background:var(--bg2)}
@@ -273,7 +280,8 @@ body.light .theme-icon-sun{opacity:1}
 .alert-title{font-weight:700;margin-bottom:2px}
 .alert-sub{opacity:0.85}
 .collapsible-hdr{display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none}
-.collapsible-hdr .chevron{font-size:1rem;color:var(--text3);transition:transform 0.25s;line-height:1}
+.collapsible-hdr .chevron{display:inline-flex;align-items:center;color:var(--text3);transition:transform 0.25s;flex-shrink:0}
+.collapsible-hdr .chevron svg{display:block}
 .collapsible-hdr.open .chevron{transform:rotate(180deg)}
 
 /* ── NET WORTH VALUE ── */
@@ -341,7 +349,7 @@ datalist option{background:var(--bg2);color:var(--text)}
 <body>
 <div class="offl" id="offl">⚡ Offline — showing cached data</div>
 <header class="hdr">
-  <div class="hdr-logo">
+  <div class="hdr-logo" onclick="navTo('dashboard')" style="cursor:pointer">
     <div class="hdr-mark"><img src="data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCABxAHEDASIAAhEBAxEB/8QAHAAAAAcBAQAAAAAAAAAAAAAAAAIDBAUGBwEI/8QARxAAAQMCAgcEBAwDBQkAAAAAAQIDBAARBQYHEiExQVFhEyJxkRSBobEVIyQyM1JTYpKT0eFyssEIF0NUZEJEY3OChKLw8f/EABsBAAEFAQEAAAAAAAAAAAAAAAQAAgMFBgEH/8QANREAAQMCBAIIBQIHAAAAAAAAAQACAwQRBRIhMUFRBhMUImFxkbEVgaHB4SMyFiVSU2LR8P/aAAwDAQACEQMRAD8A8ZVasq5NlYshMqWtUWIdqdnfX4A7h1rmj/AUYrNVLlo1okcjunc4vkeltp9VanrUdS0oeMztlm8Yxh0Dupg/dxPL8qPwvL+CYcE+jYez2iR9I4Ndfjc7vVapZtwtp1WyUDkk2puV0UuVaNa1osAsfIZJjeQknx1Tz0h230i/xGuekOfaL/EaZlzrRe06126YIQnwkOfaL/EaUEhz7Rf4qjQ7bjRg8OdK64YQpHt3PtV/iNdEhz7RX4jUf2vWjB3rXbpph8E+U4VpstRUORN6jcRwPBcSv6Zhsdw2trhOqr8QsfbThLnWlELrhAdoQkwviN2Eg+GizXNeQXobS5mDLclMpBK2VC7iR0t84e3xqjV6HSsjcazXSll1uOsY5CRZDq7SUAbEqO5fr236+NVtVSBozsWuwXG3yPEFQbk7H7FUKhQoVXLWLY8rxU4dgEONYBfZhbn8Su8ffb1VIKdpvIUG33GgdiFFI9RpIu1ftAaAF5s8GVxkO519U6LlTWV8s4tmFSlRG0txkGy5DpsgHkOKj0FIZFwNeYscTFUVIitDtJKxvCL7h1J2f/K3OOhiNGbjRWUMsNJ1W20CwSKnjZm1KzeN4z2A9TELvPoPyqfA0aYM0gemzZcpzjqENp8tp9tOV6Ossk7ETR/3H7VaNe+yu97kanyN5LGPxevcbmU+3sqr/dzlnlN/P/auDRzlr/Xfn/tVr73I0Lq5GlkbyXPi1d/ed6qqnR1lv/Xfn/tXP7vMuA7DN/P/AGq1FSuRprOmxYTCn5klmM0naVurCR7a5lbyTm4nXuNhK4nzVOzLkzAsNwGXOZelNOMN6yStwKBPK1uO6s9QvrU1n3OqMecGHYWpXwe0vWW4RbtlDdYfVHtqspcodzhfRbzCaWrZT3qiS462O4CkkrvSOIx0Yhh0mAsAiQ0pvbwJGw+o2Pqpul7rSrT1nE7eIpp1Fij8jmHMNwsS+D5f2KqFa18ExunlQqr7GVrv4hH9KJOX8tf2/wCIr30hr9aTmufLH9v+Ir30lr9aPuqhkfdC27Q7DRGyoqbb42Y+ok/dR3QPPWq561zYVUNFr6XMiYeEn5hdQrx7RR/qKtLbllDbxo5n7QvI8XzPrpi7fMfobD6LENLGkPFpWNScEwOWuJBjLLTrrKrLeWNiu9vCQdmzfas57bEVEkz5ZvtN3lfrUhmKC7huYsRhSAQ61JXe/G6iQfWCD66aC1Vry5ziSvY8NpKakpmMgaLWGvPxPmkw5P3+nSvzlfrR0uT+M6V+cr9aPejpIptkYSOSKlU//PSvzlfrSzbTjqkqkPOO6u7XUVW86OylTi0ttoUtajZKUi5J5AVdcvaOMxYiEOym0YawrbrSPnkdEDb52qRrC7ZAVlfBSNzTODf+4cT8lW2FhCQOFOEu3Gw1smXdH+XMJUh15pWIyE7deT80HogbPO9ZXn1xBzvi6W0pbSmSUhKRYCwHCpnMLBcqiocYgxGodFCDYC9zpxA2TJLppVtzvp28RTBK6VbV307eNNurN0ad9p1oU21zQpibkUXMV8rf/wCYr30jr1yWr5U9/Gr30gVU0lWrGd0LVdCOOIHpeAvLAUpXpEcE79llj2A+dacV15djTJEKWzMiOqakMrC21p3gittyNnnD8xsIYeW3FxNIsthRsF/eRzHTeKJhlFspWD6TYHI2U1cQu07+B5+R909znkvCMzqEh8rizkJ1UyWgCSOAUD84eR61TDohf1jbMDNuF4xv/NWoFdq6HOFSOiY43IVLSY1X0kYjik7o4EA29QVlqtEUpIJRj8cnheOr9area8l4tlphMqW7FfjKUEBxpzcTuBSbHyvWt5tzXhWWonbYg9rPKHxUdBu44eg4DqdlYVmjM2I5mxP02eoIbRcMMJPcaT05nmaHlEbNButfgFTi9c/rJSOr5kDXytb12TZLqkEKQpSFg3SpJsQeYNbdoeezVIwhc3Hpy3obgAhIeTd0jivW36vAXvffu30/RrkNeIFrGMeZU3CFlMRliyn+RVyR7/CtNzNj0HLuDuYjNUEtoGq02mwLirbEJH/thT4WEd87IPpLiEdURQ07Q95O9r2PJvjzPy8p9C7r1eO+vPGcndfOuNm9/lrg8lW/pTXDs94+znJeZHXi6XiEuxdazamhuQOVuB57eJptjE1E7Gp05tBQiTIcdSlW8BSiRfrtpskwkGiMwTo/Nhc7nSEEOaNuBvqPzxRkrpZpffSOtMEudaVaX30nqKjBWhdGnmuedCm/aUKbdR5FGzFfKnv41e+kCqhLX8pdP3z76RKqaSrRjdAlFKpu6O8FJJCgbgg7Qa6pdEUqmlTNFlYMNz/m/DkBtGKGS0nYEyUBzZ4nb7acTdKGb5TRabfixb7CplgBXmom1VZpp2Q8lmO0486s2ShCSpSj0Aq/ZY0XYhLCJONvfB7B29iiynj48E+u56U5vWO0aVU10WEUn6tRGwHyFz8uKpERnFMcxXUQmViM989VrV1J5ewVsGQ9HEXCy3iGO9nLmpspEcd5po9frq9g61Pxmst5KwsqQI2GxyO+44rvu+JO1R6DyqgZw0suLUqLlhooSRYzHk97/pTw8T5VMGMi1eblZ+fEMQxo9TQMyR7Ztvrw8hcrRM45ywrLMYrnuF2UsXajNn4xfU/VHU+2stw/C8zaUZ0zFDOhstRFJQhh1agloKuQEgA8tpO+qE+8/Mkrly33JD7hutxxRUpR6k1sP9nlwIw7GbfbM3/CquCQzPDTsppsLb0fw99RBrLpqRtcgEAcPf2UVL0V49ChvSlT8MUhhpTigla7kJFza6elUdCxa4416Sx54fAOI3/yjv8AIa8ysrugeFKZgYRZS9G8SqcRjkdOR3SLWFt7p4lVLNK76fGmaF0s0vvp8RUYK0Lmp3ehRNYUKaoMqipCwp9wjcVEikVKpKM6HYrTvFSRfxGw+2uqNNvcXVoGZdOS6pVXfJ2jvEMXbRMxRa8PhK2oTq/HOjmAfmjqfI0TRzAwmJAlZtx4pMWE4G47ZF9d21724kXFhz28Kjc36Qcbx1xbMd1cCCdgbaVZax95W8+A2VIA1ozO9FT1M1ZVSup6OzQ3RzzwPIDiefJaSrGckZEZXGjqZRJAstDA7WQv+JXDwJA6VSsf0s4pIUtrBozcFo7nHbLcI523D21nYRc3NbXogiwXMlNrfgxHXPSHbrcZSpR2jeSKc2R8hyt0CrazDKLCou1VDTM8kDvH7a/W6xyfOm4pJMjEJj0t0/7bqyo+rkK2bQGptOU5yC2i5mm6tUXPcTS+lCPAbyJiJZgRELHZlKkMJSpJ7RO4gbONR2hB3s8sSxfaZhP/AIJrsbOrlAJuoMUxBuJYM57GZAHAW8rHw5q45+W2nI+NDUQSYi96apf9n9zVw/GL8XWvcqrNnp4LyZjAJ3xV1TdBbmrCxYf8Rr3KqV5/Waqeji/kdQP8m+7VpuPPXwLERf8A3R3+Q15uYPcHhXoDG374NPF73iu/yGvPjRskeFMqTqFcdD48sUvmPunSTSzSu+nxFNEmlQ4G0qeVubBWfVtoe61jmpx6U39ahVM9Me+tQoXtKM+G+KdYNKCFGO4bJUbpPI8qkze9VqpKHiRSkNyLq5LG/wBfOmQygDK5FTwEnM1Tr2IPLwJvCSPim5JkJN+JSAQfL31H6tHQtDou0tKx900Ck8jRV7oJjQy4AsiWq1ZZz3NwDCU4axAYfbStSwpayDt4bKq5SeRopQeRrrXObqFHUU0NUzJM24VuzBpBnYzgsjC3cOjtIf1dZaVqJFlA7PKmmU84y8uQHYbMNmQhxztAVqIINgLbPCq4EH6td7MnhSzvve+qgGGUbYTAGDKTe2u/qrfi2kOfimGyYDmGxm25DZQpQWokX4io/KebJOW2ZLUeIy+JCkqJWogpIvy8agNQ8jRgg8Qa7ncTe+qTcNo2xGEM7p1I1/2rpJ0j4jKhvRjhsZsvNqQVBajYEWqoJ2C1JhJ5GjKUGxdxSUDmo2pF5Ork6nooKYEQNtdKpJphjssJa9EbV3lbXbcBwH9fKk5eKBKSiLcq+0I3eA/rUSSSSSSSdpJoWaYWytVlT0xvmcuUKFChFYIUKFCkkjs/SCp6H9GKFCiafdB1eyWrh30KFFIBd4100KFJdQG+jUKFJNST/wBEar8r6ZVChQ1QjqPikqFChQqOQoUKFJJf/9k=" width="30" height="30" style="border-radius:8px;object-fit:cover" alt="SpendWise"></div>
     <div class="hdr-name">SpendWise</div>
   </div>
@@ -349,7 +357,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.9.9</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.10.2</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -420,7 +428,7 @@ datalist option{background:var(--bg2);color:var(--text)}
           <div style="font-size:0.82rem;font-weight:700">Recent Transactions</div>
           <div style="display:flex;align-items:center;gap:16px">
             <span class="sh-link" onclick="event.stopPropagation();navTo('expenses')" style="font-size:0.66rem">View all →</span>
-            <span class="chevron">⌃</span>
+            <span class="chevron"><svg width="20" height="12" viewBox="0 0 20 12" fill="none"><polyline points="2,2 10,10 18,2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
           </div>
         </div>
         <div id="dash-recent" style="margin-top:8px"></div>
@@ -435,7 +443,7 @@ datalist option{background:var(--bg2);color:var(--text)}
           </div>
           <div style="display:flex;align-items:center;gap:16px">
             <span class="sh-link" onclick="event.stopPropagation();drillDown('budget')" style="font-size:0.66rem">Details ›</span>
-            <span class="chevron">⌃</span>
+            <span class="chevron"><svg width="20" height="12" viewBox="0 0 20 12" fill="none"><polyline points="2,2 10,10 18,2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
           </div>
         </div>
         <div id="dash-cats" style="margin-top:8px"></div>
@@ -479,7 +487,7 @@ datalist option{background:var(--bg2);color:var(--text)}
           </div>
           <div style="display:flex;align-items:center;gap:20px">
             <span class="sh-link" onclick="event.stopPropagation();navTo('accounts')" style="font-size:0.66rem">Manage →</span>
-            <span class="chevron">⌃</span>
+            <span class="chevron"><svg width="20" height="12" viewBox="0 0 20 12" fill="none"><polyline points="2,2 10,10 18,2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
           </div>
         </div>
         <div id="dash-cash-body" style="margin-top:10px"></div>
@@ -494,7 +502,7 @@ datalist option{background:var(--bg2);color:var(--text)}
           </div>
           <div style="display:flex;align-items:center;gap:20px">
             <span class="sh-link" onclick="event.stopPropagation();navTo('accounts')" style="font-size:0.66rem">Manage →</span>
-            <span class="chevron">⌃</span>
+            <span class="chevron"><svg width="20" height="12" viewBox="0 0 20 12" fill="none"><polyline points="2,2 10,10 18,2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
           </div>
         </div>
         <div id="dash-inv-body" style="margin-top:10px">
@@ -859,7 +867,13 @@ const CAT_LINES = {
   'Work Travel': ['Home-MMIA','MMIA - Home','Westgate','Westgate - RB','LC Waikiki','RB - The View','Java House','RB - Westgate (Jen)','RB - Pizza Garden (all)','Pizza Garden (All)','Mall to RB (FJ)','RB to Mercure (JO)','RB to Riverside (JO)','Radisson - Address (All)','Address -Radisson (All)','Riverside - Marriot (All)'],
   'Education': ['Tuition','School fees'],
 };
-const CATS = Object.keys(CAT_LINES);
+const _BASE_CATS = Object.keys(CAT_LINES);
+// getCustomCats is safe to call any time — reads localStorage directly, no dependency on cGet/S
+function getCustomCats(){try{const v=localStorage.getItem('sw3_custom_cats');return v?JSON.parse(v):[];}catch{return[];}}
+function saveCustomCats(arr){try{localStorage.setItem('sw3_custom_cats',JSON.stringify(arr));}catch{}}
+function getAllCats(){return[..._BASE_CATS,...getCustomCats().filter(c=>!_BASE_CATS.includes(c))];}
+// CATS: evaluated lazily after full script init via getter so cGet is always available
+const CATS = _BASE_CATS; // static fallback — always use getAllCats() in render functions
 
 // ── ICONS ──────────────────────────────────────────────────────────────────
 const CAT_ICONS = {
@@ -1113,6 +1127,40 @@ function loadFromCache(){
 const sid=(m,y)=>`${y}-${String(m).padStart(2,'0')}`;
 const fxKey=(m,y)=>`${y}-${String(m).padStart(2,'0')}`;
 const fN=n=>n==null||isNaN(n)?'—':'₦'+Number(n).toLocaleString('en-NG',{maximumFractionDigits:0});
+// ── NUMBER INPUT FORMATTING ──────────────────────────────────────────────
+function fmtThousands(v){
+  if(v===''||v===null||v===undefined) return '';
+  const n=Number(String(v).replace(/,/g,''));
+  if(isNaN(n)) return v;
+  return n.toLocaleString('en-NG',{maximumFractionDigits:0});
+}
+function _syncNumDisplay(input){
+  const wrap=input.closest('.num-wrap');
+  if(!wrap) return;
+  let disp=wrap.querySelector('.num-display');
+  const raw=input.value.replace(/,/g,'');
+  if(disp) disp.textContent=raw?fmtThousands(raw):'';
+}
+function _makeNumInput(el){
+  // Wrap existing input in num-wrap if not already
+  if(el.closest('.num-wrap')) return;
+  const wrap=document.createElement('div');wrap.className='num-wrap';
+  el.parentNode.insertBefore(wrap,el);wrap.appendChild(el);
+  const disp=document.createElement('div');disp.className='num-display';
+  disp.textContent='';wrap.appendChild(disp);
+  el.style.color='transparent';el.style.caretColor='var(--text)';
+  el.addEventListener('input',()=>_syncNumDisplay(el));
+  el.addEventListener('focus',()=>{if(disp)disp.style.opacity='0.4';});
+  el.addEventListener('blur',()=>{if(disp)disp.style.opacity='1';});
+  _syncNumDisplay(el);
+}
+function initNumInputs(scope){
+  (scope||document).querySelectorAll('input[type="number"],input[inputmode="decimal"],input[inputmode="numeric"]').forEach(el=>{
+    if(!el.closest('.num-wrap')) _makeNumInput(el);
+    else _syncNumDisplay(el);
+  });
+}
+
 function fmtChartNGN(v){if(Math.abs(v)>=1e6)return'₦'+(v/1e6).toFixed(2)+'M';if(Math.abs(v)>=1e3)return'₦'+(v/1e3).toFixed(1)+'K';return'₦'+v.toFixed(0);}
 function fmtChartUSD(v){if(Math.abs(v)>=1e3)return'$'+(v/1e3).toFixed(2)+'K';return'$'+v.toFixed(2);}
 function fmtChartMoney(v){return fmtChartNGN(v);}
@@ -1228,20 +1276,21 @@ async function loadIncome(m,y){
 }
 
 async function loadInvData(m,y){
-  // Local always wins
+  // Local always wins — always assign regardless of expMonth match
   const local=cGet(CK.inv(m,y));
-  if(local&&Object.keys(local).length>2){
-    if(S.expMonth===m&&S.expYear===y) S.investments=local;
+  if(local&&Object.keys(local).some(k=>!['month','year'].includes(k)&&local[k]>0)){
+    S.investments={...local};
     return;
   }
   // Nothing local — pull from Firebase
   try{
     const doc=await db.collection('investments').doc(sid(m,y)).get();
-    if(doc.exists&&doc.data()&&Object.keys(doc.data()).length>2){
-      S.investments=doc.data();cSet(CK.inv(m,y),S.investments);return;
+    if(doc.exists&&doc.data()){
+      S.investments={...doc.data()};cSet(CK.inv(m,y),S.investments);return;
     }
+    // Fallback: most recent entry
     const snap=await db.collection('investments').orderBy('year','desc').orderBy('month','desc').limit(1).get();
-    if(!snap.empty){S.investments=snap.docs[0].data();cSet(CK.inv(m,y),S.investments);}
+    if(!snap.empty){S.investments={...snap.docs[0].data()};cSet(CK.inv(m,y),S.investments);}
   }catch(e){}
 }
 
@@ -1508,7 +1557,7 @@ function renderDashboard(){
     <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('expenses')"><div class="clabel">Spent ›</div><div class="cval-sm">${fmtCur(spent,cur,m,y)}${momBadge(spent,prevSpent,true)}</div><div class="prog"><div class="pf ${st}" style="width:${budgTotal?Math.min(spent/budgTotal*100,100):0}%"></div></div><div class="csub">${fmtCur(budgTotal-spent,cur,m,y)} left</div></div>
     <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('income')"><div class="clabel">Income ›</div><div class="cval-sm" style="color:var(--accent)">${fmtCur(incomeDisplay,cur,m,y)}${momBadge(incomeDisplay,prevIncAmt,false)}</div><div class="csub">This month</div></div>
     <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('cash')"><div class="clabel">Cash ›</div><div class="cval-sm">${cashTotal?fmtCur(cashTotal,cur,m,y):'—'}</div><div class="csub">All accounts</div></div>
-    <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Portfolio</div><div class="cval-sm">${invTotal?fmtCur(invTotal,cur,m,y):'—'}</div><div class="csub">All platforms</div></div>
+    <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Investments</div><div class="cval-sm">${invTotal?fmtCur(invTotal,cur,m,y):'—'}</div><div class="csub">All platforms</div></div>
   `;
 
   // Category spend
@@ -1747,6 +1796,9 @@ function toggleDashEdit(){
   if(_dashEditMode){
     if(!doneBar){
       doneBar=document.createElement('div');
+      // Allow handles to protrude left
+      const container2=document.getElementById('dash-cards-container');
+      if(container2) container2.style.paddingLeft='32px';
       doneBar.id='dash-done-bar';
       doneBar.style.cssText='position:fixed;bottom:calc(var(--nh) + 10px);left:50%;transform:translateX(-50%);z-index:150;background:var(--accent);color:#fff;font-weight:700;font-size:0.78rem;padding:10px 28px;border-radius:24px;box-shadow:0 4px 16px rgba(20,184,166,0.4);cursor:pointer;letter-spacing:0.02em';
       doneBar.textContent='✓ Done Reordering';
@@ -1756,6 +1808,8 @@ function toggleDashEdit(){
     doneBar.style.display='block';
   } else {
     if(doneBar) doneBar.style.display='none';
+    const _cont=document.getElementById('dash-cards-container');
+    if(_cont) _cont.style.paddingLeft='';
   }
   const rail=document.getElementById('dash-scroll-rail');
   if(rail){rail.classList.toggle('visible',_dashEditMode);}
@@ -1769,14 +1823,16 @@ function toggleDashEdit(){
       if(!existingHandle){
         const handle=document.createElement('div');
         handle.className='reorder-handle';
-        handle.innerHTML=`<span style="font-size:0.62rem;color:var(--text3);font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-right:4px">${DASH_CARD_LABELS[cardId]||cardId}</span>⠿`;
-        handle.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:6px 4px 2px;cursor:grab;user-select:none';
-        wrap.insertBefore(handle, wrap.firstChild);
-        // Touch drag
-        handle.addEventListener('touchstart', e=>_dragStart(e, wrap), {passive:true});
-        handle.addEventListener('touchmove', e=>_dragTouchMove(e, wrap), {passive:false});
-        handle.addEventListener('touchend', e=>_dragTouchEnd(e, wrap));
-        // Mouse drag
+        handle.innerHTML='⠿⠿';
+        handle.title=DASH_CARD_LABELS[cardId]||cardId;
+        handle.style.cssText='position:absolute;left:-28px;top:50%;transform:translateY(-50%);width:24px;height:40px;display:flex;align-items:center;justify-content:center;background:var(--bg2);border:1px solid var(--border);border-radius:6px;cursor:grab;user-select:none;font-size:0.75rem;color:var(--text3);letter-spacing:-2px;z-index:10';
+        wrap.style.position='relative';
+        wrap.appendChild(handle);
+        // Touch drag on handle only
+        handle.addEventListener('touchstart', e=>{e.stopPropagation();_dragStart(e, wrap);}, {passive:true});
+        handle.addEventListener('touchmove', e=>{e.stopPropagation();_dragTouchMove(e, wrap);}, {passive:false});
+        handle.addEventListener('touchend', e=>{e.stopPropagation();_dragTouchEnd(e, wrap);});
+        // Mouse drag on whole wrap
         wrap.setAttribute('draggable','true');
         wrap.addEventListener('dragstart', e=>_mouseDragStart(e, wrap));
         wrap.addEventListener('dragover', e=>_mouseDragOver(e, wrap));
@@ -1996,24 +2052,30 @@ function setChartType(type,btn){
 }
 
 function renderCatChart(catSpend,cur,m,y){
-  const canvas=document.getElementById('cat-chart');
+  let canvas=document.getElementById('cat-chart');
   const btns=document.getElementById('chart-btns');
-  canvas.style.display='block';btns.style.display='flex';
+  if(!canvas||!canvas.parentNode) return;
   const entries=Object.entries(catSpend).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
+  btns.style.display='flex';
   if(!entries.length){canvas.style.display='none';return;}
-  if(S.catChart){S.catChart.destroy();S.catChart=null;}
-  // Reset canvas to clear any stale render
-  const newCanvas=document.createElement('canvas');newCanvas.id='cat-chart';newCanvas.style.maxHeight='220px';canvas.parentNode.replaceChild(newCanvas,canvas);const ctx2=newCanvas.getContext('2d');newCanvas.style.cursor='pointer';newCanvas.onclick=(e)=>{const pts=S.catChart?S.catChart.getElementsAtEventForMode(e,'nearest',{intersect:true},false):[];if(!pts.length)return;const cat=labels[pts[0].index];if(cat){haptic([10]);openCatPopup(cat,S.txns.filter(t=>t.category===cat),S.dashCurrency,m,y);}};
+  canvas.style.display='block';
+  // Destroy old chart instance cleanly
+  if(S.catChart){try{S.catChart.destroy();}catch(e){}S.catChart=null;}
+  // Replace canvas node to avoid Chart.js reuse errors
+  const newCanvas=document.createElement('canvas');
+  newCanvas.id='cat-chart';
+  newCanvas.style.cssText='max-height:220px;cursor:pointer;display:block';
+  canvas.parentNode.replaceChild(newCanvas,canvas);
+  canvas=newCanvas; // update local reference
+  const ctx=canvas.getContext('2d');
   const labels=entries.map(([k])=>k);
   const data=entries.map(([,v])=>v);
   const colors=labels.map((_,i)=>CAT_COLORS[i%CAT_COLORS.length]);
-  const ctx=ctx2;
 
   // Chart click: open category breakdown popup
   const onChartClick=(_evt,elements)=>{
     if(!elements.length) return;
-    const idx=elements[0].index;
-    const cat=labels[idx];
+    const cat=labels[elements[0].index];
     if(!cat) return;
     haptic([10]);
     openCatPopup(cat, S.txns.filter(t=>t.category===cat), S.dashCurrency, m, y);
@@ -2038,13 +2100,11 @@ function renderCatChart(catSpend,cur,m,y){
     }
   };
 
-  // canvas click/cursor set on creation above
-
   if(S.chartType==='hbar'){
-    canvas.style.maxHeight='280px';
+    canvas.style.cssText='max-height:280px;cursor:pointer;display:block';
     S.catChart=new Chart(ctx,{type:'bar',data:{labels,datasets:[{data,backgroundColor:colors,borderWidth:0,borderRadius:3}]},options:{...commonOpts,indexAxis:'y',plugins:{...commonOpts.plugins,legend:{display:false}},scales:{x:{display:false,grid:{display:false}},y:{grid:{display:false},ticks:{color:'#8888bb',font:{family:'DM Mono',size:9}},border:{display:false}}}}});
   } else {
-    canvas.style.maxHeight='220px';
+    canvas.style.cssText='max-height:220px;cursor:pointer;display:block';
     S.catChart=new Chart(ctx,{type:S.chartType==='bar'?'bar':S.chartType,data:{labels,datasets:[{data,backgroundColor:colors,borderWidth:0,borderRadius:S.chartType==='bar'?4:0}]},options:{...commonOpts,scales:S.chartType==='bar'?{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}:{}}});
   }
 }
@@ -2287,7 +2347,7 @@ function handlePayeeSel(){
 function openExpModal(type){
   type=type||'expense';_txnType=type;
   const catSel=document.getElementById('e-cat');
-  catSel.innerHTML=CATS.map(c=>`<option value="${c}">${CAT_ICONS[c]||''} ${c}</option>`).join('');
+  catSel.innerHTML=getAllCats().map(c=>`<option value="${c}">${CAT_ICONS[c]||''} ${c}</option>`).join('');
   const bankOpts=getCashAccounts().map(a=>`<option>${a}</option>`).join('');
   document.getElementById('e-bank').innerHTML=bankOpts;
   const ib2=document.getElementById('i-bank2');if(ib2)ib2.innerHTML=bankOpts;
@@ -2304,7 +2364,7 @@ function openExpModal(type){
   const hint=document.getElementById('e-autocat-hint');if(hint)hint.textContent='';
   setTxnType(type);updateExpenseLines();
   openMod('exp-modal');
-  setTimeout(()=>document.getElementById('e-amt').focus(),300);
+  setTimeout(()=>{initNumInputs(document.getElementById('exp-modal'));document.getElementById('e-amt').focus();},80);
 }
 function openEditExp(id){
   const tx=S.txns.find(t=>t.id===id);if(!tx)return;
@@ -2417,10 +2477,14 @@ async function saveIncome(){
 // INVESTMENTS
 // ══════════════════════════════════════════════════════════════════════════
 function renderInvestments(){
-  // Ensure investments are loaded for the current month
-  if(!S.investments||!Object.keys(S.investments).length){
-    const cached=cGet(CK.inv(S.expMonth,S.expYear));
-    if(cached) S.investments={...cached};
+  // Always refresh from cache for current expMonth
+  const _cached=cGet(CK.inv(S.expMonth,S.expYear));
+  if(_cached&&Object.keys(_cached).some(k=>!['month','year'].includes(k)&&_cached[k]>0)){
+    S.investments={..._cached};
+  } else if(!S.investments||!Object.keys(S.investments).filter(k=>!['month','year'].includes(k)).length){
+    // Try the nearest loaded month from any cache
+    const allCacheKeys=Object.keys(localStorage).filter(k=>k.startsWith('sw3_inv_'));
+    for(const k of allCacheKeys){const v=cGet(k);if(v&&Object.keys(v).some(ky=>!['month','year'].includes(ky)&&v[ky]>0)){S.investments={...v};break;}}
   }
   const inv=S.investments,total=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
   const cur=S.dashCurrency,m=S.expMonth,y=S.expYear;
@@ -2992,7 +3056,7 @@ async function _loadHistDetail(d, el){
 // ══════════════════════════════════════════════════════════════════════════
 // SETTINGS
 // ══════════════════════════════════════════════════════════════════════════
-function renderSettings(){renderSettData();renderSettBudget();renderSettExport();}
+function renderSettings(){renderSettData();renderSettBudget();renderSettExport();setTimeout(()=>initNumInputs(document.getElementById('pg-settings')),0);}
 function settTab(tab,btn){['data','budget','export'].forEach(t=>{document.getElementById('sett-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
 function renderSettBudget(){
   const total=Object.values(S.budgets).reduce((s,v)=>s+(v||0),0);
@@ -3005,11 +3069,19 @@ function renderSettBudget(){
       <div style="font-size:0.68rem;color:var(--text2)">Budget for ${MONTHS[S.expMonth-1]} ${S.expYear}</div>
       ${hasPrevBudget?`<button class="btn btn-g btn-sm" onclick="copyLastBudget()">↩ Copy budget ${MS[prevM-1]}</button>`:''}
     </div>
-    ${CATS.map(c=>{const k=ck(c);const prevSpend=prevCatSpend[c]||0;return`<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:0.72rem;color:var(--text2)">${CAT_ICONS[c]||''} ${c}</span>${prevSpend?`<span style="font-size:0.58rem;color:var(--text3);font-family:var(--mono);cursor:pointer;white-space:nowrap" onclick="document.getElementById('b-${k}').value=${prevSpend};updateBudgetTotal()" title="Copy last month actual">↩${fN(prevSpend).replace('₦','')}</span>`:'<span style="width:32px"></span>'}<input class="ifield" type="number" inputmode="decimal" id="b-${k}" placeholder="0" value="${S.budgets[k]||''}" style="width:100px;flex-shrink:0;font-size:0.76rem;padding:5px 8px" oninput="updateBudgetTotal()"></div>`;}).join('')}
+    ${getAllCats().map(c=>{const k=ck(c);const prevSpend=prevCatSpend[c]||0;return`<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:0.72rem;color:var(--text2)">${CAT_ICONS[c]||''} ${c}</span>${prevSpend?`<span style="font-size:0.58rem;color:var(--text3);font-family:var(--mono);cursor:pointer;white-space:nowrap" onclick="document.getElementById('b-${k}').value=${prevSpend};updateBudgetTotal()" title="Copy last month actual">↩${fN(prevSpend).replace('₦','')}</span>`:'<span style="width:32px"></span>'}<input class="ifield" type="number" inputmode="decimal" id="b-${k}" placeholder="0" value="${S.budgets[k]||''}" style="width:100px;flex-shrink:0;font-size:0.76rem;padding:5px 8px" oninput="updateBudgetTotal()"></div>`;}).join('')}
     <div style="display:flex;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);margin-bottom:12px;font-weight:700;font-size:0.84rem"><span>Total</span><span id="budget-total-display" style="font-family:var(--mono);color:var(--accent)">${fN(total)}</span></div>
-    <div style="display:flex;gap:8px;margin-bottom:4px">
+    <div style="display:flex;gap:8px;margin-bottom:16px">
       <button class="btn btn-g btn-sm" onclick="copyActualSpend()">↩ Copy all actual spend</button>
       <button class="btn btn-p" style="flex:1" onclick="saveBudget()">Save Budget</button>
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:14px">
+      <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.06em">Manage Categories</div>
+      ${getAllCats().map((c,i)=>{const isCustom=!_BASE_CATS.includes(c);return`<div class="cat-manage-row"><span style="font-size:0.72rem;flex:1">${CAT_ICONS[c]||'📦'} ${c}</span>${isCustom?`<button class="cat-remove-btn" onclick="removeCustomCat('${c.replace(/'/g,"\\'")}')" title="Remove category">×</button>`:''}</div>`;}).join('')}
+      <div style="display:flex;gap:6px;margin-top:10px">
+        <input class="ifield" id="new-cat-input" placeholder="New category name" style="flex:1;font-size:0.76rem;padding:6px 10px">
+        <button class="btn btn-p btn-sm" onclick="addCustomCat()">+ Add</button>
+      </div>
     </div>`;
 }
 function copyLastBudget(){
@@ -3019,8 +3091,28 @@ function copyLastBudget(){
   CATS.forEach(c=>{const k=ck(c);const el=document.getElementById('b-'+k);if(el)el.value=prev[k]||'';});
   toast(`Copied from ${MONTHS[prevM-1]} — remember to save`);
 }
-async function updateBudgetTotal(){
-  const total=CATS.reduce((s,c)=>{const v=parseFloat(document.getElementById('b-'+ck(c))?.value)||0;return s+v;},0);
+function addCustomCat(){
+  const input=document.getElementById('new-cat-input');
+  if(!input) return;
+  const name=input.value.trim();
+  if(!name){toast('Enter a category name');return;}
+  if(getAllCats().map(c=>c.toLowerCase()).includes(name.toLowerCase())){toast('Category already exists');return;}
+  const cats=getCustomCats();cats.push(name);saveCustomCats(cats);
+  input.value='';
+  // Refresh expense modal cat select if open
+  const catSel=document.getElementById('e-cat');
+  if(catSel) catSel.innerHTML=getAllCats().map(c=>`<option value="${c}">${CAT_ICONS[c]||''} ${c}</option>`).join('');
+  renderSettBudget();toast('Category added: '+name);
+}
+function removeCustomCat(name){
+  if(!confirm('Remove category "'+name+'"? This will not delete past transactions.')) return;
+  const cats=getCustomCats().filter(c=>c!==name);saveCustomCats(cats);
+  const catSel=document.getElementById('e-cat');
+  if(catSel) catSel.innerHTML=getAllCats().map(c=>`<option value="${c}">${CAT_ICONS[c]||''} ${c}</option>`).join('');
+  renderSettBudget();toast('Category removed');
+}
+function updateBudgetTotal(){
+  const total=getAllCats().reduce((s,c)=>{const v=parseFloat(document.getElementById('b-'+ck(c))?.value)||0;return s+v;},0);
   const el=document.getElementById('budget-total-display');
   if(el) el.textContent=fN(total);
 }
@@ -3125,7 +3217,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.9.9</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.10.2</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
 }
 
