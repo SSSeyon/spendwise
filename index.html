@@ -138,6 +138,8 @@ body.light .theme-icon-sun{opacity:1}
 .txi-meta{font-size:0.63rem;color:var(--text2);font-family:var(--mono);margin-top:1px}
 .txi-amt{font-family:var(--mono);font-size:0.82rem;font-weight:500}
 .txi-exp{color:var(--red)}.txi-inc{color:var(--accent)}
+.txi-edit{background:none;border:none;color:var(--text3);cursor:pointer;font-size:0.9rem;padding:2px 5px;transition:color 0.15s}
+.txi-edit:hover{color:var(--accent)}
 .txi-del{background:none;border:none;color:var(--text3);cursor:pointer;font-size:0.9rem;padding:2px 5px;transition:color 0.12s}
 .txi-del:hover{color:var(--red)}
 
@@ -357,7 +359,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.10.5</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.10.7</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -2155,9 +2157,10 @@ function renderExpenses(){
           <div class="txi-cat" style="font-size:0.76rem">${tx.payee||'—'}</div>
           <div class="txi-meta">${tx.date} · ${tx.bank||''}</div>
         </div>
-        <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
           <div class="txi-amt txi-exp">${fN(tx.amount)}</div>
-          <button class="txi-del" onclick="delExpense('${tx.id}')">×</button>
+          <button class="txi-edit" onclick="event.stopPropagation();openEditExp('${tx.id}')">✎</button>
+          <button class="txi-del" onclick="event.stopPropagation();delExpense('${tx.id}')">×</button>
         </div>
       </div>
     </div>`;
@@ -2381,6 +2384,7 @@ function openEditExp(id){
   document.getElementById('e-date').value=tx.date||todayStr();
   const eb=document.getElementById('e-bank');if(eb&&tx.bank)eb.value=tx.bank;
 }
+const openEditExpense=openEditExp; // alias used in category popup
 async function saveExpense(){
   if(S.saving)return;
   const type=document.getElementById('e-type')?.value||'expense';
@@ -2439,9 +2443,20 @@ async function saveExpense(){
   finally{S.saving=false;btn.textContent='Save Expense';btn.disabled=false;}
 }
 async function delExpense(id){
-  if(!confirm('Delete this transaction?'))return;
-  try{await db.collection('transactions').doc(id).delete();toast('Deleted');haptic([6]);await loadTxns(S.expMonth,S.expYear);renderExpenses();renderDashboard();}
-  catch(e){toast('Error deleting');}
+  // Optimistically remove from local state immediately — no confirm, no re-fetch
+  const idx=S.txns.findIndex(t=>t.id===id);
+  if(idx>=0) S.txns.splice(idx,1);
+  cSet(CK.txns(S.expMonth,S.expYear),S.txns);
+  renderExpenses();renderDashboard();
+  haptic([6]);toast('Deleted');
+  // Persist to Firestore in background
+  try{await db.collection('transactions').doc(id).delete();}
+  catch(e){
+    // Rollback on failure
+    toast('Delete failed — restored');
+    await loadTxns(S.expMonth,S.expYear);
+    renderExpenses();renderDashboard();
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -3241,7 +3256,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.10.5</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.10.7</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
 }
 
@@ -3527,9 +3542,46 @@ if(!navigator.onLine) document.getElementById('offl').style.display='block';
 ['exp-modal','inv-modal','deb-modal','inc-modal'].forEach(id=>{document.getElementById(id).addEventListener('click',function(e){if(e.target===this)closeMod(id);});});
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 
+
+// ── ONE-TIME MIGRATION: Fife → Kids ──────────────────────────────────────
+async function _migrateFifeToKids(){
+  const MKEY='sw3_migrated_fife_kids';
+  if(localStorage.getItem(MKEY)) return; // already done
+  try{
+    // Migrate transactions
+    const txSnap=await db.collection('transactions').where('category','==','Fife').get();
+    // Migrate income (unlikely but safe)
+    const incSnap=await db.collection('income').where('category','==','Fife').get();
+    const allDocs=[...txSnap.docs,...incSnap.docs];
+    if(!allDocs.length){localStorage.setItem(MKEY,'1');return;}
+    // Batch update in groups of 500
+    const CHUNK=500;
+    for(let i=0;i<allDocs.length;i+=CHUNK){
+      const batch=db.batch();
+      allDocs.slice(i,i+CHUNK).forEach(doc=>batch.update(doc.ref,{category:'Kids'}));
+      await batch.commit();
+    }
+    // Also update any cached localStorage entries
+    Object.keys(localStorage).filter(k=>k.startsWith('sw3_txns_')||k.startsWith('sw3_inc_')).forEach(k=>{
+      try{
+        const arr=JSON.parse(localStorage.getItem(k));
+        if(!Array.isArray(arr)) return;
+        let changed=false;
+        arr.forEach(t=>{if(t.category==='Fife'){t.category='Kids';changed=true;}});
+        if(changed) localStorage.setItem(k,JSON.stringify(arr));
+      }catch(e){}
+    });
+    localStorage.setItem(MKEY,'1');
+    console.log(`SpendWise: migrated ${allDocs.length} Fife→Kids records`);
+    toast('Category migration complete: Fife → Kids');
+  }catch(e){
+    console.warn('Fife→Kids migration failed:',e);
+  }
+}
 // BOOT
 initFirebase();
 _requestNotifPermission();
+setTimeout(_migrateFifeToKids, 3000); // run after Firebase is ready
 </script>
 </body>
 </html>
