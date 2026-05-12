@@ -373,7 +373,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.11.2</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.11.3</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -2833,7 +2833,16 @@ function _renderInvInto(suffix){
     } else elAlloc.style.display='none';
   }
   if(elEditLabel) elEditLabel.textContent=`${MONTHS[m-1]} ${y}`;
-  if(elEditFields) elEditFields.innerHTML=PLATFORMS.map(p=>`<div class="ig"><label class="ilabel" style="display:flex;align-items:center;gap:6px">${platformLogoEl(p.key,p.color,16)} ${p.label} (${p.currency==='NGN'?'₦ NGN':'NGN equiv.'})</label><input class="ifield" type="number" inputmode="decimal" id="inv-edit-${p.key}${s}" placeholder="0" value="${inv[p.key]||''}"></div>`).join('');
+  if(elEditFields){
+    const fxRates=getFxRates(m,y);
+    elEditFields.innerHTML=PLATFORMS.map(p=>{
+      const storedNGN=inv[p.key]||0;
+      const isUSD=p.currency==='USD';
+      const dispVal=isUSD&&storedNGN?(storedNGN/fxRates.USD).toFixed(2):(storedNGN||'');
+      const lbl=isUSD?`$ USD (rate: ₦${fxRates.USD}/$ — stored as ₦)`:'₦ NGN';
+      return`<div class="ig"><label class="ilabel" style="display:flex;align-items:center;gap:6px">${platformLogoEl(p.key,p.color,16)} ${p.label} <span style="font-size:0.68rem;color:var(--text3)">(${lbl})</span></label><input class="ifield" type="number" inputmode="decimal" id="inv-edit-${p.key}${s}" placeholder="0" value="${dispVal}" data-currency="${p.currency}"></div>`;
+    }).join('');
+  }
 }
 function renderInvestments(){
   _renderInvInto('');    // pg-investments page (legacy, may not be visible)
@@ -2857,7 +2866,13 @@ async function renderInvTrend(suffix){
 async function saveInvFromEdit(){
   if(S.saving) return;S.saving=true;setSyncStatus('syncing');
   const data={month:S.expMonth,year:S.expYear};
-  PLATFORMS.forEach(p=>{const el=document.getElementById('inv-edit-'+p.key+'-2')||document.getElementById('inv-edit-'+p.key);const v=el?parseFloat(el.value):NaN;data[p.key]=isNaN(v)?0:v;});
+  const fxRates=getFxRates(S.expMonth,S.expYear);
+  PLATFORMS.forEach(p=>{
+    const el=document.getElementById('inv-edit-'+p.key+'-2')||document.getElementById('inv-edit-'+p.key);
+    const v=el?parseFloat(el.value):NaN;
+    if(isNaN(v)){data[p.key]=0;}
+    else{data[p.key]=p.currency==='USD'?Math.round(v*fxRates.USD):v;}
+  });
   S.investments=data;cSet(CK.inv(S.expMonth,S.expYear),data);
   renderInvestments();renderDashboard();
   try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});toast('Balances saved');haptic([8,40,8]);setSyncStatus('synced');}
@@ -2865,13 +2880,27 @@ async function saveInvFromEdit(){
   finally{S.saving=false;}
 }
 function openInvMod(){
-  document.getElementById('inv-mod-label').textContent=`${MONTHS[S.expMonth-1]} ${S.expYear} — closing balances (₦)`;
-  document.getElementById('inv-mod-fields').innerHTML=PLATFORMS.map(p=>`<div class="ig"><label class="ilabel" style="display:flex;align-items:center;gap:6px">${platformLogoEl(p.key,p.color,16)} ${p.label}</label><input class="ifield" type="number" inputmode="decimal" id="inv-${p.key}" placeholder="0" value="${S.investments[p.key]||''}"></div>`).join('');
+  const m=S.expMonth,y=S.expYear;
+  const fxRates=getFxRates(m,y);
+  document.getElementById('inv-mod-label').textContent=`${MONTHS[m-1]} ${y} — closing balances`;
+  document.getElementById('inv-mod-fields').innerHTML=PLATFORMS.map(p=>{
+    const storedNGN=S.investments[p.key]||0;
+    const isUSD=p.currency==='USD';
+    const dispVal=isUSD&&storedNGN?(storedNGN/fxRates.USD).toFixed(2):(storedNGN||'');
+    const lbl=isUSD?`$ USD (rate: ₦${fxRates.USD}/$)`:'₦ NGN';
+    return`<div class="ig"><label class="ilabel" style="display:flex;align-items:center;gap:6px">${platformLogoEl(p.key,p.color,16)} ${p.label} <span style="font-size:0.68rem;color:var(--text3)">(${lbl})</span></label><input class="ifield" type="number" inputmode="decimal" id="inv-${p.key}" placeholder="0" value="${dispVal}" data-currency="${p.currency}"></div>`;
+  }).join('');
   openMod('inv-modal');
 }
 async function saveInvestments(){
   if(S.saving) return;S.saving=true;const btn=document.getElementById('inv-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
-  const data={month:S.expMonth,year:S.expYear};PLATFORMS.forEach(p=>{const v=parseFloat(document.getElementById('inv-'+p.key).value);data[p.key]=isNaN(v)?0:v;});
+  const fxRates=getFxRates(S.expMonth,S.expYear);
+  const data={month:S.expMonth,year:S.expYear};
+  PLATFORMS.forEach(p=>{
+    const v=parseFloat(document.getElementById('inv-'+p.key).value);
+    if(isNaN(v)){data[p.key]=0;}
+    else{data[p.key]=p.currency==='USD'?Math.round(v*fxRates.USD):v;}
+  });
   try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});S.investments=data;cSet(CK.inv(S.expMonth,S.expYear),data);closeMod('inv-modal');toast('Balances saved');setSyncStatus('synced');renderInvestments();renderDashboard();}
   catch(e){toast('Error saving');setSyncStatus('error');}
   finally{S.saving=false;btn.textContent='Save Balances';btn.disabled=false;}
@@ -3675,7 +3704,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.11.2</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.11.3</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     ${renderFxCard()}
   `;
 }
