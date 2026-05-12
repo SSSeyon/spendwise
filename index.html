@@ -247,6 +247,7 @@ body.light .theme-icon-sun{opacity:1}
 .emoji-btn:hover{background:var(--bg2)}
 .emoji-scrim{position:fixed;inset:0;z-index:499}
 /* ── NOTIFICATION BELL ── */
+.xfr-type-btn.active{background:var(--adim);border-color:var(--accent);color:var(--accent)}
 .notif-btn{position:relative;background:none;border:none;cursor:pointer;padding:6px;display:flex;align-items:center;justify-content:center;color:var(--text2);transition:color 0.18s;border-radius:var(--rsm)}
 .notif-btn:hover{color:var(--text);background:var(--bg2)}
 .notif-badge{position:absolute;top:0;right:0;min-width:14px;height:14px;border-radius:7px;background:var(--red);color:#fff;font-size:0.5rem;font-weight:700;font-family:var(--mono);display:flex;align-items:center;justify-content:center;padding:0 3px;pointer-events:none;transform:translate(2px,-2px)}
@@ -372,7 +373,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.11.0</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.11.1</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -614,7 +615,8 @@ datalist option{background:var(--bg2);color:var(--text)}
           <div class="ig"><label class="ilabel">To</label><select class="sfield" id="xfr-to"></select></div>
         </div>
         <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" type="number" inputmode="decimal" id="xfr-amt" placeholder="0"></div>
-        <button class="btn btn-g btn-full" onclick="transferFunds()">Transfer Funds</button>
+        <button class="btn btn-g btn-full" onclick="transferFunds()">Transfer Between Accounts</button>
+        <button class="btn btn-p btn-full" style="margin-top:8px" onclick="openMoveFunds()">Move: Cash ↔ Investment</button>
       </div>
       <div class="card">
         <div class="clabel" style="margin-bottom:10px">Add New Account</div>
@@ -757,9 +759,15 @@ datalist option{background:var(--bg2);color:var(--text)}
     </div>
     <!-- Transfer fields -->
     <div id="e-transfer-fields" style="display:none">
+      <!-- Transfer type selector -->
+      <div style="display:flex;gap:6px;margin-bottom:10px">
+        <button class="btn btn-g btn-sm xfr-type-btn active" id="xfr-type-cc" onclick="setXfrType('cash-cash')" style="flex:1">Cash → Cash</button>
+        <button class="btn btn-g btn-sm xfr-type-btn" id="xfr-type-ci" onclick="setXfrType('cash-inv')" style="flex:1">Cash → Invest</button>
+        <button class="btn btn-g btn-sm xfr-type-btn" id="xfr-type-ic" onclick="setXfrType('inv-cash')" style="flex:1">Invest → Cash</button>
+      </div>
       <div class="gform">
-        <div class="ig"><label class="ilabel">From Account</label><select class="sfield" id="xfr2-from"></select></div>
-        <div class="ig"><label class="ilabel">To Account</label><select class="sfield" id="xfr2-to"></select></div>
+        <div class="ig"><label class="ilabel" id="xfr-from-label">From Account</label><select class="sfield" id="xfr2-from"></select></div>
+        <div class="ig"><label class="ilabel" id="xfr-to-label">To Account</label><select class="sfield" id="xfr2-to"></select></div>
       </div>
     </div>
     <div class="gform">
@@ -786,6 +794,40 @@ datalist option{background:var(--bg2);color:var(--text)}
 </div>
 
 <!-- RECURRING MODAL -->
+<div class="mbackdrop" id="move-modal">
+  <div class="modal">
+    <div class="mhdr">
+      <div class="mtitle" id="move-modal-title">Move Funds</div>
+      <button class="mclose" onclick="closeMod('move-modal')">×</button>
+    </div>
+    <!-- Direction toggle -->
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <button class="btn btn-p btn-sm active-type" id="move-dir-ci" onclick="setMoveDir('cash-inv')" style="flex:1">Cash → Investment</button>
+      <button class="btn btn-g btn-sm" id="move-dir-ic" onclick="setMoveDir('inv-cash')" style="flex:1">Investment → Cash</button>
+    </div>
+    <div class="ig">
+      <label class="ilabel" id="move-from-label">From Account (Cash)</label>
+      <select class="sfield" id="move-from"></select>
+    </div>
+    <div class="ig">
+      <label class="ilabel" id="move-to-label">To Platform (Investment)</label>
+      <select class="sfield" id="move-to"></select>
+    </div>
+    <div class="ig">
+      <label class="ilabel">Amount (₦)</label>
+      <input class="ifield" type="number" inputmode="decimal" id="move-amt" placeholder="0" style="font-size:1.1rem">
+    </div>
+    <div class="ig">
+      <label class="ilabel">Date</label>
+      <input class="ifield" type="date" id="move-date">
+    </div>
+    <div class="ig">
+      <label class="ilabel">Notes (optional)</label>
+      <input class="ifield" type="text" id="move-notes" placeholder="e.g. Monthly savings deposit">
+    </div>
+    <button class="btn btn-p btn-full" onclick="saveMoveFunds()">Move Funds</button>
+  </div>
+</div>
 <div class="mbackdrop" id="recur-modal">
   <div class="modal" onclick="event.stopPropagation()" style="max-height:85vh">
     <div class="mhdr"><div class="mtitle">Recurring Transactions</div><button class="mclose" onclick="closeMod('recur-modal')">×</button></div>
@@ -1778,6 +1820,37 @@ function closeEmojiPicker(){
 }
 
 
+// ── TRANSFER TYPE ─────────────────────────────────────────────────────────
+let _xfrType = 'cash-cash';
+function setXfrType(type){
+  _xfrType=type;
+  document.querySelectorAll('.xfr-type-btn').forEach(b=>b.classList.remove('active'));
+  const btnMap={'cash-cash':'xfr-type-cc','cash-inv':'xfr-type-ci','inv-cash':'xfr-type-ic'};
+  const btn=document.getElementById(btnMap[type]);if(btn)btn.classList.add('active');
+  const fromLbl=document.getElementById('xfr-from-label');
+  const toLbl=document.getElementById('xfr-to-label');
+  const fromSel=document.getElementById('xfr2-from');
+  const toSel=document.getElementById('xfr2-to');
+  const cashOpts=getCashAccounts().map(a=>`<option>${a}</option>`).join('');
+  const invOpts=PLATFORMS.map(p=>`<option value="${p.key}">${p.label}</option>`).join('');
+  if(type==='cash-cash'){
+    if(fromLbl)fromLbl.textContent='From Cash Account';
+    if(toLbl)toLbl.textContent='To Cash Account';
+    if(fromSel)fromSel.innerHTML=cashOpts;
+    if(toSel)toSel.innerHTML=cashOpts;
+  } else if(type==='cash-inv'){
+    if(fromLbl)fromLbl.textContent='From Cash Account';
+    if(toLbl)toLbl.textContent='To Investment Platform';
+    if(fromSel)fromSel.innerHTML=cashOpts;
+    if(toSel)toSel.innerHTML=invOpts;
+  } else {
+    if(fromLbl)fromLbl.textContent='From Investment Platform';
+    if(toLbl)toLbl.textContent='To Cash Account';
+    if(fromSel)fromSel.innerHTML=invOpts;
+    if(toSel)toSel.innerHTML=cashOpts;
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // NOTIFICATION BELL
 // ══════════════════════════════════════════════════════════════════════════
@@ -2524,6 +2597,7 @@ function openExpModal(type){
   document.getElementById('e-edit-id').value='';
   const rr=document.getElementById('e-recur');if(rr)rr.value='';
   updateRecurDesc();
+  _xfrType='cash-cash';setXfrType('cash-cash');
   const hint=document.getElementById('e-autocat-hint');if(hint)hint.textContent='';
   setTxnType(type);updateExpenseLines();
   openMod('exp-modal');
@@ -2567,12 +2641,43 @@ async function saveExpense(){
   // ── Transfer ──
   if(type==='transfer'){
     const from=document.getElementById('xfr2-from')?.value,to=document.getElementById('xfr2-to')?.value;
-    if(!from||!to||from===to){toast('Select different accounts');return;}
-    const cash={...S.cash};cash[from]=(cash[from]||0)-amt;cash[to]=(cash[to]||0)+amt;
-    S.cash=cash;cSet(CK.cash(S.cashMonth,S.cashYear),cash);
-    closeMod('exp-modal');toast(`Transferred ${fN(amt)}: ${from} → ${to}`);haptic([8,40,8]);
-    renderCashPage();renderDashboard();
-    if(db)db.collection('cashBalances').doc(sid(S.cashMonth,S.cashYear)).set(cash,{merge:true}).catch(()=>{});
+    if(!from||!to){toast('Select accounts');return;}
+    const m=S.expMonth,y=S.expYear;
+    const date=document.getElementById('e-date').value||todayStr();
+    const notes=document.getElementById('e-notes').value||'';
+
+    if(_xfrType==='cash-cash'){
+      if(from===to){toast('Select different accounts');return;}
+      const cash={...S.cash};cash[from]=(cash[from]||0)-amt;cash[to]=(cash[to]||0)+amt;
+      S.cash=cash;cSet(CK.cash(m,y),cash);
+      if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
+      toast(`${fN(amt)}: ${from} → ${to}`);
+
+    } else if(_xfrType==='cash-inv'){
+      // Deduct from cash, add to investment platform
+      const cash={...S.cash};cash[from]=(cash[from]||0)-amt;
+      S.cash=cash;cSet(CK.cash(m,y),cash);
+      if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
+      const inv={...S.investments};inv[to]=(inv[to]||0)+amt;
+      S.investments=inv;cSet(CK.inv(m,y),inv);
+      if(db)db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(()=>{});
+      const platLabel=PLATFORMS.find(p=>p.key===to)?.label||to;
+      toast(`${fN(amt)}: ${from} → ${platLabel}`);
+
+    } else {
+      // inv-cash: deduct from investment, add to cash
+      const inv={...S.investments};inv[from]=Math.max(0,(inv[from]||0)-amt);
+      S.investments=inv;cSet(CK.inv(m,y),inv);
+      if(db)db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(()=>{});
+      const cash={...S.cash};cash[to]=(cash[to]||0)+amt;
+      S.cash=cash;cSet(CK.cash(m,y),cash);
+      if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
+      const platLabel=PLATFORMS.find(p=>p.key===from)?.label||from;
+      toast(`${fN(amt)}: ${platLabel} → ${to}`);
+    }
+
+    haptic([8,40,8]);closeMod('exp-modal');
+    renderCashPage();renderInvestments();renderDashboard();
     return;
   }
 
@@ -2817,6 +2922,117 @@ function removeCashAccount(name){
   cSet('sw3_cash_accounts',getCashAccounts().filter(a=>a!==name));
   toast(`${name} removed`);renderCashPage();
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// MOVE FUNDS (Cash ↔ Investment)
+// ══════════════════════════════════════════════════════════════════════════
+let _moveDir = 'cash-inv'; // 'cash-inv' | 'inv-cash'
+
+function openMoveFunds(){
+  _moveDir = 'cash-inv';
+  document.getElementById('move-date').value = todayStr();
+  document.getElementById('move-amt').value = '';
+  document.getElementById('move-notes').value = '';
+  _populateMoveSelects();
+  _syncMoveDirUI();
+  openMod('move-modal');
+  setTimeout(()=>initNumInputs(document.getElementById('move-modal')), 80);
+}
+
+function setMoveDir(dir){
+  _moveDir = dir;
+  _syncMoveDirUI();
+  _populateMoveSelects();
+}
+
+function _syncMoveDirUI(){
+  const ci = document.getElementById('move-dir-ci');
+  const ic = document.getElementById('move-dir-ic');
+  if(ci) { ci.className = _moveDir==='cash-inv' ? 'btn btn-p btn-sm' : 'btn btn-g btn-sm'; }
+  if(ic) { ic.className = _moveDir==='inv-cash' ? 'btn btn-p btn-sm' : 'btn btn-g btn-sm'; }
+  const fromLbl = document.getElementById('move-from-label');
+  const toLbl   = document.getElementById('move-to-label');
+  if(_moveDir==='cash-inv'){
+    if(fromLbl) fromLbl.textContent = 'From Account (Cash)';
+    if(toLbl)   toLbl.textContent   = 'To Platform (Investment)';
+  } else {
+    if(fromLbl) fromLbl.textContent = 'From Platform (Investment)';
+    if(toLbl)   toLbl.textContent   = 'To Account (Cash)';
+  }
+  const title = document.getElementById('move-modal-title');
+  if(title) title.textContent = _moveDir==='cash-inv' ? 'Cash → Investment' : 'Investment → Cash';
+}
+
+function _populateMoveSelects(){
+  const cashOpts = getCashAccounts().map(a=>`<option>${a}</option>`).join('');
+  const invOpts  = PLATFORMS.map(p=>`<option value="${p.key}">${platformLogoEl?'':''} ${p.label} (${p.currency})</option>`).join('');
+  const fromSel = document.getElementById('move-from');
+  const toSel   = document.getElementById('move-to');
+  if(_moveDir==='cash-inv'){
+    if(fromSel) fromSel.innerHTML = cashOpts;
+    if(toSel)   toSel.innerHTML   = invOpts;
+  } else {
+    if(fromSel) fromSel.innerHTML = invOpts;
+    if(toSel)   toSel.innerHTML   = cashOpts;
+  }
+}
+
+async function saveMoveFunds(){
+  const amt = parseFloat(document.getElementById('move-amt').value);
+  if(!amt || amt <= 0){ toast('Enter a valid amount'); return; }
+  const from  = document.getElementById('move-from').value;
+  const to    = document.getElementById('move-to').value;
+  const date  = document.getElementById('move-date').value || todayStr();
+  const notes = document.getElementById('move-notes').value.trim();
+  const m = S.expMonth, y = S.expYear;
+
+  if(_moveDir === 'cash-inv'){
+    // Deduct from cash account
+    const cash = {...S.cash};
+    cash[from] = (cash[from]||0) - amt;
+    S.cash = cash;
+    cSet(CK.cash(m,y), cash);
+    if(db) db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
+
+    // Add to investment platform (stored in NGN equiv)
+    const inv = {...S.investments};
+    inv[to] = (inv[to]||0) + amt;
+    S.investments = inv;
+    cSet(CK.inv(m,y), inv);
+    if(db) db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(()=>{});
+
+    const platLabel = PLATFORMS.find(p=>p.key===to)?.label || to;
+    toast(`Moved ${fN(amt)} from ${from} → ${platLabel}`);
+
+  } else {
+    // Deduct from investment platform
+    const inv = {...S.investments};
+    const platLabel = PLATFORMS.find(p=>p.key===from)?.label || from;
+    if((inv[from]||0) < amt){
+      toast(`Insufficient balance in ${platLabel}`); return;
+    }
+    inv[from] = (inv[from]||0) - amt;
+    S.investments = inv;
+    cSet(CK.inv(m,y), inv);
+    if(db) db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(()=>{});
+
+    // Add to cash account
+    const cash = {...S.cash};
+    cash[to] = (cash[to]||0) + amt;
+    S.cash = cash;
+    cSet(CK.cash(m,y), cash);
+    if(db) db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
+
+    toast(`Moved ${fN(amt)} from ${platLabel} → ${to}`);
+  }
+
+  haptic([8,40,8]);
+  closeMod('move-modal');
+  renderCashPage();
+  renderInvestments();
+  renderDashboard();
+}
+
 async function transferFunds(){
   const from=document.getElementById('xfr-from').value,to=document.getElementById('xfr-to').value;
   const amt=parseFloat(document.getElementById('xfr-amt').value)||0;
@@ -3457,7 +3673,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.11.0</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.11.1</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
 }
 
@@ -3740,7 +3956,7 @@ window.addEventListener('online',()=>{
 });
 window.addEventListener('offline',()=>{document.getElementById('offl').style.display='block';setSyncStatus('offline');});
 if(!navigator.onLine) document.getElementById('offl').style.display='block';
-['exp-modal','inv-modal','deb-modal','inc-modal'].forEach(id=>{document.getElementById(id).addEventListener('click',function(e){if(e.target===this)closeMod(id);});});
+['exp-modal','inv-modal','deb-modal','inc-modal','move-modal'].forEach(id=>{document.getElementById(id).addEventListener('click',function(e){if(e.target===this)closeMod(id);});});
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 
 
