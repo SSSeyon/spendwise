@@ -233,6 +233,19 @@ body.light .theme-icon-sun{opacity:1}
 /* ── CAT MANAGEMENT ── */
 .cat-manage-row{display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--border)}
 .cat-remove-btn{color:var(--red);cursor:pointer;font-size:0.9rem;flex-shrink:0;padding:0 4px;background:none;border:none;line-height:1}
+
+/* ── EMOJI PICKER ── */
+.emoji-trigger{background:none;border:1px solid var(--border);border-radius:var(--rsm);padding:4px 8px;cursor:pointer;font-size:1.1rem;min-width:36px;text-align:center;transition:border-color 0.15s;flex-shrink:0}
+.emoji-trigger:hover{border-color:var(--accent)}
+.emoji-panel{position:fixed;z-index:500;background:var(--bg1);border:1px solid var(--border);border-radius:var(--r);box-shadow:0 8px 32px rgba(0,0,0,0.4);width:min(320px,calc(100vw - 24px));max-height:340px;display:flex;flex-direction:column;overflow:hidden}
+.emoji-search{padding:8px 10px;border-bottom:1px solid var(--border);background:var(--bg2);border:none;border-bottom:1px solid var(--border);color:var(--text);font-size:0.8rem;width:100%;outline:none;font-family:var(--font)}
+.emoji-groups{display:flex;gap:4px;padding:6px 8px;border-bottom:1px solid var(--border);overflow-x:auto;flex-shrink:0}
+.emoji-group-btn{background:none;border:none;font-size:1rem;cursor:pointer;padding:3px 5px;border-radius:4px;opacity:0.5;transition:opacity 0.15s}
+.emoji-group-btn.active,.emoji-group-btn:hover{opacity:1;background:var(--bg2)}
+.emoji-grid{display:flex;flex-wrap:wrap;gap:2px;padding:8px;overflow-y:auto;flex:1}
+.emoji-btn{background:none;border:none;font-size:1.3rem;cursor:pointer;width:36px;height:36px;border-radius:6px;display:flex;align-items:center;justify-content:center;transition:background 0.1s}
+.emoji-btn:hover{background:var(--bg2)}
+.emoji-scrim{position:fixed;inset:0;z-index:499}
 /* ── NOTIFICATION BELL ── */
 .notif-btn{position:relative;background:none;border:none;cursor:pointer;padding:6px;display:flex;align-items:center;justify-content:center;color:var(--text2);transition:color 0.18s;border-radius:var(--rsm)}
 .notif-btn:hover{color:var(--text);background:var(--bg2)}
@@ -359,7 +372,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.10.7</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.10.8</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -727,7 +740,10 @@ datalist option{background:var(--bg2);color:var(--text)}
       </div>
       <div class="ig" id="e-payee-new-wrap" style="display:none">
         <label class="ilabel">New Expense Name</label>
-        <input class="ifield" type="text" id="e-payee-new" placeholder="Enter new expense name" oninput="autoSuggestCat(this.value)">
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="emoji-trigger" id="e-payee-emoji" onclick="openEmojiPicker(this,e=>document.getElementById('e-payee-emoji').textContent=e)" title="Pick emoji">📦</button>
+          <input class="ifield" type="text" id="e-payee-new" placeholder="Enter new expense name" oninput="autoSuggestCat(this.value)" style="flex:1">
+        </div>
       </div>
     </div>
     <!-- Income fields -->
@@ -1620,6 +1636,105 @@ function renderDashboard(){
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// EMOJI PICKER
+// ══════════════════════════════════════════════════════════════════════════
+const EMOJI_GROUPS = {
+  '🏠': ['🏠','🏡','🏗','🏢','🏦','🏪','⚡','💡','🔌','🚿','🛁','🛏','🪑','🧹','🧺','🧻','🪣','🔑','🚪'],
+  '🍽️': ['🍽️','🍔','🍕','🌮','🥗','🥘','🍜','🍱','🛒','🥩','🥦','🧃','☕','🧂','🍞','🥚','🧈','🫙'],
+  '👨‍👩‍👧‍👦': ['👨‍👩‍👧‍👦','🧒','👶','🧸','🎒','🏫','📚','✏️','🎨','🎭','⚽','🏀','🎮','🧩','🎪','🎠','🎡','🪁'],
+  '🚗': ['🚗','🚕','🛻','🚙','⛽','🔧','🔩','🛞','🔋','🪛','🧰','🛣','🚦','🅿️','✈️','🚂','🛳','🚌'],
+  '💊': ['💊','🏥','🩺','💉','🩹','🧴','🪥','💆','💅','🧖','💄','🪞','👗','👠','👟','👓','🕶','⌚'],
+  '🎬': ['🎬','🎵','🎸','🎹','📺','🎭','🎟','🎪','⛳','🏊','🧘','🎳','♟','🎲','🃏','🎯','📷','🏖'],
+  '💼': ['💼','📊','📈','💹','💰','💳','🏧','💵','💴','💶','💷','🤝','📋','🖥','📱','⌨️','🖨','📞'],
+  '🎁': ['🎁','🎀','🎊','🎉','🥂','🪅','💐','🎂','🎈','🪴','🕯','🫶','❤️','🙏','👍','🌟','⭐','🌈'],
+  '🌐': ['🌐','📡','📶','💻','🖥','📱','⌨️','🖱','💾','💿','📀','🔐','🔒','🛡','🔑','📧','📬','📮'],
+  '📦': ['📦','🛍','📫','🗂','📁','🗑','📌','📎','✂️','🖊','📝','🗒','📅','⏰','🧲','🔦','🪜','🗝'],
+};
+const ALL_EMOJIS=Object.values(EMOJI_GROUPS).flat();
+
+let _emojiCb=null, _emojiPanel=null, _emojiScrim=null, _emojiGroup=null, _emojiSearch='';
+
+function openEmojiPicker(triggerEl, callback){
+  closeEmojiPicker();
+  _emojiCb=callback;
+
+  // Create scrim
+  _emojiScrim=document.createElement('div');
+  _emojiScrim.className='emoji-scrim';
+  _emojiScrim.onclick=closeEmojiPicker;
+  document.body.appendChild(_emojiScrim);
+
+  // Create panel
+  _emojiPanel=document.createElement('div');
+  _emojiPanel.className='emoji-panel';
+
+  const search=document.createElement('input');
+  search.className='emoji-search';
+  search.placeholder='Search emoji…';
+  search.oninput=e=>{_emojiSearch=e.target.value.toLowerCase();_renderEmojiGrid();};
+  _emojiPanel.appendChild(search);
+
+  const groups=document.createElement('div');
+  groups.className='emoji-groups';
+  Object.keys(EMOJI_GROUPS).forEach((g,i)=>{
+    const btn=document.createElement('button');
+    btn.className='emoji-group-btn'+(i===0?' active':'');
+    btn.textContent=g;
+    btn.onclick=()=>{
+      _emojiGroup=g;_emojiSearch='';search.value='';
+      groups.querySelectorAll('.emoji-group-btn').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      _renderEmojiGrid();
+    };
+    groups.appendChild(btn);
+  });
+  _emojiPanel.appendChild(groups);
+
+  const grid=document.createElement('div');
+  grid.className='emoji-grid';
+  grid.id='emoji-grid';
+  _emojiPanel.appendChild(grid);
+  _emojiGroup=Object.keys(EMOJI_GROUPS)[0];
+  document.body.appendChild(_emojiPanel);
+  _renderEmojiGrid();
+
+  // Position below trigger
+  const r=triggerEl.getBoundingClientRect();
+  const panelW=Math.min(320,window.innerWidth-24);
+  let left=r.left;
+  let top=r.bottom+6;
+  if(left+panelW>window.innerWidth-8) left=window.innerWidth-panelW-8;
+  if(top+340>window.innerHeight) top=r.top-346;
+  _emojiPanel.style.left=left+'px';
+  _emojiPanel.style.top=top+'px';
+  _emojiPanel.style.width=panelW+'px';
+  setTimeout(()=>search.focus(),50);
+}
+
+function _renderEmojiGrid(){
+  const grid=document.getElementById('emoji-grid');
+  if(!grid) return;
+  const list=_emojiSearch
+    ? ALL_EMOJIS.filter(e=>e.includes(_emojiSearch))
+    : (EMOJI_GROUPS[_emojiGroup]||ALL_EMOJIS);
+  grid.innerHTML='';
+  list.forEach(emoji=>{
+    const btn=document.createElement('button');
+    btn.className='emoji-btn';
+    btn.textContent=emoji;
+    btn.onclick=()=>{if(_emojiCb)_emojiCb(emoji);closeEmojiPicker();};
+    grid.appendChild(btn);
+  });
+}
+
+function closeEmojiPicker(){
+  if(_emojiPanel){_emojiPanel.remove();_emojiPanel=null;}
+  if(_emojiScrim){_emojiScrim.remove();_emojiScrim=null;}
+  _emojiCb=null;_emojiSearch='';
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
 // NOTIFICATION BELL
 // ══════════════════════════════════════════════════════════════════════════
 function toggleNotifPanel(){
@@ -2421,6 +2536,13 @@ async function saveExpense(){
   if(paySel==='+ Add new'){
     payee=document.getElementById('e-payee-new').value.trim();
     if(!payee){toast('Enter a name');return;}
+    // Prefix with chosen emoji if one was selected and name doesn't already start with one
+    const _emojiBtn=document.getElementById('e-payee-emoji');
+    const _chosenEmoji=_emojiBtn?_emojiBtn.textContent.trim():'';
+    const _hasEmoji=_chosenEmoji&&_chosenEmoji!=='📦';
+    const _firstChar=payee.codePointAt(0);
+    const _alreadyEmoji=_firstChar>127;
+    if(_hasEmoji&&!_alreadyEmoji) payee=_chosenEmoji+' '+payee;
     const cat=document.getElementById('e-cat').value;
     if(!S.customExpLines[cat])S.customExpLines[cat]=[];
     if(!S.customExpLines[cat].includes(payee))S.customExpLines[cat].push(payee);
@@ -2438,7 +2560,7 @@ async function saveExpense(){
   try{
     if(editId){await db.collection('transactions').doc(editId).update(data);const idx=S.txns.findIndex(t=>t.id===editId);if(idx>=0)S.txns[idx]={...S.txns[idx],...data};}
     else{data.createdAt=firebase.firestore.FieldValue.serverTimestamp();const ref=await db.collection('transactions').add(data);S.txns.unshift({...data,id:ref.id});}
-    cSet(CK.txns(S.expMonth,S.expYear),S.txns);closeMod('exp-modal');toast(editId?'Updated':'Saved');haptic([8,40,8]);setSyncStatus('synced');renderExpenses();renderDashboard();
+    cSet(CK.txns(S.expMonth,S.expYear),S.txns);closeMod('exp-modal');const _ep=document.getElementById('e-payee-emoji');if(_ep)_ep.textContent='📦';toast(editId?'Updated':'Saved');haptic([8,40,8]);setSyncStatus('synced');renderExpenses();renderDashboard();
   }catch(e){toast('Error saving');setSyncStatus('error');}
   finally{S.saving=false;btn.textContent='Save Expense';btn.disabled=false;}
 }
@@ -3117,7 +3239,8 @@ function renderSettBudget(){
     <div style="border-top:1px solid var(--border);padding-top:14px">
       <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.06em">Manage Categories</div>
       ${getAllCats().map((c,i)=>{const isCustom=!_BASE_CATS.includes(c);return`<div class="cat-manage-row"><span style="font-size:0.72rem;flex:1">${CAT_ICONS[c]||'📦'} ${c}</span>${isCustom?`<button class="cat-remove-btn" onclick="removeCustomCat('${c.replace(/'/g,"\\'")}')" title="Remove category">×</button>`:''}</div>`;}).join('')}
-      <div style="display:flex;gap:6px;margin-top:10px">
+      <div style="display:flex;gap:6px;margin-top:10px;align-items:center">
+        <button class="emoji-trigger" id="new-cat-emoji" onclick="openEmojiPicker(this,e=>document.getElementById('new-cat-emoji').textContent=e)" title="Pick emoji">📦</button>
         <input class="ifield" id="new-cat-input" placeholder="New category name" style="flex:1;font-size:0.76rem;padding:6px 10px">
         <button class="btn btn-p btn-sm" onclick="addCustomCat()">+ Add</button>
       </div>
@@ -3136,6 +3259,11 @@ function addCustomCat(){
   const name=input.value.trim();
   if(!name){toast('Enter a category name');return;}
   if(getAllCats().map(c=>c.toLowerCase()).includes(name.toLowerCase())){toast('Category already exists');return;}
+  // Store chosen emoji in CAT_ICONS
+  const emojiBtn=document.getElementById('new-cat-emoji');
+  const emoji=emojiBtn?emojiBtn.textContent.trim():'📦';
+  CAT_ICONS[name]=emoji;
+  if(emojiBtn) emojiBtn.textContent='📦'; // reset
   const cats=getCustomCats();cats.push(name);saveCustomCats(cats);
   input.value='';
   // Refresh expense modal cat select if open
@@ -3256,7 +3384,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.10.7</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.10.8</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
 }
 
