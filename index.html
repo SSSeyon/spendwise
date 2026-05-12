@@ -357,7 +357,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.10.3</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.10.5</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -857,7 +857,7 @@ const CAT_LINES = {
   'Domestic': ['Car purchase','Car wash','Service charge','Laundry','Home repairs','Rent','Temu','Cleaner'],
   'Food': ['Lunch','Eat out'],
   'Groceries': ['Ozzy shopping','Super Saver','Globus','Spar','Ebeano','Blenco','Sinomart','Cash groceries','Other groceries'],
-  'Fife': ["Fife's school fees","Fife's (Other)","Fife's Bday"],
+  'Kids': ["Fife's school fees","Fife's (Other)","Fife's Bday"],
   'Internet services': ['Netflix/Amazon','Internet +Airtime'],
   'Recreation': ['UK Visa','DSTV','Outing','Outing BDG'],
   'Personal care': ['Medications','Personal care'],
@@ -884,7 +884,7 @@ const CAT_ICONS = {
   'Domestic':           '🏠',
   'Food':               '🍽️',
   'Groceries':          '🛒',
-  'Fife':               '🎓',
+  'Kids':               '🧒',
   'Internet services':  '📡',
   'Recreation':         '🎬',
   'Personal care':      '💊',
@@ -982,7 +982,7 @@ const FX_RATES = {
   '2026-04':{USD:1600,GBP:2040},'2026-05':{USD:1590,GBP:2020},
 };
 
-const DEF_BUDGETS={Utilities:90000,Energy:150000,Carmaintenance:50000,Itunu:0,Domestic:200000,Food:150000,Groceries:400000,Fife:200000,Internetservices:50000,Recreation:100000,Personalcare:50000,Giftsanddonations:200000,Loans:0,Others:50000,WorkTravel:0,Education:0};
+const DEF_BUDGETS={Utilities:90000,Energy:150000,Carmaintenance:50000,Itunu:0,Domestic:200000,Food:150000,Groceries:400000,Kids:200000,Internetservices:50000,Recreation:100000,Personalcare:50000,Giftsanddonations:200000,Loans:0,Others:50000,WorkTravel:0,Education:0};
 const FIXED_OBL=[{label:'Service Charge',amount:55000},{label:'Internet & Airtime',amount:30000},{label:'Power',amount:90000},{label:'Fuel',amount:150000}];
 // School fees loaded from localStorage via seed JSON.
 const SCHOOL_FEES_DEFAULT=[];
@@ -995,7 +995,7 @@ const PAYEE_KEYWORDS=[
   {kw:'netflix',cat:'Internet services'},{kw:'amazon',cat:'Internet services'},{kw:'airtime',cat:'Internet services'},{kw:'dstv',cat:'Recreation'},{kw:'gotv',cat:'Recreation'},
   {kw:'uber',cat:'Work Travel'},{kw:'bolt',cat:'Work Travel'},{kw:'taxi',cat:'Work Travel'},
   {kw:'pharmacy',cat:'Personal care'},{kw:'drug',cat:'Personal care'},{kw:'hospital',cat:'Personal care'},
-  {kw:'school',cat:'Fife'},{kw:'tuition',cat:'Education'},{kw:'fees',cat:'Fife'},
+  {kw:'school',cat:'Kids'},{kw:'tuition',cat:'Education'},{kw:'fees',cat:'Kids'},
   {kw:'rent',cat:'Domestic'},{kw:'laundry',cat:'Domestic'},{kw:'cleaner',cat:'Domestic'},
   {kw:'restaurant',cat:'Food'},{kw:'lunch',cat:'Food'},{kw:'dinner',cat:'Food'},{kw:'eat',cat:'Food'},
 ];
@@ -3241,7 +3241,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.10.3</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.10.5</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
 }
 
