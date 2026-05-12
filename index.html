@@ -372,7 +372,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.10.8</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.11.0</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1252,7 +1252,7 @@ function initFirebase(){
       S.investments=cGet(CK.inv(m,y))||S.investments;
       S.cash=cGet(CK.cash(m,y))||S.cash;
       S.debtors=cGet(CK.debtors)||S.debtors;
-      cSet(CK.lastSync,Date.now());setSyncStatus('synced');hideStaleBar();renderAll();
+      cSet(CK.lastSync,Date.now());setSyncStatus('synced');hideStaleBar();renderAll();startRealtimeListeners();
     }catch(e){console.error(e);setSyncStatus('error');}
   })();
 }
@@ -1262,10 +1262,61 @@ async function syncAll(){
   await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary()]);
 }
 
+// ── REALTIME LISTENER ─────────────────────────────────────────────────────
+// Listens to the current month's transactions in Firestore.
+// When another device saves an expense, this fires and updates the UI.
+let _txnListener=null;
+let _incListener=null;
+let _cashListener=null;
+
+function startRealtimeListeners(){
+  stopRealtimeListeners();
+  const m=S.expMonth,y=S.expYear;
+  if(!db) return;
+
+  // Transactions
+  _txnListener=db.collection('transactions')
+    .where('year','==',y).where('month','==',m)
+    .onSnapshot(snap=>{
+      if(snap.metadata.hasPendingWrites) return; // skip own writes mid-save
+      const fresh=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:1);
+      cSet(CK.txns(m,y),fresh);
+      S.txns=fresh;
+      renderExpenses();renderDashboard();
+      setSyncStatus('synced');
+    },err=>console.warn('txn listener:',err));
+
+  // Income
+  _incListener=db.collection('income')
+    .where('year','==',y).where('month','==',m)
+    .onSnapshot(snap=>{
+      if(snap.metadata.hasPendingWrites) return;
+      const fresh=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:1);
+      cSet(CK.inc(m,y),fresh);
+      S.income=fresh;
+      renderDashboard();
+      setSyncStatus('synced');
+    },err=>console.warn('inc listener:',err));
+
+  // Cash balances
+  _cashListener=db.collection('cashBalances').doc(sid(m,y))
+    .onSnapshot(snap=>{
+      if(!snap.exists||snap.metadata.hasPendingWrites) return;
+      const data=snap.data();
+      cSet(CK.cash(m,y),data);
+      S.cash=data;
+      renderCashPage();renderDashboard();
+    },err=>console.warn('cash listener:',err));
+}
+
+function stopRealtimeListeners(){
+  if(_txnListener){_txnListener();_txnListener=null;}
+  if(_incListener){_incListener();_incListener=null;}
+  if(_cashListener){_cashListener();_cashListener=null;}
+}
+
 async function loadTxns(m,y){
-  // Local always wins — only pull from Firebase if we have nothing locally
-  const local=cGet(CK.txns(m,y));
-  if(local&&local.length>0) return; // we have local data, keep it
+  // Always fetch from Firestore — local cache is only a fallback, not authoritative
   try{
     let snap;
     try{snap=await db.collection('transactions').where('year','==',y).where('month','==',m).orderBy('date','desc').get();}
@@ -1279,8 +1330,7 @@ async function loadTxns(m,y){
 }
 
 async function loadIncome(m,y){
-  const local=cGet(CK.inc(m,y));
-  if(local&&local.length>0) return;
+  // Always fetch from Firestore
   try{
     let snap;
     try{snap=await db.collection('income').where('year','==',y).where('month','==',m).orderBy('date','desc').get();}
@@ -1313,12 +1363,7 @@ async function loadInvData(m,y){
 }
 
 async function loadCashData(m,y){
-  // Local always wins
-  const local=cGet(CK.cash(m,y));
-  if(local&&Object.keys(local).length>2){
-    if(S.expMonth===m&&S.expYear===y) S.cash=local;
-    return;
-  }
+  // Always fetch from Firestore
   try{
     const doc=await db.collection('cashBalances').doc(sid(m,y)).get();
     if(doc.exists&&doc.data()){S.cash=doc.data();cSet(CK.cash(m,y),S.cash);return;}
@@ -1328,8 +1373,7 @@ async function loadCashData(m,y){
 }
 
 async function loadDebtors(){
-  const local=cGet(CK.debtors);
-  if(local&&local.length>0){S.debtors=local;return;}
+  // Always fetch from Firestore
   try{
     const snap=await db.collection('debtors').get();
     if(snap&&snap.size>0){
@@ -2500,6 +2544,20 @@ function openEditExp(id){
   const eb=document.getElementById('e-bank');if(eb&&tx.bank)eb.value=tx.bank;
 }
 const openEditExpense=openEditExp; // alias used in category popup
+
+// ── CASH BALANCE HELPERS ────────────────────────────────────────────────────
+function _adjustCash(bank, delta, m, y){
+  // delta: positive = add, negative = deduct
+  if(!bank||!delta) return;
+  const cash={...S.cash};
+  cash[bank]=(cash[bank]||0)+delta;
+  S.cash=cash;
+  cSet(CK.cash(m,y),cash);
+  // Persist to Firestore in background
+  if(db) db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
+  renderCashPage();renderDashboard();
+}
+
 async function saveExpense(){
   if(S.saving)return;
   const type=document.getElementById('e-type')?.value||'expense';
@@ -2558,25 +2616,40 @@ async function saveExpense(){
     saveRecurring(rl);renderRecurringCard();
   }
   try{
-    if(editId){await db.collection('transactions').doc(editId).update(data);const idx=S.txns.findIndex(t=>t.id===editId);if(idx>=0)S.txns[idx]={...S.txns[idx],...data};}
-    else{data.createdAt=firebase.firestore.FieldValue.serverTimestamp();const ref=await db.collection('transactions').add(data);S.txns.unshift({...data,id:ref.id});}
+    if(editId){
+      // Reverse old bank deduction, apply new one
+      const oldTx=S.txns.find(t=>t.id===editId);
+      if(oldTx&&oldTx.bank) _adjustCash(oldTx.bank, oldTx.amount, S.expMonth, S.expYear);   // restore old
+      await db.collection('transactions').doc(editId).update(data);
+      const idx=S.txns.findIndex(t=>t.id===editId);if(idx>=0)S.txns[idx]={...S.txns[idx],...data};
+      if(data.bank) _adjustCash(data.bank, -amt, S.expMonth, S.expYear);                     // apply new
+    } else {
+      data.createdAt=firebase.firestore.FieldValue.serverTimestamp();
+      const ref=await db.collection('transactions').add(data);
+      S.txns.unshift({...data,id:ref.id});
+      if(data.bank) _adjustCash(data.bank, -amt, S.expMonth, S.expYear);                     // deduct
+    }
     cSet(CK.txns(S.expMonth,S.expYear),S.txns);closeMod('exp-modal');const _ep=document.getElementById('e-payee-emoji');if(_ep)_ep.textContent='📦';toast(editId?'Updated':'Saved');haptic([8,40,8]);setSyncStatus('synced');renderExpenses();renderDashboard();
   }catch(e){toast('Error saving');setSyncStatus('error');}
   finally{S.saving=false;btn.textContent='Save Expense';btn.disabled=false;}
 }
 async function delExpense(id){
-  // Optimistically remove from local state immediately — no confirm, no re-fetch
   const idx=S.txns.findIndex(t=>t.id===id);
+  const tx=idx>=0?S.txns[idx]:null;
+  // Optimistically remove from local state immediately
   if(idx>=0) S.txns.splice(idx,1);
   cSet(CK.txns(S.expMonth,S.expYear),S.txns);
+  // Restore cash balance immediately
+  if(tx&&tx.bank&&tx.amount) _adjustCash(tx.bank, tx.amount, S.expMonth, S.expYear);
   renderExpenses();renderDashboard();
   haptic([6]);toast('Deleted');
   // Persist to Firestore in background
   try{await db.collection('transactions').doc(id).delete();}
   catch(e){
-    // Rollback on failure
     toast('Delete failed — restored');
-    await loadTxns(S.expMonth,S.expYear);
+    // Rollback: re-add tx and re-deduct cash
+    if(tx){S.txns.splice(idx,0,tx);cSet(CK.txns(S.expMonth,S.expYear),S.txns);}
+    if(tx&&tx.bank&&tx.amount) _adjustCash(tx.bank, -tx.amount, S.expMonth, S.expYear);
     renderExpenses();renderDashboard();
   }
 }
@@ -3384,7 +3457,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.10.8</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.11.0</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
   `;
 }
 
@@ -3661,7 +3734,7 @@ window.addEventListener('online',()=>{
         S.investments=cGet(CK.inv(m,y))||S.investments;
         S.cash=cGet(CK.cash(m,y))||S.cash;
       }
-      setSyncStatus('synced');cSet(CK.lastSync,Date.now());hideStaleBar();renderAll();
+      setSyncStatus('synced');cSet(CK.lastSync,Date.now());hideStaleBar();renderAll();startRealtimeListeners();
     }).catch(()=>setSyncStatus('error'));
   }
 });
