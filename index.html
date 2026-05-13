@@ -1717,7 +1717,11 @@ function renderDashboard(){
     <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Investments</div><div class="cval-sm">${invTotal?fmtCur(invTotal,cur,m,y):'—'}</div><div class="csub">All platforms</div></div>
   `;
 
-  // MoM commentary sentence
+  // Category spend
+  const catSpend={};
+  txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+(t.amount||0);});
+
+  // MoM commentary sentence (catSpend now available)
   (()=>{
     const el=document.getElementById('dash-commentary');
     if(!el) return;
@@ -1727,7 +1731,6 @@ function renderDashboard(){
     if(pct<2){el.textContent='Spending is in line with last month.';return;}
     const dir=diff>0?'higher':'lower';
     const col=diff>0?'var(--red)':'var(--accent)';
-    // Find biggest driver of change
     const prevCatSpend={};
     (cGet(CK.txns(prevM,prevY))||[]).forEach(t=>{prevCatSpend[t.category]=(prevCatSpend[t.category]||0)+(t.amount||0);});
     const catDiffs=Object.keys({...catSpend,...prevCatSpend}).map(c=>({c,d:(catSpend[c]||0)-(prevCatSpend[c]||0)}));
@@ -1736,10 +1739,6 @@ function renderDashboard(){
     const driver=top&&Math.abs(top.d)>5000?`, driven by ${top.d>0?'a rise in':'a drop in'} <strong>${top.c}</strong>`:'';
     el.innerHTML=`Spending is <span style="color:${col};font-weight:600">${fmtCur(Math.abs(diff),cur,m,y)} (${pct}%) ${dir}</span> vs last month${driver}.`;
   })();
-
-  // Category spend
-  const catSpend={};
-  txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+(t.amount||0);});
 
   // Expense chart
   renderCatChart(catSpend,cur,m,y);
