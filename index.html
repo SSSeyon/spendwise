@@ -73,7 +73,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);-webkit-font
 .theme-btn{background:none;border:none;cursor:pointer;padding:6px;display:flex;align-items:center;justify-content:center;color:var(--text2);transition:color 0.18s;border-radius:var(--rsm);font-size:1.1rem;line-height:1}
 .theme-btn:hover{color:var(--text);background:var(--bg2)}
 .theme-btn-knob{display:none}
-body.light .theme-btn{}
+body.light .theme-btn{color:#444}
+body.light .theme-btn:hover{color:#111;background:rgba(0,0,0,0.07)}
 body.light .theme-btn-knob{}
 .theme-btn-icon{transition:opacity 0.18s}
 .theme-icon-moon{right:4px;opacity:1}
@@ -385,7 +386,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.12.0</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.12.1</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1181,7 +1182,7 @@ let S={
   cashMonth:now.getMonth()+1,cashYear:now.getFullYear(),
   dashMonth:now.getMonth()+1,dashYear:now.getFullYear(),dashCurrency:'NGN',
   txns:[],income:[],investments:{},cash:{},debtors:[],budgets:{...DEF_BUDGETS},
-  catChart:null,trendChart:null,invChart:null,nwChart:null,
+  catChart:null,trendChart:null,invChart:null,invChart2:null,nwChart:null,
   chartType:'doughnut',
   saving:false,isStale:false,lastSync:null,fbSyncVersion:null,
   customExpLines:{}, // user-added expense lines
@@ -1220,8 +1221,8 @@ function loadFromCache(){
   S.dashCurrency=cGet(CK.currency)||'NGN';
   S.customExpLines=cGet(CK.customLines)||{};
   S.isStale=S.txns.length>0||Object.keys(S.investments).length>0||Object.keys(S.cash).length>0;
-  // Pre-build history from cache so charts show immediately before Firebase loads
-  if(!cGet('sw3_history')||!cGet('sw3_history').length) _buildHistoryFromCache();
+  // Pre-build history from cache so charts show immediately, Firebase will overwrite
+  _buildHistoryFromCache();
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1503,7 +1504,11 @@ async function loadHistoricalSummary(){
     }
     // Sort chronologically
     hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);
-    if(hist.length) cSet('sw3_history',hist);
+    if(hist.length){
+      cSet('sw3_history',hist);
+      // Re-render now that we have authoritative history from Firebase
+      renderAll();
+    }
   }catch(e){
     // On error, try to build entirely from localStorage cache
     _buildHistoryFromCache();
@@ -3019,14 +3024,15 @@ function invTab(tab,btn){
 }
 async function renderInvTrend(suffix){
   const s=suffix||'';
+  const chartKey=s?'invChart2':'invChart';  // separate instances per suffix
   try{
     const snap=await db.collection('investments').orderBy('year').orderBy('month').get();
     if(!snap||snap.empty){return;}
     const data=snap.docs.map(d=>{const doc=d.data();return{label:`${MS[doc.month-1]} '${String(doc.year).slice(2)}`,total:PLATFORMS.reduce((sum,p)=>sum+(doc[p.key]||0),0)};}).filter(d=>d.total>0);
     if(!data.length) return;
-    if(S.invChart){try{S.invChart.destroy();}catch(e){} S.invChart=null;}
-    // Replace canvas to avoid reuse errors
-    let chartEl=document.getElementById('inv-chart'+s)||document.getElementById('inv-chart');
+    if(S[chartKey]){try{S[chartKey].destroy();}catch(e){} S[chartKey]=null;}
+    // Replace canvas to avoid reuse errors — use exact suffix, no fallback
+    let chartEl=document.getElementById('inv-chart'+s);
     if(!chartEl) return;
     const newCanvas=document.createElement('canvas');
     newCanvas.id=chartEl.id;newCanvas.style.cssText='max-height:200px';
@@ -3048,7 +3054,7 @@ async function renderInvTrend(suffix){
       });
       c.restore();
     }};
-    S.invChart=new Chart(ctx,{
+    S[chartKey]=new Chart(ctx,{
       type:'line',
       data:{labels:data.map(d=>d.label),datasets:[{data:data.map(d=>d.total),borderColor:'#c8f542',backgroundColor:'rgba(200,245,66,0.06)',borderWidth:2,pointBackgroundColor:'#c8f542',pointRadius:4,tension:0.3,fill:true}]},
       options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>fmtChartNGN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}},
@@ -3975,7 +3981,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.12.0</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.12.1</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     ${renderFxCard()}
   `;
 }
