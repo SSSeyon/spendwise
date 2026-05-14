@@ -79,8 +79,7 @@ body.light .theme-btn-knob{}
 .theme-btn-icon{transition:opacity 0.18s}
 .theme-icon-moon{right:4px;opacity:1}
 .theme-icon-sun{left:4px;opacity:0}
-body.light .theme-icon-moon{opacity:0}
-body.light .theme-icon-sun{opacity:1}
+/* theme icon opacity rules removed — single-icon approach uses JS swap instead */
 
 /* ── LAYOUT ── */
 .app{display:flex;flex-direction:column;height:100vh;padding-top:var(--hh);padding-bottom:var(--nh)}
@@ -386,7 +385,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.12.2</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.12.4</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1484,7 +1483,9 @@ async function loadDebtors(){
 async function loadHistoricalSummary(){
   // Always pull from Firebase — never skip with local-always-wins
   try{
-    const snap=await db.collection('historicalSummary').orderBy('year').orderBy('month').get({source:'server'});
+    let snap;
+    try{snap=await db.collection('historicalSummary').orderBy('year').orderBy('month').get({source:'server'});}
+    catch(e){snap=await db.collection('historicalSummary').orderBy('year').orderBy('month').get();}
     const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     let hist=[];
     if(snap&&snap.size>0){
@@ -3035,7 +3036,9 @@ async function renderInvTrend(suffix){
   const s=suffix||'';
   const chartKey=s?'invChart2':'invChart';  // separate instances per suffix
   try{
-    const snap=await db.collection('investments').orderBy('year').orderBy('month').get({source:'server'});
+    let snap;
+    try{snap=await db.collection('investments').orderBy('year').orderBy('month').get({source:'server'});}
+    catch(e){snap=await db.collection('investments').orderBy('year').orderBy('month').get();}
     if(!snap||snap.empty){console.warn('renderInvTrend: no investment docs');return;}
     const data=snap.docs.map(d=>{const doc=d.data();return{label:`${MS[doc.month-1]} '${String(doc.year).slice(2)}`,total:PLATFORMS.reduce((sum,p)=>sum+(doc[p.key]||0),0)};}).filter(d=>d.total>0);
     if(!data.length){console.warn('renderInvTrend: all totals zero');return;}
@@ -3976,29 +3979,35 @@ function renderSettExport(){
 
 async function exportFullBackup(){
   toast('Building backup…');
-  try{
-    const [txSnap,incSnap,cashSnap,invSnap,debSnap,histSnap]=await Promise.all([
-      db.collection('transactions').orderBy('date','desc').get(),
-      db.collection('income').get(),
-      db.collection('cashBalances').get(),
-      db.collection('investments').get(),
-      db.collection('debtors').get(),
-      db.collection('historicalSummary').orderBy('year').orderBy('month').get(),
-    ]);
-    const backup={
-      _meta:{version:'3.7.2',generated:todayStr(),description:'SpendWise full backup'},
-      transactions:txSnap.docs.map(d=>({...d.data(),_id:d.id})),
-      income:incSnap.docs.map(d=>({...d.data(),_id:d.id})),
-      cashBalances:cashSnap.docs.map(d=>d.data()),
-      investments:invSnap.docs.map(d=>d.data()),
-      debtors:debSnap.docs.map(d=>({...d.data(),_id:d.id})),
-      historicalSummary:histSnap.docs.map(d=>d.data()),
-    };
-    const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a');a.href=url;a.download=`spendwise-backup-${todayStr()}.json`;a.click();
-    URL.revokeObjectURL(url);toast('Backup downloaded');haptic([8]);
-  }catch(e){toast('Error — check connection');console.error(e);}
+  // Fetch each collection independently so one failure doesn't abort the rest.
+  // No orderBy on transactions — avoids missing-index errors.
+  async function safeFetch(query){
+    try{const s=await query.get();return s.docs;}catch(e){console.warn('exportFullBackup fetch failed:',e);return[];}
+  }
+  const [txDocs,incDocs,cashDocs,invDocs,debDocs,histDocs]=await Promise.all([
+    safeFetch(db.collection('transactions')),
+    safeFetch(db.collection('income')),
+    safeFetch(db.collection('cashBalances')),
+    safeFetch(db.collection('investments')),
+    safeFetch(db.collection('debtors')),
+    safeFetch(db.collection('historicalSummary').orderBy('year').orderBy('month')),
+  ]);
+  const backup={
+    _meta:{version:'3.12.2',generated:todayStr(),description:'SpendWise full backup'},
+    transactions:txDocs.map(d=>({...d.data(),_id:d.id})),
+    income:incDocs.map(d=>({...d.data(),_id:d.id})),
+    cashBalances:cashDocs.map(d=>d.data()),
+    investments:invDocs.map(d=>d.data()),
+    debtors:debDocs.map(d=>({...d.data(),_id:d.id})),
+    historicalSummary:histDocs.map(d=>d.data()),
+  };
+  const totalDocs=txDocs.length+incDocs.length+cashDocs.length+invDocs.length+debDocs.length+histDocs.length;
+  if(!totalDocs){toast('Nothing to export — check connection');return;}
+  const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download=`spendwise-backup-${todayStr()}.json`;a.click();
+  URL.revokeObjectURL(url);
+  toast(`Backup downloaded (${totalDocs} records)`);haptic([8]);
 }
 function buildRows(txns,month,year){
   const rows=[[`SpendWise Export — ${month?MONTHS[month-1]+' '+year:'All Transactions'}`],[],['Date','Category','Actual Expense','Bank','Notes','Amount (₦)']];
@@ -4048,7 +4057,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.12.2</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.12.4</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     ${renderFxCard()}
   `;
 }
