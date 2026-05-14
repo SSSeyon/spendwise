@@ -3,30 +3,30 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SpendWise — Investments & Cash Import</title>
+<title>SpendWise — Investments & Cash Sync</title>
 <style>
-  body { font-family: monospace; background: #0e0e1a; color: #c8f542; padding: 24px; max-width: 740px; margin: 0 auto; }
+  body { font-family: monospace; background: #0e0e1a; color: #c8f542; padding: 24px; max-width: 800px; margin: 0 auto; }
   h2 { color: #fff; margin-bottom: 4px; }
   .sub { color: #7070a0; font-size: 0.8rem; margin-bottom: 20px; line-height: 1.7; }
-  #log { background: #161626; border: 1px solid #2a2a4a; border-radius: 8px; padding: 16px; height: 400px; white-space: pre-wrap; font-size: 0.74rem; line-height: 1.65; overflow-y: auto; }
+  #log { background: #161626; border: 1px solid #2a2a4a; border-radius: 8px; padding: 16px; height: 450px; white-space: pre-wrap; font-size: 0.74rem; line-height: 1.65; overflow-y: auto; }
   .btns { display: flex; gap: 10px; margin-top: 14px; }
   button { background: #c8f542; color: #0e0e1a; border: none; padding: 9px 22px; border-radius: 6px; font-weight: 700; font-size: 0.9rem; cursor: pointer; }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
   button.sec { background: #2a2a4a; color: #c8f542; }
   .ok { color: #c8f542; } .err { color: #f87171; } .info { color: #94a3b8; } .hdr { color: #818cf8; font-weight: bold; }
-  progress { width: 100%; height: 5px; margin-top: 10px; border-radius: 3px; accent-color: #c8f542; }
+  progress { width: 100%; height: 6px; margin-top: 12px; border-radius: 3px; accent-color: #c8f542; background: #2a2a4a; }
 </style>
 </head>
 <body>
-<h2>SpendWise — Balances Import</h2>
+<h2>SpendWise — Balances Sync</h2>
 <div class="sub">
-  Initialising historical monthly balances for <strong>Investments</strong> and <strong>Cash</strong> accounts.<br>
-  Period: Nov 2023 – Dec 2025.
+  Synchronises historical data for <strong>Investments</strong> and <strong>Cash</strong> accounts.<br>
+  Period: Nov 2023 – Dec 2025 V2.
 </div>
-<div id="log">Click "Run Import" to begin the synchronisation...</div>
+<div id="log">Click "Sync Balances" to begin...</div>
 <progress id="prog" value="0" max="100" style="display:none"></progress>
 <div class="btns">
-  <button id="btn" onclick="runImport()">Run Import</button>
+  <button id="btn" onclick="runImport()">Sync Balances</button>
   <button class="sec" onclick="document.getElementById('log').textContent=''">Clear Log</button>
 </div>
 
@@ -34,8 +34,8 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
 <script>
-// Data structure derived from CSV contents
 const MONTHS = [
   {m:11, y:2023}, {m:12, y:2023}, 
   {m:1, y:2024}, {m:2, y:2024}, {m:3, y:2024}, {m:4, y:2024}, {m:5, y:2024}, {m:6, y:2024}, 
@@ -74,6 +74,36 @@ function log(msg, cls='') {
   el.scrollTop = el.scrollHeight;
 }
 
+async function processSet(dataArray, collectionName, prefix, typeLabel) {
+  log(`\n── SYNCING ${typeLabel.toUpperCase()}`, 'hdr');
+  let ok = 0;
+  for (let item of dataArray) {
+    for (let i = 0; i < MONTHS.length; i++) {
+      const {m, y} = MONTHS[i];
+      const amount = item.vals[i] || 0;
+      const docId = `hist_${prefix}_${y}_${String(m).padStart(2,'0')}_${item.cat.replace(/\s+/g, '_')}`;
+      
+      try {
+        await db.collection(collectionName).doc(docId).set({
+          category: item.cat,
+          amount: amount,
+          month: m,
+          year: y,
+          type: typeLabel,
+          imported: true,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        ok++;
+      } catch(e) {
+        log(`  ✗ ${item.cat} [${m}/${y}]: ${e.message}`, 'err');
+      }
+      document.getElementById('prog').value++;
+    }
+    log(`  ✓ ${item.cat} balances written.`, 'ok');
+  }
+  return ok;
+}
+
 async function runImport() {
   if (running) return;
   running = true;
@@ -86,82 +116,25 @@ async function runImport() {
 
   try {
     if (!db) {
-      log('Initialising Firebase Services...');
-      if (!firebase.apps.length) {
-        firebase.initializeApp(firebaseConfig);
-      }
+      log('Initialising Firebase...');
+      if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
       db = firebase.firestore();
       auth = firebase.auth();
       
-      log('Authenticating session...');
+      log('Authenticating...');
       await auth.signInAnonymously();
       log('Authenticated successfully.\n');
     }
 
-    let success = 0, error = 0;
-    const total = (INVESTMENT_DATA.length + CASH_DATA.length) * MONTHS.length;
-    prog.max = total;
+    const totalSteps = (INVESTMENT_DATA.length + CASH_DATA.length) * MONTHS.length;
+    prog.max = totalSteps;
 
-    // Process Investments
-    log('── PROCESSING INVESTMENTS', 'hdr');
-    for (let asset of INVESTMENT_DATA) {
-      for (let i = 0; i < MONTHS.length; i++) {
-        const {m, y} = MONTHS[i];
-        const amount = asset.vals[i] || 0;
-        const docId = `hist_inv_${y}_${String(m).padStart(2,'0')}_${asset.cat}`;
-        
-        try {
-          await db.collection('investments').doc(docId).set({
-            category: asset.cat,
-            amount: amount,
-            month: m,
-            year: y,
-            type: 'investment',
-            imported: true,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-          }, { merge: true });
-          success++;
-        } catch(e) {
-          log(`  ✗ ${asset.cat} [${m}/${y}]: ${e.message}`, 'err');
-          error++;
-        }
-        prog.value = success + error;
-      }
-      log(`  ✓ Completed: ${asset.cat}`, 'ok');
-    }
+    await processSet(INVESTMENT_DATA, 'investments', 'inv', 'investment');
+    await processSet(CASH_DATA, 'cash', 'csh', 'cash');
 
-    // Process Cash
-    log('\n── PROCESSING CASH BALANCES', 'hdr');
-    for (let asset of CASH_DATA) {
-      for (let i = 0; i < MONTHS.length; i++) {
-        const {m, y} = MONTHS[i];
-        const amount = asset.vals[i] || 0;
-        const docId = `hist_cash_${y}_${String(m).padStart(2,'0')}_${asset.cat}`;
-        
-        try {
-          await db.collection('cash').doc(docId).set({
-            category: asset.cat,
-            amount: amount,
-            month: m,
-            year: y,
-            type: 'cash',
-            imported: true,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-          }, { merge: true });
-          success++;
-        } catch(e) {
-          log(`  ✗ ${asset.cat} [${m}/${y}]: ${e.message}`, 'err');
-          error++;
-        }
-        prog.value = success + error;
-      }
-      log(`  ✓ Completed: ${asset.cat}`, 'ok');
-    }
-
-    log(`\nImport Finished. Successfully updated: ${success}. Failures: ${error}.`, 'info');
-
-  } catch (globalErr) {
-    log(`\nCRITICAL ERROR: ${globalErr.message}`, 'err');
+    log(`\nSYNC COMPLETE.`, 'info');
+  } catch (err) {
+    log(`\nCRITICAL ERROR: ${err.message}`, 'err');
   } finally {
     running = false;
     btn.disabled = false;
