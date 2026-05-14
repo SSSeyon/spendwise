@@ -385,7 +385,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.12.4</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.12.5</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1483,9 +1483,10 @@ async function loadDebtors(){
 async function loadHistoricalSummary(){
   // Always pull from Firebase — never skip with local-always-wins
   try{
+    // No orderBy — sort client-side to avoid composite index requirement
     let snap;
-    try{snap=await db.collection('historicalSummary').orderBy('year').orderBy('month').get({source:'server'});}
-    catch(e){snap=await db.collection('historicalSummary').orderBy('year').orderBy('month').get();}
+    try{snap=await db.collection('historicalSummary').get({source:'server'});}
+    catch(e){snap=await db.collection('historicalSummary').get();}
     const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     let hist=[];
     if(snap&&snap.size>0){
@@ -1493,23 +1494,44 @@ async function loadHistoricalSummary(){
         label:h.label||(MS2[(h.month||1)-1]+" '"+String(h.year).slice(2)),
         income:h.income||0,expenses:h.expenses||0};});
     }
-    // Augment with any months NOT in historicalSummary but present in localStorage cache
-    // This covers months entered live (Jan–May 2026) that aren't in the seeded historicalSummary
+    // Augment with live months not yet in historicalSummary.
+    // Check Firestore transactions/income collections (not just localStorage)
+    // so mobile devices with no local cache also see all months.
     const histKeys=new Set(hist.map(h=>`${h.year}-${h.month}`));
-    // Scan localStorage for sw3_txns_* and sw3_inc_* keys
-    for(let y=2023;y<=new Date().getFullYear();y++){
-      for(let m=1;m<=12;m++){
-        const key=`${y}-${m}`;
-        if(histKeys.has(key)) continue; // already have it from Firebase
-        const txns=cGet(CK.txns(m,y));
-        const inc=cGet(CK.inc(m,y));
-        if(!txns&&!inc) continue;
-        const expenses=(txns||[]).reduce((s,t)=>s+(t.amount||0),0);
-        const income=(inc||[]).reduce((s,i)=>s+(i.amount||0),0);
-        if(!expenses&&!income) continue;
-        hist.push({year:y,month:m,
-          label:MS2[m-1]+" '"+String(y).slice(2),
-          income,expenses});
+    try{
+      const [txAllSnap,incAllSnap]=await Promise.all([
+        db.collection('transactions').get(),
+        db.collection('income').get(),
+      ]);
+      // Group by year-month
+      const txByMonth={}, incByMonth={};
+      txAllSnap.docs.forEach(d=>{const h=d.data();if(!h.year||!h.month) return;const k=`${h.year}-${h.month}`;txByMonth[k]=(txByMonth[k]||[]);txByMonth[k].push(h);});
+      incAllSnap.docs.forEach(d=>{const h=d.data();if(!h.year||!h.month) return;const k=`${h.year}-${h.month}`;incByMonth[k]=(incByMonth[k]||[]);incByMonth[k].push(h);});
+      const allMonthKeys=new Set([...Object.keys(txByMonth),...Object.keys(incByMonth)]);
+      allMonthKeys.forEach(k=>{
+        if(histKeys.has(k)) return;
+        const [ys,ms]=k.split('-');const y=parseInt(ys),m=parseInt(ms);
+        const expenses=(txByMonth[k]||[]).reduce((s,t)=>s+(t.amount||0),0);
+        const income=(incByMonth[k]||[]).reduce((s,t)=>s+(t.amount||0),0);
+        if(!expenses&&!income) return;
+        hist.push({year:y,month:m,label:MS2[m-1]+" '"+String(y).slice(2),income,expenses});
+        histKeys.add(k);
+      });
+    }catch(e){
+      // Firestore scan failed — fall back to localStorage only
+      for(let y=2023;y<=new Date().getFullYear();y++){
+        for(let m=1;m<=12;m++){
+          const key=`${y}-${m}`;
+          if(histKeys.has(key)) continue;
+          const txns=cGet(CK.txns(m,y));
+          const inc=cGet(CK.inc(m,y));
+          if(!txns&&!inc) continue;
+          const expenses=(txns||[]).reduce((s,t)=>s+(t.amount||0),0);
+          const income=(inc||[]).reduce((s,i)=>s+(i.amount||0),0);
+          if(!expenses&&!income) continue;
+          hist.push({year:y,month:m,label:MS2[m-1]+" '"+String(y).slice(2),income,expenses});
+          histKeys.add(key);
+        }
       }
     }
     // Sort chronologically
@@ -3036,11 +3058,15 @@ async function renderInvTrend(suffix){
   const s=suffix||'';
   const chartKey=s?'invChart2':'invChart';  // separate instances per suffix
   try{
+    // No orderBy — avoids composite index requirement; sort client-side instead
     let snap;
-    try{snap=await db.collection('investments').orderBy('year').orderBy('month').get({source:'server'});}
-    catch(e){snap=await db.collection('investments').orderBy('year').orderBy('month').get();}
+    try{snap=await db.collection('investments').get({source:'server'});}
+    catch(e){snap=await db.collection('investments').get();}
     if(!snap||snap.empty){console.warn('renderInvTrend: no investment docs');return;}
-    const data=snap.docs.map(d=>{const doc=d.data();return{label:`${MS[doc.month-1]} '${String(doc.year).slice(2)}`,total:PLATFORMS.reduce((sum,p)=>sum+(doc[p.key]||0),0)};}).filter(d=>d.total>0);
+    const data=snap.docs
+      .map(d=>{const doc=d.data();return{year:doc.year,month:doc.month,label:`${MS[(doc.month||1)-1]} '${String(doc.year||2024).slice(2)}`,total:PLATFORMS.reduce((sum,p)=>sum+(doc[p.key]||0),0)};})
+      .filter(d=>d.total>0)
+      .sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);
     if(!data.length){console.warn('renderInvTrend: all totals zero');return;}
     if(S[chartKey]){try{S[chartKey].destroy();}catch(e){} S[chartKey]=null;}
     // Find canvas — look up by ID, ensure it is visible before drawing
@@ -3990,7 +4016,7 @@ async function exportFullBackup(){
     safeFetch(db.collection('cashBalances')),
     safeFetch(db.collection('investments')),
     safeFetch(db.collection('debtors')),
-    safeFetch(db.collection('historicalSummary').orderBy('year').orderBy('month')),
+    safeFetch(db.collection('historicalSummary')),
   ]);
   const backup={
     _meta:{version:'3.12.2',generated:todayStr(),description:'SpendWise full backup'},
@@ -4057,7 +4083,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.12.4</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.12.5</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     ${renderFxCard()}
   `;
 }
