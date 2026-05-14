@@ -385,7 +385,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.12.5</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.12.6</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -3860,21 +3860,28 @@ function expandHistRow(rowKey,year,month){
 }
 async function _loadHistDetail(d, el){
   const m=d.month,y=d.year;
+  const sid_=`${y}-${String(m).padStart(2,'0')}`;
   // Always fetch from Firebase for history months so data is never stale
-  let txns=[],inc=[];
+  let txns=[],inc=[],invData={},cashData={};
   try{
-    const [txSnap,incSnap]=await Promise.all([
+    const [txSnap,incSnap,invDoc,cashDoc]=await Promise.all([
       db.collection('transactions').where('year','==',y).where('month','==',m).get(),
-      db.collection('income').where('year','==',y).where('month','==',m).get()
+      db.collection('income').where('year','==',y).where('month','==',m).get(),
+      db.collection('investments').doc(sid_).get(),
+      db.collection('cashBalances').doc(sid_).get()
     ]);
     txns=txSnap.docs.map(doc=>({id:doc.id,...doc.data()}));
     inc=incSnap.docs.map(doc=>({id:doc.id,...doc.data()}));
     if(txns.length) cSet(CK.txns(m,y),txns);
     if(inc.length) cSet(CK.inc(m,y),inc);
+    if(invDoc.exists) invData=invDoc.data();
+    if(cashDoc.exists) cashData=cashDoc.data();
   }catch(e){
     // Offline fallback
     txns=cGet(CK.txns(m,y))||[];
     inc=cGet(CK.inc(m,y))||[];
+    invData=cGet(CK.inv(m,y))||{};
+    cashData=cGet(CK.cash(m,y))||{};
   }
   const totalExp=txns.reduce((s,t)=>s+(t.amount||0),0);
   const totalInc=inc.reduce((s,i)=>s+(i.amount||0),0);
@@ -3893,18 +3900,117 @@ async function _loadHistDetail(d, el){
       <span style="font-size:0.7rem;color:var(--text2)">${c}</span>
       <span style="font-family:var(--mono);font-size:0.7rem;color:var(--accent)">${fN(v)}</span>
     </div>`).join('');
-  if(!expRows&&!incRows){el.innerHTML='<div style="color:var(--text3);font-size:0.68rem;padding:4px">No data available for this month.</div>';return;}
-  // Two-column: income under income header, expenses under expenses header
-  el.innerHTML=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start">
-    <div>
-      <div style="font-size:0.58rem;font-weight:700;color:var(--accent);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Income — ${fN(totalInc)}</div>
-      ${incRows||'<div style="font-size:0.68rem;color:var(--text3);padding:4px 0">—</div>'}
+  // Cash rows: display mode
+  const cashAccounts=getCashAccounts().concat(['Union']).filter((a,i,arr)=>arr.indexOf(a)===i);
+  const cashRows=cashAccounts.filter(a=>cashData[a]!==undefined).map(a=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
+      <span style="font-size:0.7rem;color:var(--text2)">${a}</span>
+      <span style="font-family:var(--mono);font-size:0.7rem;color:var(--blue)">${fN(cashData[a])}</span>
+    </div>`).join('');
+  // Investment rows: display mode
+  const USD_PLATS=['Risevest','Trove','Bamboo','USDHoldings'];
+  const invRows=PLATFORMS.filter(p=>invData[p.key]!==undefined&&invData[p.key]!==0).map(p=>{
+    const isUSD=USD_PLATS.includes(p.key);
+    const disp=isUSD?`$${Number(invData[p.key]).toLocaleString('en-NG',{maximumFractionDigits:0})}`:`₦${Number(invData[p.key]).toLocaleString('en-NG',{maximumFractionDigits:0})}`;
+    return`<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
+      <span style="font-size:0.7rem;color:var(--text2)">${p.label}</span>
+      <span style="font-family:var(--mono);font-size:0.7rem;color:var(--gold)">${disp}</span>
+    </div>`;}).join('');
+  // Cash edit inputs
+  const cashInputs=cashAccounts.map(a=>`
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+      <label style="font-size:0.62rem;color:var(--text2);width:68px;flex-shrink:0">${a}</label>
+      <input class="ifield" type="number" inputmode="decimal" id="hd-cash-${sid_}-${a}" placeholder="0" value="${cashData[a]!==undefined?cashData[a]:''}" style="padding:4px 8px;font-size:0.72rem;font-family:var(--mono)">
+    </div>`).join('');
+  // Investment edit inputs
+  const invInputs=PLATFORMS.map(p=>{
+    const isUSD=USD_PLATS.includes(p.key);
+    const cur=isUSD?'USD':'₦';
+    return`<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+      <label style="font-size:0.62rem;color:var(--text2);width:88px;flex-shrink:0">${p.label} <span style="color:var(--text3)">(${cur})</span></label>
+      <input class="ifield" type="number" inputmode="decimal" id="hd-inv-${sid_}-${p.key}" placeholder="0" value="${invData[p.key]!==undefined?invData[p.key]:''}" style="padding:4px 8px;font-size:0.72rem;font-family:var(--mono)">
+    </div>`;}).join('');
+  const editId=`hd-edit-${sid_}`;
+  const noBalances=!cashRows&&!invRows;
+  el.innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start">
+      <div>
+        <div style="font-size:0.58rem;font-weight:700;color:var(--accent);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Income — ${fN(totalInc)}</div>
+        ${incRows||'<div style="font-size:0.68rem;color:var(--text3);padding:4px 0">—</div>'}
+      </div>
+      <div>
+        <div style="font-size:0.58rem;font-weight:700;color:var(--red);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Expenses — ${fN(totalExp)}</div>
+        ${expRows||'<div style="font-size:0.68rem;color:var(--text3);padding:4px 0">—</div>'}
+      </div>
     </div>
-    <div>
-      <div style="font-size:0.58rem;font-weight:700;color:var(--red);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Expenses — ${fN(totalExp)}</div>
-      ${expRows||'<div style="font-size:0.68rem;color:var(--text3);padding:4px 0">—</div>'}
-    </div>
-  </div>`;
+    <div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div style="font-size:0.58rem;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em">Cash &amp; Investments</div>
+        <button style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--accent);font-size:0.58rem;font-weight:700;padding:2px 8px;cursor:pointer;font-family:var(--font)" onclick="_toggleHistBalEdit('${editId}')">✎ Edit</button>
+      </div>
+      ${noBalances?'<div style="font-size:0.68rem;color:var(--text3);padding:2px 0">No balances recorded for this month.</div>':''}
+      ${cashRows?`<div style="font-size:0.58rem;font-weight:700;color:var(--blue);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.04em">Cash</div>${cashRows}`:''}
+      ${invRows?`<div style="font-size:0.58rem;font-weight:700;color:var(--gold);margin-top:6px;margin-bottom:3px;text-transform:uppercase;letter-spacing:0.04em">Investments</div>${invRows}`:''}
+      <div id="${editId}" style="display:none;margin-top:10px;background:var(--bg3);border-radius:6px;padding:10px">
+        <div style="font-size:0.6rem;font-weight:700;color:var(--blue);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.06em">Cash Balances</div>
+        ${cashInputs}
+        <div style="font-size:0.6rem;font-weight:700;color:var(--gold);margin-top:10px;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.06em">Investment Balances</div>
+        ${invInputs}
+        <div style="display:flex;gap:6px;margin-top:10px">
+          <button class="btn btn-p" style="flex:1;font-size:0.72rem;padding:7px" onclick="_saveHistBalances('${sid_}',${m},${y})">Save Balances</button>
+          <button class="btn btn-g" style="font-size:0.72rem;padding:7px" onclick="document.getElementById('${editId}').style.display='none'">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
+function _toggleHistBalEdit(editId){
+  const el=document.getElementById(editId);
+  if(!el) return;
+  el.style.display=el.style.display==='none'?'block':'none';
+}
+async function _saveHistBalances(sid_,m,y){
+  const cashAccounts=getCashAccounts().concat(['Union']).filter((a,i,arr)=>arr.indexOf(a)===i);
+  const USD_PLATS=['Risevest','Trove','Bamboo','USDHoldings'];
+  // Build cash doc
+  const cashDoc={month:m,year:y};
+  cashAccounts.forEach(a=>{
+    const el=document.getElementById(`hd-cash-${sid_}-${a}`);
+    if(!el) return;
+    const v=el.value.trim();
+    if(v!=='') cashDoc[a]=parseFloat(v)||0;
+  });
+  // Build inv doc
+  const invDoc={month:m,year:y};
+  PLATFORMS.forEach(p=>{
+    const el=document.getElementById(`hd-inv-${sid_}-${p.key}`);
+    if(!el) return;
+    const v=el.value.trim();
+    if(v!=='') invDoc[p.key]=parseFloat(v)||0;
+  });
+  try{
+    await Promise.all([
+      db.collection('cashBalances').doc(sid_).set(cashDoc,{merge:true}),
+      db.collection('investments').doc(sid_).set(invDoc,{merge:true})
+    ]);
+    cSet(CK.cash(m,y),cashDoc);
+    cSet(CK.inv(m,y),invDoc);
+    toast('Balances saved');
+    setSyncStatus('synced');
+    // Refresh current month if it matches
+    if(m===S.expMonth&&y===S.expYear){
+      S.cash=cashDoc;S.investments=invDoc;
+      renderCashPage();renderInvestments();renderDashboard();
+    }
+    // Collapse edit panel and reload detail
+    const editId=`hd-edit-${sid_}`;
+    const editEl=document.getElementById(editId);
+    if(editEl) editEl.style.display='none';
+    const rowKey=`${y}-${m}`;
+    const detailEl=document.getElementById(`hist-detail-${rowKey}`);
+    if(detailEl) _loadHistDetail({month:m,year:y},detailEl);
+  }catch(e){
+    toast('Error: '+e.message);setSyncStatus('error');
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -4083,7 +4189,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.12.5</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.12.6</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     ${renderFxCard()}
   `;
 }
