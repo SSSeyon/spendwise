@@ -5,54 +5,56 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SpendWise — Investments & Cash Import</title>
 <style>
-  body{font-family:monospace;background:#0e0e1a;color:#c8f542;padding:24px;max-width:740px;margin:0 auto}
-  h2{color:#fff;margin-bottom:4px}
-  .sub{color:#7070a0;font-size:0.8rem;margin-bottom:20px;line-height:1.7}
-  #log{background:#161626;border:1px solid #2a2a4a;border-radius:8px;padding:16px;height:400px;white-space:pre-wrap;font-size:0.74rem;line-height:1.65;overflow-y:auto}
-  .btns{display:flex;gap:10px;margin-top:14px}
-  button{background:#c8f542;color:#0e0e1a;border:none;padding:9px 22px;border-radius:6px;font-weight:700;font-size:0.9rem;cursor:pointer}
-  button:disabled{opacity:0.4;cursor:not-allowed}
-  button.sec{background:#2a2a4a;color:#c8f542}
-  .ok{color:#c8f542}.err{color:#f87171}.info{color:#94a3b8}.hdr{color:#818cf8;font-weight:bold}
-  progress{width:100%;height:5px;margin-top:10px;border-radius:3px;accent-color:#c8f542}
+  body { font-family: monospace; background: #0e0e1a; color: #c8f542; padding: 24px; max-width: 740px; margin: 0 auto; }
+  h2 { color: #fff; margin-bottom: 4px; }
+  .sub { color: #7070a0; font-size: 0.8rem; margin-bottom: 20px; line-height: 1.7; }
+  #log { background: #161626; border: 1px solid #2a2a4a; border-radius: 8px; padding: 16px; height: 400px; white-space: pre-wrap; font-size: 0.74rem; line-height: 1.65; overflow-y: auto; }
+  .btns { display: flex; gap: 10px; margin-top: 14px; }
+  button { background: #c8f542; color: #0e0e1a; border: none; padding: 9px 22px; border-radius: 6px; font-weight: 700; font-size: 0.9rem; cursor: pointer; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.sec { background: #2a2a4a; color: #c8f542; }
+  .ok { color: #c8f542; } .err { color: #f87171; } .info { color: #94a3b8; } .hdr { color: #818cf8; font-weight: bold; }
+  progress { width: 100%; height: 5px; margin-top: 10px; border-radius: 3px; accent-color: #c8f542; }
 </style>
 </head>
 <body>
 <h2>SpendWise — Balances Import</h2>
 <div class="sub">
-  Writes historical balances for <strong>Investments</strong> and <strong>Cash</strong> accounts.<br>
-  Covers Nov 2023 – Dec 2025 · Uses stable IDs to prevent duplicate entries.
+  Initialising historical monthly balances for <strong>Investments</strong> and <strong>Cash</strong> accounts.<br>
+  Period: Nov 2023 – Dec 2025.
 </div>
-<div id="log">Press Import to begin…</div>
+<div id="log">Click "Run Import" to begin the synchronisation...</div>
 <progress id="prog" value="0" max="100" style="display:none"></progress>
 <div class="btns">
-  <button id="btn" onclick="runImport()">Import Balances</button>
-  <button class="sec" onclick="document.getElementById('log').textContent=''">Clear</button>
+  <button id="btn" onclick="runImport()">Run Import</button>
+  <button class="sec" onclick="document.getElementById('log').textContent=''">Clear Log</button>
 </div>
 
+<!-- Firebase Compat SDKs -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script>
 // Data structure derived from CSV contents
-const INV_DATA = [
-  {"category": "Piggy", "balances": [2985719, 2396163, 1687911, 493623, 496967, 496967, 2303, 2412, 2435, 2461, 602486, 607822, 113998, 118560, 119764, 120984, 122096, 127096, 129580, 130900, 1509, 1509, 1509, 1509, 1509, 5001509]},
-  {"category": "RenVault", "balances": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 970075, 984800, 999050, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200603, 711765]},
-  {"category": "Risevest", "balances": [0, 0, 0, 0, 0, 0, 395413, 433412, 399407, 395416, 423436, 455394, 377405, 410436, 422423, 435414, 415000, 415000, 415000, 415000, 415000, 415000, 415000, 415000, 415000, 415000]},
-  {"category": "Trove", "balances": [0, 0, 0, 0, 0, 0, 200203, 399617, 845000, 1052, 1244, 1513, 1415, 1422, 1434, 1396, 1347, 1371, 1402, 1460, 1466, 1488, 1540, 1564, 1577, 1577]},
-  {"category": "Bamboo", "balances": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 194393, 599749, 733000, 1046, 1082, 1467, 1484, 1795, 2172, 2097, 2390, 2390]}
-];
-
-const CASH_DATA = [
-  {"category": "GTB", "balances": [4087, 1335596, 5340, 6732, 4286, -90567, 12866, 3124, 8188, 803439, 3368, 2947, 69750, 2060, 19118, 4681, 16240, 413094, 103052, 329711, 37137, 6632, 31448, 24961, 214698, 214698]},
-  {"category": "Access", "balances": [0, 0, 0, 0, 0, 0, 0, 0, 818, 4290, 142266, 537, -2632, 2651, 5952, 321, 16559, 5542, 5950, 5330, 502, 452, 298, 298, 298, 298]}
-];
-
 const MONTHS = [
   {m:11, y:2023}, {m:12, y:2023}, 
   {m:1, y:2024}, {m:2, y:2024}, {m:3, y:2024}, {m:4, y:2024}, {m:5, y:2024}, {m:6, y:2024}, 
   {m:7, y:2024}, {m:8, y:2024}, {m:9, y:2024}, {m:10, y:2024}, {m:11, y:2024}, {m:12, y:2024},
   {m:1, y:2025}, {m:2, y:2025}, {m:3, y:2025}, {m:4, y:2025}, {m:5, y:2025}, {m:6, y:2025}, 
   {m:7, y:2025}, {m:8, y:2025}, {m:9, y:2025}, {m:10, y:2025}, {m:11, y:2025}, {m:12, y:2025}
+];
+
+const INVESTMENT_DATA = [
+  { "cat": "Piggy", "vals": [2985719, 2396163, 1687911, 493623, 496967, 496967, 2303, 2412, 2435, 2461, 602486, 607822, 113998, 118560, 119764, 120984, 122096, 127096, 129580, 130900, 1509, 1509, 1509, 1509, 1509, 5001509] },
+  { "cat": "RenVault", "vals": [0,0,0,0,0,0,0,0,0,0,970075, 984800, 999050, 0,0,0,0,0,0,0,0,0,0,0,200603, 711765] },
+  { "cat": "Risevest", "vals": [0,0,0,0,0,0,395413, 433412, 399407, 395416, 423436, 455394, 377405, 410436, 422423, 435414, 415000, 415000, 415000, 415000, 415000, 415000, 415000, 415000, 415000, 415000] },
+  { "cat": "Trove", "vals": [0,0,0,0,0,0,200203, 399617, 845000, 1052, 1244, 1513, 1415, 1422, 1434, 1396, 1347, 1371, 1402, 1460, 1466, 1488, 1540, 1564, 1577, 1577] },
+  { "cat": "Bamboo", "vals": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,194393, 599749, 733000, 1046, 1082, 1467, 1484, 1795, 2172, 2097, 2390, 2390] }
+];
+
+const CASH_DATA = [
+  { "cat": "GTB", "vals": [4087, 1335596, 5340, 6732, 4286, -90567, 12866, 3124, 8188, 803439, 3368, 2947, 69750, 2060, 19118, 4681, 16240, 413094, 103052, 329711, 37137, 6632, 31448, 24961, 214698, 214698] },
+  { "cat": "Access", "vals": [0,0,0,0,0,0,0,0,818, 4290, 142266, 537, -2632, 2651, 5952, 321, 16559, 5542, 5950, 5330, 502, 452, 298, 298, 298, 298] }
 ];
 
 const firebaseConfig = {
@@ -64,7 +66,7 @@ const firebaseConfig = {
   appId: "1:367357597148:web:785a8a101b7a6616429532"
 };
 
-let db, running = false;
+let db, auth, running = false;
 
 function log(msg, cls='') {
   const el = document.getElementById('log');
@@ -73,7 +75,7 @@ function log(msg, cls='') {
 }
 
 async function runImport() {
-  if(running) return;
+  if (running) return;
   running = true;
   const btn = document.getElementById('btn');
   const prog = document.getElementById('prog');
@@ -82,72 +84,88 @@ async function runImport() {
   prog.value = 0;
   document.getElementById('log').textContent = '';
 
-  if(!db) {
-    log('Connecting to Firebase…');
-    try { firebase.initializeApp(firebaseConfig); } catch(e) {}
-    db = firebase.firestore();
-    log('Connected.\n');
-  }
-
-  let ok = 0, fail = 0;
-  const total = (INV_DATA.length + CASH_DATA.length) * MONTHS.length;
-  prog.max = total;
-
-  // Process Investments
-  log('── IMPORTING INVESTMENTS', 'hdr');
-  for(let item of INV_DATA) {
-    for(let i=0; i < MONTHS.length; i++) {
-      const {m, y} = MONTHS[i];
-      const val = item.balances[i] || 0;
-      const docId = `hist_inv_${y}_${String(m).padStart(2,'0')}_${item.category.replace(/\s+/g, '_')}`;
-      try {
-        await db.collection('investments').doc(docId).set({
-          category: item.category,
-          amount: val,
-          month: m,
-          year: y,
-          type: 'investment',
-          notes: 'Historical balance import'
-        }, {merge: true});
-        ok++;
-      } catch(e) {
-        log(`  ✗ ${item.category} (${m}/${y}): ${e.message}`, 'err');
-        fail++;
+  try {
+    if (!db) {
+      log('Initialising Firebase Services...');
+      if (!firebase.apps.length) {
+        firebase.initializeApp(firebaseConfig);
       }
-      prog.value = ok + fail;
+      db = firebase.firestore();
+      auth = firebase.auth();
+      
+      log('Authenticating session...');
+      await auth.signInAnonymously();
+      log('Authenticated successfully.\n');
     }
-    log(`  ✓ Finished ${item.category}`, 'ok');
-  }
 
-  // Process Cash
-  log('\n── IMPORTING CASH BALANCES', 'hdr');
-  for(let item of CASH_DATA) {
-    for(let i=0; i < MONTHS.length; i++) {
-      const {m, y} = MONTHS[i];
-      const val = item.balances[i] || 0;
-      const docId = `hist_cash_${y}_${String(m).padStart(2,'0')}_${item.category.replace(/\s+/g, '_')}`;
-      try {
-        await db.collection('cash').doc(docId).set({
-          category: item.category,
-          amount: val,
-          month: m,
-          year: y,
-          type: 'cash',
-          notes: 'Historical balance import'
-        }, {merge: true});
-        ok++;
-      } catch(e) {
-        log(`  ✗ ${item.category} (${m}/${y}): ${e.message}`, 'err');
-        fail++;
+    let success = 0, error = 0;
+    const total = (INVESTMENT_DATA.length + CASH_DATA.length) * MONTHS.length;
+    prog.max = total;
+
+    // Process Investments
+    log('── PROCESSING INVESTMENTS', 'hdr');
+    for (let asset of INVESTMENT_DATA) {
+      for (let i = 0; i < MONTHS.length; i++) {
+        const {m, y} = MONTHS[i];
+        const amount = asset.vals[i] || 0;
+        const docId = `hist_inv_${y}_${String(m).padStart(2,'0')}_${asset.cat}`;
+        
+        try {
+          await db.collection('investments').doc(docId).set({
+            category: asset.cat,
+            amount: amount,
+            month: m,
+            year: y,
+            type: 'investment',
+            imported: true,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+          success++;
+        } catch(e) {
+          log(`  ✗ ${asset.cat} [${m}/${y}]: ${e.message}`, 'err');
+          error++;
+        }
+        prog.value = success + error;
       }
-      prog.value = ok + fail;
+      log(`  ✓ Completed: ${asset.cat}`, 'ok');
     }
-    log(`  ✓ Finished ${item.category}`, 'ok');
-  }
 
-  log(`\nImport Complete. Success: ${ok}, Errors: ${fail}`, 'info');
-  running = false;
-  btn.disabled = false;
+    // Process Cash
+    log('\n── PROCESSING CASH BALANCES', 'hdr');
+    for (let asset of CASH_DATA) {
+      for (let i = 0; i < MONTHS.length; i++) {
+        const {m, y} = MONTHS[i];
+        const amount = asset.vals[i] || 0;
+        const docId = `hist_cash_${y}_${String(m).padStart(2,'0')}_${asset.cat}`;
+        
+        try {
+          await db.collection('cash').doc(docId).set({
+            category: asset.cat,
+            amount: amount,
+            month: m,
+            year: y,
+            type: 'cash',
+            imported: true,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          }, { merge: true });
+          success++;
+        } catch(e) {
+          log(`  ✗ ${asset.cat} [${m}/${y}]: ${e.message}`, 'err');
+          error++;
+        }
+        prog.value = success + error;
+      }
+      log(`  ✓ Completed: ${asset.cat}`, 'ok');
+    }
+
+    log(`\nImport Finished. Successfully updated: ${success}. Failures: ${error}.`, 'info');
+
+  } catch (globalErr) {
+    log(`\nCRITICAL ERROR: ${globalErr.message}`, 'err');
+  } finally {
+    running = false;
+    btn.disabled = false;
+  }
 }
 </script>
 </body>
