@@ -1,341 +1,113 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, RotateCcw, Volume2, VolumeX, Maximize, Loader2, Sparkles } from 'lucide-react';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SpendWise — Cash &amp; Investments Import</title>
+<style>
+  body{font-family:monospace;background:#0e0e1a;color:#c8f542;padding:24px;max-width:740px;margin:0 auto}
+  h2{color:#fff;margin-bottom:4px}
+  .sub{color:#7070a0;font-size:0.8rem;margin-bottom:20px;line-height:1.7}
+  #log{background:#161626;border:1px solid #2a2a4a;border-radius:8px;padding:16px;height:400px;white-space:pre-wrap;font-size:0.74rem;line-height:1.65;overflow-y:auto}
+  .btns{display:flex;gap:10px;margin-top:14px}
+  button{background:#c8f542;color:#0e0e1a;border:none;padding:9px 22px;border-radius:6px;font-weight:700;font-size:0.9rem;cursor:pointer}
+  button:disabled{opacity:0.4;cursor:not-allowed}
+  button.sec{background:#2a2a4a;color:#c8f542}
+  .ok{color:#c8f542}.err{color:#f87171}.info{color:#94a3b8}.hdr{color:#818cf8;font-weight:bold}
+  progress{width:100%;height:5px;margin-top:10px;border-radius:3px;accent-color:#c8f542}
+</style>
+</head>
+<body>
+<h2>SpendWise — Cash &amp; Investments Import</h2>
+<div class="sub">
+  Writes <strong>26 investment</strong> + <strong>26 cash balance</strong> records into Firestore.<br>
+  Covers Nov 2023 – Dec 2025 · Keyed by YYYY-MM — safe to re-run, won't create duplicates.
+</div>
+<div id="log">Press Import to begin…</div>
+<progress id="prog" value="0" max="52" style="display:none"></progress>
+<div class="btns">
+  <button id="btn" onclick="runImport()">Import Cash &amp; Investment Data</button>
+  <button class="sec" onclick="document.getElementById('log').textContent=''">Clear</button>
+</div>
 
-const apiKey = ""; // Provided by environment
-
-const storyPages = [
-  {
-    id: 1,
-    title: "A Golden Sparkle",
-    text: "Titi was playing with her app when the screen began to glow with golden sparkles. Out hopped a tiny, colourful bird named Zuzu! 'Come with me, Titi!' Zuzu chirped. Titi took Zuzu's wing and stepped right into the screen.",
-    voiceText: "Titi was playing with her Little Linguist app when the screen began to glow with golden sparkles. Out hopped a tiny, colourful bird named Zuzu! Come with me, Titi! Zuzu chirped. Titi took Zuzu's wing and stepped right into the screen.",
-    prompt: "A whimsical 3D digital illustration of a cute 3-year-old girl named Titi with pigtails, wearing a colourful dress. She is looking at a glowing tablet as a small magical bird with rainbow feathers hops out. Bedroom setting with magical golden sparkles, Pixar style, soft lighting."
-  },
-  {
-    id: 2,
-    title: "The World of Colours",
-    text: "They arrived in a land of floating islands. Titi looked up and saw a giant bridge of light. 'A Rainbow!' she shouted. Zuzu nodded. 'In Yorùbá, a Rainbow is Òșùmàrè. In Gungbe, it is Àyidò-hwèdò.'",
-    voiceText: "They arrived in a land of floating islands. Titi looked up and saw a giant bridge of light. A Rainbow! she shouted. Zuzu nodded. That's right! In Yorùbá, a Rainbow is Òșùmàrè. In Gungbe, it is Àyidò-hwèdò.",
-    prompt: "Titi and a tiny colourful bird standing on a floating grassy island, looking up at a massive, vibrant rainbow stretching across a magical sky. Whimsical 3D digital illustration, dreamlike atmosphere, vivid colours."
-  },
-  {
-    id: 3,
-    title: "The Mighty Sun",
-    text: "The sun was shining very brightly above them. 'It is so warm,' Titi said. Zuzu chirped, 'The Sun is very strong! In Yorùbá, we call the Sun Oòrùn. In Gungbe, we call it Owe.'",
-    voiceText: "The sun was shining very brightly above the rainbow. It's so warm, Titi said, shielding her eyes. Zuzu chirped, The Sun is very strong today! In Yorùbá, we call the Sun Oòrùn. In Gungbe, we call it Owe.",
-    prompt: "A large, friendly, smiling sun in a bright blue sky, glowing with warm yellow light. Titi is waving hello to the sun. Whimsical 3D digital illustration, golden hour lighting, happy atmosphere."
-  },
-  {
-    id: 4,
-    title: "A Fluttery Friend",
-    text: "Suddenly, something fluttery landed on Titi's nose. 'A Butterfly!' Titi giggled. In Yorùbá, a Butterfly is Labalábá. In Gungbe, she could say Awewe die.",
-    voiceText: "Suddenly, something small and fluttery landed on Titi's nose. A Butterfly! Titi giggled. The butterfly had wings that looked like stained glass. In Yorùbá, a Butterfly is Labalábá. In Gungbe, she could say Awewe die.",
-    prompt: "Close up of a beautiful butterfly with translucent, rainbow-patterned wings landing on Titi's nose. Titi is cross-eyed and giggling. Whimsical 3D digital illustration, soft focus garden background."
-  },
-  {
-    id: 5,
-    title: "A Garden of Petals",
-    text: "The butterfly led them to a garden of blossoms. Titi touched a petal. 'What a pretty Flower!' she said. 'In Yorùbá, a Flower is Òdòdó. In Gungbe, it is Atínsé.'",
-    voiceText: "The butterfly flew into a garden of giant blossoms. Titi reached out to touch a petal. What a pretty Flower! she said. Zuzu told her, In Yorùbá, a Flower is Òdòdó. In Gungbe, it is Atínsé.",
-    prompt: "Titi in a garden of giant, glowing flowers of every colour. She is gently touching a large pink flower petal. Zuzu the bird is flying nearby. Whimsical 3D digital illustration, magical nature."
-  },
-  {
-    id: 6,
-    title: "Fire Red",
-    text: "Titi saw butterflies the colour of fire. 'Look, Zuzu! They are all Red!' In Yorùbá, Red is Pupa. In Gungbe, it is Fefe. Titi watched the wings dance.",
-    voiceText: "Titi noticed that many of the butterflies were the colour of fire. Look, Zuzu! They are all Red! she said. Zuzu landed on a leaf. Yes! In Yorùbá, Red is Pupa. In Gungbe, it is Fefe.",
-    prompt: "A flock of bright red magical butterflies swirling around Titi in a lush green garden. Whimsical 3D digital illustration, vibrant red tones, high contrast."
-  },
-  {
-    id: 7,
-    title: "Golden Yellow",
-    text: "Next, they found butterflies the colour of the sun. 'These are Yellow!' Titi exclaimed. 'In Yorùbá, Yellow is Àwọ ìyèyè. In Gungbe, we also say Fefe.'",
-    voiceText: "Next, they found butterflies the colour of the sun. These are Yellow! Titi exclaimed. Zuzu did a little dance. In Yorùbá, Yellow is Àwọ ìyèyè. In Gungbe, we also say Fefe.",
-    prompt: "Titi pointing at a field of golden yellow flowers and yellow butterflies that look like pieces of the sun. Whimsical 3D digital illustration, warm golden tones, joyful."
-  },
-  {
-    id: 8,
-    title: "Deep Blue Sky",
-    text: "The sky turned a beautiful Blue. In Yorùbá, Blue is Àwọ̀ búlúù. In Gungbe, Blue is Dǐn. It was time for the adventure to end.",
-    voiceText: "The sky turned a beautiful Blue. This is the colour of the deep sea and the wide sky. In Yorùbá, Blue is Àwọ̀ búlúù. In Gungbe, Blue is Dǐn. It was time for the adventure to end.",
-    prompt: "Titi and Zuzu looking up at a deep indigo blue sky filled with twinkling stars. A crescent moon is visible. Whimsical 3D digital illustration, peaceful blue tones."
-  },
-  {
-    id: 9,
-    title: "A Mother's Hug",
-    text: "Titi went back to her Ilé. Her mother gave her a hug and said, 'Ẹ kú iṣẹ́, Titi!' You have learned so many colours today.",
-    voiceText: "Titi went back to her house. Her mother gave her a big hug and said, Well done, Titi! You have learned so many wonderful colours and words today.",
-    prompt: "Titi running into the open arms of her mother in the doorway of a cosy, warm house at sunset. Zuzu the bird is waving goodbye. Whimsical 3D digital illustration, heart-warming, warm glow."
-  },
-  {
-    id: 10,
-    title: "Sweet Dreams",
-    text: "Titi went to sleep dreaming of rainbows. Goodnight, little Ọmọ. We will adventure again tomorrow.",
-    voiceText: "Titi went to sleep in her warm bed, dreaming of rainbows and magic birds. Goodnight, little child. We will adventure again tomorrow. The end.",
-    prompt: "Titi sleeping peacefully in her bed with a rainbow quilt. A small bird-shaped nightlight is glowing on the table. Moonbeams coming through the window. Whimsical 3D digital illustration, peaceful."
-  }
-];
-
-const App = () => {
-  const [currentPage, setCurrentPage] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [images, setImages] = useState({});
-  const [status, setStatus] = useState("Painting the world...");
-  const audioRef = useRef(new Audio());
-  const [isMuted, setIsMuted] = useState(false);
-
-  // Initialization: Pre-generate all images
-  useEffect(() => {
-    const generateAllImages = async () => {
-      const newImages = {};
-      for (let i = 0; i < storyPages.length; i++) {
-        setStatus(`Painting page ${i + 1} of ${storyPages.length}...`);
-        try {
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              instances: { prompt: storyPages[i].prompt },
-              parameters: { sampleCount: 1 }
-            })
-          });
-          const result = await response.json();
-          if (result.predictions?.[0]?.bytesBase64Encoded) {
-            newImages[i] = `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
-          }
-        } catch (error) {
-          console.error(`Failed to generate image ${i}:`, error);
-        }
-      }
-      setImages(newImages);
-      setIsLoading(false);
-      setStatus("Ready!");
-    };
-
-    generateAllImages();
-  }, []);
-
-  const playTTS = async (index) => {
-    if (isMuted) return;
-    
-    try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: `Speak warmly like a children's book narrator: ${storyPages[index].voiceText}` }] }],
-          generationConfig: {
-            responseModalities: ["AUDIO"],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } } }
-          }
-        })
-      });
-
-      const result = await response.json();
-      const pcmData = result.candidates[0].content.parts[0].inlineData.data;
-      const mimeType = result.candidates[0].content.parts[0].inlineData.mimeType;
-      const sampleRate = parseInt(mimeType.match(/rate=(\d+)/)[1]);
-
-      // Convert PCM to WAV for playback
-      const wavBlob = createWavBlob(pcmData, sampleRate);
-      const url = URL.createObjectURL(wavBlob);
-      
-      audioRef.current.src = url;
-      audioRef.current.play();
-
-      audioRef.current.onended = () => {
-        if (index < storyPages.length - 1) {
-          setCurrentPage(prev => prev + 1);
-        } else {
-          setIsPlaying(false);
-        }
-      };
-    } catch (error) {
-      console.error("TTS Error:", error);
-      // Fallback: Just advance after 5 seconds if audio fails
-      setTimeout(() => {
-        if (isPlaying && index < storyPages.length - 1) {
-          setCurrentPage(prev => prev + 1);
-        }
-      }, 6000);
-    }
-  };
-
-  const createWavBlob = (base64Data, sampleRate) => {
-    const binaryString = window.atob(base64Data);
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
-
-    const buffer = new ArrayBuffer(44 + len);
-    const view = new DataView(buffer);
-
-    const writeString = (offset, string) => {
-      for (let i = 0; i < string.length; i++) {
-        view.setUint8(offset + i, string.charCodeAt(i));
-      }
-    };
-
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + len, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, 1, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true);
-    view.setUint16(32, 2, true);
-    view.setUint16(34, 16, true);
-    writeString(36, 'data');
-    view.setUint32(40, len, true);
-
-    for (let i = 0; i < len; i++) {
-      view.setUint8(44 + i, bytes[i]);
-    }
-
-    return new Blob([buffer], { type: 'audio/wav' });
-  };
-
-  useEffect(() => {
-    if (isPlaying && !isLoading) {
-      playTTS(currentPage);
-    } else {
-      audioRef.current.pause();
-    }
-  }, [isPlaying, currentPage]);
-
-  const togglePlay = () => setIsPlaying(!isPlaying);
-  const reset = () => {
-    setCurrentPage(0);
-    setIsPlaying(false);
-  };
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-teal-500 flex flex-col items-center justify-center text-white p-8">
-        <Loader2 className="w-16 h-16 animate-spin mb-6" />
-        <h1 className="text-3xl font-bold mb-2">Creating Titi's Adventure...</h1>
-        <p className="text-teal-100 italic">{status}</p>
-        <div className="mt-8 w-64 bg-teal-600 h-2 rounded-full overflow-hidden">
-          <div 
-            className="bg-white h-full transition-all duration-500" 
-            style={{ width: `${(Object.keys(images).length / storyPages.length) * 100}%` }}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-0 sm:p-4 font-sans">
-      <div className="relative w-full max-w-5xl aspect-video bg-black shadow-2xl rounded-none sm:rounded-[2rem] overflow-hidden border-0 sm:border-8 border-slate-800">
-        
-        {/* Video Canvas */}
-        <div className="absolute inset-0 overflow-hidden">
-          {storyPages.map((page, idx) => (
-            <div 
-              key={idx}
-              className={`absolute inset-0 transition-opacity duration-1000 ease-in-out ${idx === currentPage ? 'opacity-100' : 'opacity-0'}`}
-            >
-              {images[idx] && (
-                <img 
-                  src={images[idx]} 
-                  className={`w-full h-full object-cover transition-transform duration-[10000ms] ease-linear ${isPlaying && idx === currentPage ? 'scale-110 translate-x-2' : 'scale-100'}`}
-                  alt={page.title}
-                />
-              )}
-              {/* Overlay for cinematic feel */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
-            </div>
-          ))}
-        </div>
-
-        {/* Captions / Subtitles */}
-        <div className="absolute bottom-24 left-0 right-0 px-8 text-center pointer-events-none">
-          <div className="inline-block px-8 py-4 bg-black/50 backdrop-blur-md rounded-2xl border border-white/10 max-w-3xl">
-            <p className="text-white text-xl sm:text-2xl font-semibold leading-relaxed">
-              {storyPages[currentPage].text}
-            </p>
-          </div>
-        </div>
-
-        {/* Top Controls */}
-        <div className="absolute top-6 left-6 right-6 flex justify-between items-center opacity-0 hover:opacity-100 transition-opacity duration-300">
-          <div className="flex items-center gap-3 bg-black/40 backdrop-blur-sm px-4 py-2 rounded-full">
-            <Sparkles className="text-amber-400 w-5 h-5" />
-            <span className="text-white font-bold tracking-wider">LITTLE LINGUIST VIDEO</span>
-          </div>
-          <button 
-            onClick={() => setIsMuted(!isMuted)}
-            className="p-3 bg-black/40 backdrop-blur-sm rounded-full text-white hover:bg-black/60 transition"
-          >
-            {isMuted ? <VolumeX /> : <Volume2 />}
-          </button>
-        </div>
-
-        {/* Bottom Controls (Video Bar) */}
-        <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/90 to-transparent">
-          <div className="flex flex-col gap-4">
-            {/* Progress Bar */}
-            <div className="w-full h-1.5 bg-white/20 rounded-full overflow-hidden cursor-pointer">
-              <div 
-                className="bg-teal-400 h-full transition-all duration-300"
-                style={{ width: `${((currentPage + 1) / storyPages.length) * 100}%` }}
-              />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-6">
-                <button 
-                  onClick={togglePlay}
-                  className="p-4 bg-teal-500 rounded-full text-white hover:bg-teal-400 transition transform hover:scale-105 shadow-lg"
-                >
-                  {isPlaying ? <Pause size={28} fill="currentColor" /> : <Play size={28} fill="currentColor" />}
-                </button>
-                <button 
-                  onClick={reset}
-                  className="text-white/70 hover:text-white transition"
-                >
-                  <RotateCcw size={24} />
-                </button>
-                <div className="text-white font-medium">
-                  {currentPage + 1} <span className="text-white/40">/</span> {storyPages.length}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-6">
-                <div className="text-teal-400 font-bold uppercase tracking-widest text-sm hidden sm:block">
-                   Scene: {storyPages[currentPage].title}
-                </div>
-                <button className="text-white/70 hover:text-white transition">
-                  <Maximize size={24} />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Start Screen Overlay */}
-        {!isPlaying && currentPage === 0 && (
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center text-center p-8">
-            <div className="bg-teal-500 p-8 rounded-[3rem] shadow-2xl mb-8 transform -rotate-2">
-               <Sparkles className="w-16 h-16 text-white mb-4 mx-auto" />
-               <h2 className="text-4xl font-black text-white leading-tight">Titi's Colourful<br/>Rainbow Adventure</h2>
-               <p className="text-teal-100 mt-2 font-medium">Narrated Cinematic Experience</p>
-            </div>
-            <button 
-              onClick={togglePlay}
-              className="group flex items-center gap-4 bg-white px-10 py-5 rounded-full text-teal-600 font-black text-2xl shadow-xl hover:scale-105 transition active:scale-95"
-            >
-              PLAY VIDEO <Play fill="currentColor" />
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script>
+const ALL_DOCS = [{"_docId":"2023-11","_col":"investments","month":11,"year":2023,"Piggy":2985719.0,"USDHoldings":32.0},{"_docId":"2023-12","_col":"investments","month":12,"year":2023,"Piggy":2396163.0,"USDHoldings":132.0},{"_docId":"2024-01","_col":"investments","month":1,"year":2024,"Piggy":1687911.0,"USDHoldings":132.0},{"_docId":"2024-02","_col":"investments","month":2,"year":2024,"Piggy":493623.0,"USDHoldings":132.0},{"_docId":"2024-03","_col":"investments","month":3,"year":2024,"Piggy":496967.0,"USDHoldings":113.0},{"_docId":"2024-04","_col":"investments","month":4,"year":2024,"Piggy":496967.0,"Risevest":395.0,"Trove":200.0,"USDHoldings":113.0},{"_docId":"2024-05","_col":"investments","month":5,"year":2024,"Piggy":2303.0,"Risevest":413.0,"Trove":203.0,"USDHoldings":113.0},{"_docId":"2024-06","_col":"investments","month":6,"year":2024,"Piggy":2412.0,"Risevest":433.0,"Trove":399.0,"USDHoldings":2074.0},{"_docId":"2024-07","_col":"investments","month":7,"year":2024,"Piggy":2435.0,"Risevest":412.0,"Trove":617.0,"USDHoldings":2074.0},{"_docId":"2024-08","_col":"investments","month":8,"year":2024,"Piggy":2461.0,"Risevest":399.0,"Trove":845.0,"USDHoldings":74.0},{"_docId":"2024-09","_col":"investments","month":9,"year":2024,"Piggy":602486.0,"RenVault":970075.0,"Risevest":407.0,"Trove":1052.0,"USDHoldings":74.0},{"_docId":"2024-10","_col":"investments","month":10,"year":2024,"Piggy":607822.0,"RenVault":984800.0,"Risevest":395.0,"Trove":1244.0,"USDHoldings":74.0},{"_docId":"2024-11","_col":"investments","month":11,"year":2024,"Piggy":113998.0,"RenVault":999050.0,"Risevest":416.0,"Trove":1513.0,"USDHoldings":74.0},{"_docId":"2024-12","_col":"investments","month":12,"year":2024,"Piggy":118560.0,"RenVault":0.0,"Risevest":423.0,"Trove":1415.0,"Bamboo":194.0,"USDHoldings":74.0},{"_docId":"2025-01","_col":"investments","month":1,"year":2025,"Piggy":119764.0,"RenVault":0.0,"Risevest":436.0,"Trove":1422.0,"Bamboo":393.0,"USDHoldings":2034.0},{"_docId":"2025-02","_col":"investments","month":2,"year":2025,"Piggy":120984.0,"RenVault":0.0,"Risevest":455.0,"Trove":1434.0,"Bamboo":599.0,"USDHoldings":2002.0},{"_docId":"2025-03","_col":"investments","month":3,"year":2025,"Piggy":122096.0,"RenVault":0.0,"Risevest":394.0,"Trove":1396.0,"Bamboo":749.0,"USDHoldings":2383.0},{"_docId":"2025-04","_col":"investments","month":4,"year":2025,"Piggy":127096.0,"RenVault":0.0,"Risevest":377.0,"Trove":1347.0,"Bamboo":733.0,"USDHoldings":2383.0},{"_docId":"2025-05","_col":"investments","month":5,"year":2025,"Piggy":129580.0,"RenVault":0.0,"Risevest":405.0,"Trove":1371.0,"Bamboo":1046.0,"USDHoldings":2383.0},{"_docId":"2025-06","_col":"investments","month":6,"year":2025,"Piggy":130900.0,"RenVault":0.0,"Risevest":410.0,"Trove":1402.0,"Bamboo":1082.0,"USDHoldings":2383.0},{"_docId":"2025-07","_col":"investments","month":7,"year":2025,"Piggy":1509.0,"RenVault":0.0,"Risevest":436.0,"Trove":1460.0,"Bamboo":1467.0,"USDHoldings":2376.0},{"_docId":"2025-08","_col":"investments","month":8,"year":2025,"Piggy":1509.0,"RenVault":0.0,"Risevest":422.0,"Trove":1466.0,"Bamboo":1484.0,"USDHoldings":2376.0},{"_docId":"2025-09","_col":"investments","month":9,"year":2025,"Piggy":1509.0,"RenVault":0.0,"Risevest":423.0,"Trove":1488.0,"Bamboo":1795.0,"USDHoldings":2022.0},{"_docId":"2025-10","_col":"investments","month":10,"year":2025,"Piggy":1509.0,"RenVault":0.0,"Risevest":435.0,"Trove":1540.0,"Bamboo":2172.0,"USDHoldings":2062.0},{"_docId":"2025-11","_col":"investments","month":11,"year":2025,"Piggy":1509.0,"RenVault":200603.0,"Risevest":414.0,"Trove":1564.0,"Bamboo":2097.0,"USDHoldings":2068.0},{"_docId":"2025-12","_col":"investments","month":12,"year":2025,"Piggy":5001509.0,"RenVault":711765.0,"Risevest":415.0,"Trove":1577.0,"Bamboo":2390.0,"USDHoldings":2068.0},{"_docId":"2023-11","_col":"cashBalances","month":11,"year":2023,"GTB":4087.0,"Union":1101442.0},{"_docId":"2023-12","_col":"cashBalances","month":12,"year":2023,"GTB":1335596.0,"Renmoney":2010330.0,"Union":602172.0},{"_docId":"2024-01","_col":"cashBalances","month":1,"year":2024,"GTB":5340.0,"Renmoney":3225346.0,"Union":360.0},{"_docId":"2024-02","_col":"cashBalances","month":2,"year":2024,"GTB":6732.0,"Renmoney":2985779.0,"Union":1247.0},{"_docId":"2024-03","_col":"cashBalances","month":3,"year":2024,"GTB":4286.0,"Renmoney":2815923.0,"Union":1231.0},{"_docId":"2024-04","_col":"cashBalances","month":4,"year":2024,"GTB":-90567.0,"Renmoney":5115761.0,"Union":1231.0},{"_docId":"2024-05","_col":"cashBalances","month":5,"year":2024,"GTB":12866.0,"Renmoney":1953898.0,"Union":1231.0},{"_docId":"2024-06","_col":"cashBalances","month":6,"year":2024,"GTB":3124.0,"Access":818.0,"Renmoney":951235.0,"Union":1231.0},{"_docId":"2024-07","_col":"cashBalances","month":7,"year":2024,"GTB":8188.0,"Access":4290.0,"Renmoney":500173.0,"Union":1231.0},{"_docId":"2024-08","_col":"cashBalances","month":8,"year":2024,"GTB":803.0,"Access":142266.0,"Renmoney":1846362.0,"Union":1231.0},{"_docId":"2024-09","_col":"cashBalances","month":9,"year":2024,"GTB":439.0,"Access":537.0,"Renmoney":1030589.0,"Union":1231.0},{"_docId":"2024-10","_col":"cashBalances","month":10,"year":2024,"GTB":3368.0,"Access":-2632.0,"Renmoney":1236655.0,"Union":930.0},{"_docId":"2024-11","_col":"cashBalances","month":11,"year":2024,"GTB":2947.0,"Access":2651.0,"Renmoney":452420.0,"Union":1788.0},{"_docId":"2024-12","_col":"cashBalances","month":12,"year":2024,"GTB":69750.0,"Access":5952.0,"Renmoney":1692622.0,"Union":1788.0},{"_docId":"2025-01","_col":"cashBalances","month":1,"year":2025,"GTB":2060.0,"Access":321.0,"Renmoney":11108.0,"Union":1788.0},{"_docId":"2025-02","_col":"cashBalances","month":2,"year":2025,"GTB":19118.0,"Access":16559.0,"Renmoney":3509602.0,"Union":1788.0},{"_docId":"2025-03","_col":"cashBalances","month":3,"year":2025,"GTB":4681.0,"Access":5542.0,"Renmoney":1953841.0,"Union":1788.0},{"_docId":"2025-04","_col":"cashBalances","month":4,"year":2025,"GTB":16240.0,"Access":5950.0,"Renmoney":300169.0,"Union":1788.0},{"_docId":"2025-05","_col":"cashBalances","month":5,"year":2025,"GTB":413094.0,"Access":5330.0,"Renmoney":1874139.0,"Union":1788.0},{"_docId":"2025-06","_col":"cashBalances","month":6,"year":2025,"GTB":103052.0,"Access":495.0,"Renmoney":-1320816.0,"Union":1788.0},{"_docId":"2025-07","_col":"cashBalances","month":7,"year":2025,"GTB":329711.0,"Access":33495.0,"Renmoney":357467.0,"Union":1788.0},{"_docId":"2025-08","_col":"cashBalances","month":8,"year":2025,"GTB":37137.0,"Access":15744.0,"Renmoney":160675.0,"Union":1788.0},{"_docId":"2025-09","_col":"cashBalances","month":9,"year":2025,"GTB":6632.0,"Access":1200.0,"Renmoney":77141.0,"Union":1788.0},{"_docId":"2025-10","_col":"cashBalances","month":10,"year":2025,"GTB":31448.0,"Access":3476.0,"Renmoney":48271.0,"Union":1788.0},{"_docId":"2025-11","_col":"cashBalances","month":11,"year":2025,"GTB":24961.0,"Access":1208.0,"Renmoney":202545.0,"Union":1788.0},{"_docId":"2025-12","_col":"cashBalances","month":12,"year":2025,"GTB":214698.0,"Access":1208.0,"Renmoney":1361893.0,"Union":1788.0}];
+const firebaseConfig = {
+  apiKey:"AIzaSyCIe7f02DrbrwZLIBmNlvslXWmNLVMiluw",
+  authDomain:"spendwise-d6393.firebaseapp.com",
+  projectId:"spendwise-d6393",
+  storageBucket:"spendwise-d6393.firebasestorage.app",
+  messagingSenderId:"460779232494",
+  appId:"1:460779232494:web:cd3c178b88d0f22044a7ff"
 };
+let db, running=false;
 
-export default App;
+function log(msg,cls='info'){
+  const el=document.getElementById('log');
+  el.innerHTML+=`<span class="${cls}">${msg}</span>\n`;
+  el.scrollTop=el.scrollHeight;
+}
+
+async function runImport(){
+  if(running) return;
+  running=true;
+  const btn=document.getElementById('btn');
+  const prog=document.getElementById('prog');
+  btn.disabled=true;
+  prog.style.display='block';
+  prog.value=0;
+  document.getElementById('log').textContent='';
+
+  if(!db){
+    log('Connecting to Firebase…');
+    try{firebase.initializeApp(firebaseConfig);}catch(e){}
+    db=firebase.firestore();
+    log('Connected.\n');
+  }
+
+  let ok=0, fail=0, curCol='';
+  const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const INV_KEYS=['Piggy','PiggySafelock','RenVault','Risevest','Trove','Bamboo','USDHoldings'];
+  const CASH_KEYS=['GTB','Access','Renmoney','Union'];
+  const USD_KEYS=['Risevest','Trove','Bamboo','USDHoldings'];
+
+  for(let idx=0; idx<ALL_DOCS.length; idx++){
+    const {_docId,_col,...fields}=ALL_DOCS[idx];
+    const colLabel=_col==='investments'?'investments':'cashBalances';
+    if(colLabel!==curCol){
+      if(curCol) log('');
+      log(`── ${colLabel} (${_col==='investments'?26:26} docs)`,'hdr');
+      curCol=colLabel;
+    }
+    const m=fields.month, y=fields.year;
+    const lbl=`${MONTHS[m-1]} '${String(y).slice(2)}`;
+    const dataKeys=Object.keys(fields).filter(k=>k!=='month'&&k!=='year');
+    const summary=dataKeys.map(k=>{
+      const isUSD=USD_KEYS.includes(k);
+      const val=fields[k];
+      if(val===null||val===undefined) return null;
+      return `${k}=${isUSD?'$':'₦'}${Number(val).toLocaleString('en-NG',{maximumFractionDigits:0})}`;
+    }).filter(Boolean).join('  ');
+    try{
+      await db.collection(_col).doc(_docId).set(fields,{merge:true});
+      log(`  ✓  ${lbl.padEnd(10)} ${summary}`,"ok");
+      ok++;
+    }catch(e){
+      log(`  ✗  ${lbl} (${_docId}): ${e.message}`,"err");
+      fail++;
+    }
+    prog.value=idx+1;
+    if(idx%10===9) await new Promise(r=>setTimeout(r,50));
+  }
+
+  log(`\n${ok} written · ${fail} failed`,fail===0?'ok':'err');
+  if(fail===0) log('\n✅ Done — reload SpendWise, navigate to the Accounts tab to see balances.','ok');
+  btn.textContent='Run Again';
+  btn.disabled=false;
+  running=false;
+}
+</script>
+</body>
+</html>
