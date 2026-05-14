@@ -1,145 +1,341 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SpendWise — Investments & Cash Sync</title>
-<style>
-  body { font-family: monospace; background: #0e0e1a; color: #c8f542; padding: 24px; max-width: 800px; margin: 0 auto; }
-  h2 { color: #fff; margin-bottom: 4px; }
-  .sub { color: #7070a0; font-size: 0.8rem; margin-bottom: 20px; line-height: 1.7; }
-  #log { background: #161626; border: 1px solid #2a2a4a; border-radius: 8px; padding: 16px; height: 450px; white-space: pre-wrap; font-size: 0.74rem; line-height: 1.65; overflow-y: auto; }
-  .btns { display: flex; gap: 10px; margin-top: 14px; }
-  button { background: #c8f542; color: #0e0e1a; border: none; padding: 9px 22px; border-radius: 6px; font-weight: 700; font-size: 0.9rem; cursor: pointer; }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
-  button.sec { background: #2a2a4a; color: #c8f542; }
-  .ok { color: #c8f542; } .err { color: #f87171; } .info { color: #94a3b8; } .hdr { color: #818cf8; font-weight: bold; }
-  progress { width: 100%; height: 6px; margin-top: 12px; border-radius: 3px; accent-color: #c8f542; background: #2a2a4a; }
-</style>
-</head>
-<body>
-<h2>SpendWise — Balances Sync</h2>
-<div class="sub">
-  Synchronises historical data for <strong>Investments</strong> and <strong>Cash</strong> accounts.<br>
-  Period: Nov 2023 – Dec 2025 V2.
-</div>
-<div id="log">Click "Sync Balances" to begin...</div>
-<progress id="prog" value="0" max="100" style="display:none"></progress>
-<div class="btns">
-  <button id="btn" onclick="runImport()">Sync Balances</button>
-  <button class="sec" onclick="document.getElementById('log').textContent=''">Clear Log</button>
-</div>
+import React, { useState, useEffect, useRef } from 'react';
+import { Play, Pause, RotateCcw, Volume2, VolumeX, Maximize, Loader2, Sparkles } from 'lucide-react';
 
-<!-- Firebase Compat SDKs -->
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+const apiKey = ""; // Provided by environment
 
-<script>
-const MONTHS = [
-  {m:11, y:2023}, {m:12, y:2023}, 
-  {m:1, y:2024}, {m:2, y:2024}, {m:3, y:2024}, {m:4, y:2024}, {m:5, y:2024}, {m:6, y:2024}, 
-  {m:7, y:2024}, {m:8, y:2024}, {m:9, y:2024}, {m:10, y:2024}, {m:11, y:2024}, {m:12, y:2024},
-  {m:1, y:2025}, {m:2, y:2025}, {m:3, y:2025}, {m:4, y:2025}, {m:5, y:2025}, {m:6, y:2025}, 
-  {m:7, y:2025}, {m:8, y:2025}, {m:9, y:2025}, {m:10, y:2025}, {m:11, y:2025}, {m:12, y:2025}
+const storyPages = [
+  {
+    id: 1,
+    title: "A Golden Sparkle",
+    text: "Titi was playing with her app when the screen began to glow with golden sparkles. Out hopped a tiny, colourful bird named Zuzu! 'Come with me, Titi!' Zuzu chirped. Titi took Zuzu's wing and stepped right into the screen.",
+    voiceText: "Titi was playing with her Little Linguist app when the screen began to glow with golden sparkles. Out hopped a tiny, colourful bird named Zuzu! Come with me, Titi! Zuzu chirped. Titi took Zuzu's wing and stepped right into the screen.",
+    prompt: "A whimsical 3D digital illustration of a cute 3-year-old girl named Titi with pigtails, wearing a colourful dress. She is looking at a glowing tablet as a small magical bird with rainbow feathers hops out. Bedroom setting with magical golden sparkles, Pixar style, soft lighting."
+  },
+  {
+    id: 2,
+    title: "The World of Colours",
+    text: "They arrived in a land of floating islands. Titi looked up and saw a giant bridge of light. 'A Rainbow!' she shouted. Zuzu nodded. 'In Yorùbá, a Rainbow is Òșùmàrè. In Gungbe, it is Àyidò-hwèdò.'",
+    voiceText: "They arrived in a land of floating islands. Titi looked up and saw a giant bridge of light. A Rainbow! she shouted. Zuzu nodded. That's right! In Yorùbá, a Rainbow is Òșùmàrè. In Gungbe, it is Àyidò-hwèdò.",
+    prompt: "Titi and a tiny colourful bird standing on a floating grassy island, looking up at a massive, vibrant rainbow stretching across a magical sky. Whimsical 3D digital illustration, dreamlike atmosphere, vivid colours."
+  },
+  {
+    id: 3,
+    title: "The Mighty Sun",
+    text: "The sun was shining very brightly above them. 'It is so warm,' Titi said. Zuzu chirped, 'The Sun is very strong! In Yorùbá, we call the Sun Oòrùn. In Gungbe, we call it Owe.'",
+    voiceText: "The sun was shining very brightly above the rainbow. It's so warm, Titi said, shielding her eyes. Zuzu chirped, The Sun is very strong today! In Yorùbá, we call the Sun Oòrùn. In Gungbe, we call it Owe.",
+    prompt: "A large, friendly, smiling sun in a bright blue sky, glowing with warm yellow light. Titi is waving hello to the sun. Whimsical 3D digital illustration, golden hour lighting, happy atmosphere."
+  },
+  {
+    id: 4,
+    title: "A Fluttery Friend",
+    text: "Suddenly, something fluttery landed on Titi's nose. 'A Butterfly!' Titi giggled. In Yorùbá, a Butterfly is Labalábá. In Gungbe, she could say Awewe die.",
+    voiceText: "Suddenly, something small and fluttery landed on Titi's nose. A Butterfly! Titi giggled. The butterfly had wings that looked like stained glass. In Yorùbá, a Butterfly is Labalábá. In Gungbe, she could say Awewe die.",
+    prompt: "Close up of a beautiful butterfly with translucent, rainbow-patterned wings landing on Titi's nose. Titi is cross-eyed and giggling. Whimsical 3D digital illustration, soft focus garden background."
+  },
+  {
+    id: 5,
+    title: "A Garden of Petals",
+    text: "The butterfly led them to a garden of blossoms. Titi touched a petal. 'What a pretty Flower!' she said. 'In Yorùbá, a Flower is Òdòdó. In Gungbe, it is Atínsé.'",
+    voiceText: "The butterfly flew into a garden of giant blossoms. Titi reached out to touch a petal. What a pretty Flower! she said. Zuzu told her, In Yorùbá, a Flower is Òdòdó. In Gungbe, it is Atínsé.",
+    prompt: "Titi in a garden of giant, glowing flowers of every colour. She is gently touching a large pink flower petal. Zuzu the bird is flying nearby. Whimsical 3D digital illustration, magical nature."
+  },
+  {
+    id: 6,
+    title: "Fire Red",
+    text: "Titi saw butterflies the colour of fire. 'Look, Zuzu! They are all Red!' In Yorùbá, Red is Pupa. In Gungbe, it is Fefe. Titi watched the wings dance.",
+    voiceText: "Titi noticed that many of the butterflies were the colour of fire. Look, Zuzu! They are all Red! she said. Zuzu landed on a leaf. Yes! In Yorùbá, Red is Pupa. In Gungbe, it is Fefe.",
+    prompt: "A flock of bright red magical butterflies swirling around Titi in a lush green garden. Whimsical 3D digital illustration, vibrant red tones, high contrast."
+  },
+  {
+    id: 7,
+    title: "Golden Yellow",
+    text: "Next, they found butterflies the colour of the sun. 'These are Yellow!' Titi exclaimed. 'In Yorùbá, Yellow is Àwọ ìyèyè. In Gungbe, we also say Fefe.'",
+    voiceText: "Next, they found butterflies the colour of the sun. These are Yellow! Titi exclaimed. Zuzu did a little dance. In Yorùbá, Yellow is Àwọ ìyèyè. In Gungbe, we also say Fefe.",
+    prompt: "Titi pointing at a field of golden yellow flowers and yellow butterflies that look like pieces of the sun. Whimsical 3D digital illustration, warm golden tones, joyful."
+  },
+  {
+    id: 8,
+    title: "Deep Blue Sky",
+    text: "The sky turned a beautiful Blue. In Yorùbá, Blue is Àwọ̀ búlúù. In Gungbe, Blue is Dǐn. It was time for the adventure to end.",
+    voiceText: "The sky turned a beautiful Blue. This is the colour of the deep sea and the wide sky. In Yorùbá, Blue is Àwọ̀ búlúù. In Gungbe, Blue is Dǐn. It was time for the adventure to end.",
+    prompt: "Titi and Zuzu looking up at a deep indigo blue sky filled with twinkling stars. A crescent moon is visible. Whimsical 3D digital illustration, peaceful blue tones."
+  },
+  {
+    id: 9,
+    title: "A Mother's Hug",
+    text: "Titi went back to her Ilé. Her mother gave her a hug and said, 'Ẹ kú iṣẹ́, Titi!' You have learned so many colours today.",
+    voiceText: "Titi went back to her house. Her mother gave her a big hug and said, Well done, Titi! You have learned so many wonderful colours and words today.",
+    prompt: "Titi running into the open arms of her mother in the doorway of a cosy, warm house at sunset. Zuzu the bird is waving goodbye. Whimsical 3D digital illustration, heart-warming, warm glow."
+  },
+  {
+    id: 10,
+    title: "Sweet Dreams",
+    text: "Titi went to sleep dreaming of rainbows. Goodnight, little Ọmọ. We will adventure again tomorrow.",
+    voiceText: "Titi went to sleep in her warm bed, dreaming of rainbows and magic birds. Goodnight, little child. We will adventure again tomorrow. The end.",
+    prompt: "Titi sleeping peacefully in her bed with a rainbow quilt. A small bird-shaped nightlight is glowing on the table. Moonbeams coming through the window. Whimsical 3D digital illustration, peaceful."
+  }
 ];
 
-const INVESTMENT_DATA = [
-  { "cat": "Piggy", "vals": [2985719, 2396163, 1687911, 493623, 496967, 496967, 2303, 2412, 2435, 2461, 602486, 607822, 113998, 118560, 119764, 120984, 122096, 127096, 129580, 130900, 1509, 1509, 1509, 1509, 1509, 5001509] },
-  { "cat": "RenVault", "vals": [0,0,0,0,0,0,0,0,0,0,970075, 984800, 999050, 0,0,0,0,0,0,0,0,0,0,0,200603, 711765] },
-  { "cat": "Risevest", "vals": [0,0,0,0,0,0,395413, 433412, 399407, 395416, 423436, 455394, 377405, 410436, 422423, 435414, 415000, 415000, 415000, 415000, 415000, 415000, 415000, 415000, 415000, 415000] },
-  { "cat": "Trove", "vals": [0,0,0,0,0,0,200203, 399617, 845000, 1052, 1244, 1513, 1415, 1422, 1434, 1396, 1347, 1371, 1402, 1460, 1466, 1488, 1540, 1564, 1577, 1577] },
-  { "cat": "Bamboo", "vals": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,194393, 599749, 733000, 1046, 1082, 1467, 1484, 1795, 2172, 2097, 2390, 2390] }
-];
+const App = () => {
+  const [currentPage, setCurrentPage] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [images, setImages] = useState({});
+  const [status, setStatus] = useState("Painting the world...");
+  const audioRef = useRef(new Audio());
+  const [isMuted, setIsMuted] = useState(false);
 
-const CASH_DATA = [
-  { "cat": "GTB", "vals": [4087, 1335596, 5340, 6732, 4286, -90567, 12866, 3124, 8188, 803439, 3368, 2947, 69750, 2060, 19118, 4681, 16240, 413094, 103052, 329711, 37137, 6632, 31448, 24961, 214698, 214698] },
-  { "cat": "Access", "vals": [0,0,0,0,0,0,0,0,818, 4290, 142266, 537, -2632, 2651, 5952, 321, 16559, 5542, 5950, 5330, 502, 452, 298, 298, 298, 298] }
-];
+  // Initialization: Pre-generate all images
+  useEffect(() => {
+    const generateAllImages = async () => {
+      const newImages = {};
+      for (let i = 0; i < storyPages.length; i++) {
+        setStatus(`Painting page ${i + 1} of ${storyPages.length}...`);
+        try {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              instances: { prompt: storyPages[i].prompt },
+              parameters: { sampleCount: 1 }
+            })
+          });
+          const result = await response.json();
+          if (result.predictions?.[0]?.bytesBase64Encoded) {
+            newImages[i] = `data:image/png;base64,${result.predictions[0].bytesBase64Encoded}`;
+          }
+        } catch (error) {
+          console.error(`Failed to generate image ${i}:`, error);
+        }
+      }
+      setImages(newImages);
+      setIsLoading(false);
+      setStatus("Ready!");
+    };
 
-const firebaseConfig = {
-  apiKey: "AIzaSyCIe7f02DrbrwZLIBmNlvslXWmNLVMiluw",
-  authDomain: "spendwise-37f02.firebaseapp.com",
-  projectId: "spendwise-37f02",
-  storageBucket: "spendwise-37f02.appspot.com",
-  messagingSenderId: "367357597148",
-  appId: "1:367357597148:web:785a8a101b7a6616429532"
+    generateAllImages();
+  }, []);
+
+  const playTTS = async (index) => {
+    if (isMuted) return;
+    
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: `Speak warmly like a children's book narrator: ${storyPages[index].voiceText}` }] }],
+          generationConfig: {
+            responseModalities: ["AUDIO"],
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } } }
+          }
+        })
+      });
+
+      const result = await response.json();
+      const pcmData = result.candidates[0].content.parts[0].inlineData.data;
+      const mimeType = result.candidates[0].content.parts[0].inlineData.mimeType;
+      const sampleRate = parseInt(mimeType.match(/rate=(\d+)/)[1]);
+
+      // Convert PCM to WAV for playback
+      const wavBlob = createWavBlob(pcmData, sampleRate);
+      const url = URL.createObjectURL(wavBlob);
+      
+      audioRef.current.src = url;
+      audioRef.current.play();
+
+      audioRef.current.onended = () => {
+        if (index < storyPages.length - 1) {
+          setCurrentPage(prev => prev + 1);
+        } else {
+          setIsPlaying(false);
+        }
+      };
+    } catch (error) {
+      console.error("TTS Error:", error);
+      // Fallback: Just advance after 5 seconds if audio fails
+      setTimeout(() => {
+        if (isPlaying && index < storyPages.length - 1) {
+          setCurrentPage(prev => prev + 1);
+        }
+      }, 6000);
+    }
+  };
+
+  const createWavBlob = (base64Data, sampleRate) => {
+    const binaryString = window.atob(base64Data);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+
+    const buffer = new ArrayBuffer(44 + len);
+    const view = new DataView(buffer);
+
+    const writeString = (offset, string) => {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    };
+
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + len, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, 'data');
+    view.setUint32(40, len, true);
+
+    for (let i = 0; i < len; i++) {
+      view.setUint8(44 + i, bytes[i]);
+    }
+
+    return new Blob([buffer], { type: 'audio/wav' });
+  };
+
+  useEffect(() => {
+    if (isPlaying && !isLoading) {
+      playTTS(currentPage);
+    } else {
+      audioRef.current.pause();
+    }
+  }, [isPlaying, currentPage]);
+
+  const togglePlay = () => setIsPlaying(!isPlaying);
+  const reset = () => {
+    setCurrentPage(0);
+    setIsPlaying(false);
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-teal-500 flex flex-col items-center justify-center text-white p-8">
+        <Loader2 className="w-16 h-16 animate-spin mb-6" />
+        <h1 className="text-3xl font-bold mb-2">Creating Titi's Adventure...</h1>
+        <p className="text-teal-100 italic">{status}</p>
+        <div className="mt-8 w-64 bg-teal-600 h-2 rounded-full overflow-hidden">
+          <div 
+            className="bg-white h-full transition-all duration-500" 
+            style={{ width: `${(Object.keys(images).length / storyPages.length) * 100}%` }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-0 sm:p-4 font-sans">
+      <div className="relative w-full max-w-5xl aspect-video bg-black shadow-2xl rounded-none sm:rounded-[2rem] overflow-hidden border-0 sm:border-8 border-slate-800">
+        
+        {/* Video Canvas */}
+        <div className="absolute inset-0 overflow-hidden">
+          {storyPages.map((page, idx) => (
+            <div 
+              key={idx}
+              className={`absolute inset-0 transition-opacity duration-1000 ease-in-out ${idx === currentPage ? 'opacity-100' : 'opacity-0'}`}
+            >
+              {images[idx] && (
+                <img 
+                  src={images[idx]} 
+                  className={`w-full h-full object-cover transition-transform duration-[10000ms] ease-linear ${isPlaying && idx === currentPage ? 'scale-110 translate-x-2' : 'scale-100'}`}
+                  alt={page.title}
+                />
+              )}
+              {/* Overlay for cinematic feel */}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/30" />
+            </div>
+          ))}
+        </div>
+
+        {/* Captions / Subtitles */}
+        <div className="absolute bottom-24 left-0 right-0 px-8 text-center pointer-events-none">
+          <div className="inline-block px-8 py-4 bg-black/50 backdrop-blur-md rounded-2xl border border-white/10 max-w-3xl">
+            <p className="text-white text-xl sm:text-2xl font-semibold leading-relaxed">
+              {storyPages[currentPage].text}
+            </p>
+          </div>
+        </div>
+
+        {/* Top Controls */}
+        <div className="absolute top-6 left-6 right-6 flex justify-between items-center opacity-0 hover:opacity-100 transition-opacity duration-300">
+          <div className="flex items-center gap-3 bg-black/40 backdrop-blur-sm px-4 py-2 rounded-full">
+            <Sparkles className="text-amber-400 w-5 h-5" />
+            <span className="text-white font-bold tracking-wider">LITTLE LINGUIST VIDEO</span>
+          </div>
+          <button 
+            onClick={() => setIsMuted(!isMuted)}
+            className="p-3 bg-black/40 backdrop-blur-sm rounded-full text-white hover:bg-black/60 transition"
+          >
+            {isMuted ? <VolumeX /> : <Volume2 />}
+          </button>
+        </div>
+
+        {/* Bottom Controls (Video Bar) */}
+        <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/90 to-transparent">
+          <div className="flex flex-col gap-4">
+            {/* Progress Bar */}
+            <div className="w-full h-1.5 bg-white/20 rounded-full overflow-hidden cursor-pointer">
+              <div 
+                className="bg-teal-400 h-full transition-all duration-300"
+                style={{ width: `${((currentPage + 1) / storyPages.length) * 100}%` }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-6">
+                <button 
+                  onClick={togglePlay}
+                  className="p-4 bg-teal-500 rounded-full text-white hover:bg-teal-400 transition transform hover:scale-105 shadow-lg"
+                >
+                  {isPlaying ? <Pause size={28} fill="currentColor" /> : <Play size={28} fill="currentColor" />}
+                </button>
+                <button 
+                  onClick={reset}
+                  className="text-white/70 hover:text-white transition"
+                >
+                  <RotateCcw size={24} />
+                </button>
+                <div className="text-white font-medium">
+                  {currentPage + 1} <span className="text-white/40">/</span> {storyPages.length}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-6">
+                <div className="text-teal-400 font-bold uppercase tracking-widest text-sm hidden sm:block">
+                   Scene: {storyPages[currentPage].title}
+                </div>
+                <button className="text-white/70 hover:text-white transition">
+                  <Maximize size={24} />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Start Screen Overlay */}
+        {!isPlaying && currentPage === 0 && (
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center text-center p-8">
+            <div className="bg-teal-500 p-8 rounded-[3rem] shadow-2xl mb-8 transform -rotate-2">
+               <Sparkles className="w-16 h-16 text-white mb-4 mx-auto" />
+               <h2 className="text-4xl font-black text-white leading-tight">Titi's Colourful<br/>Rainbow Adventure</h2>
+               <p className="text-teal-100 mt-2 font-medium">Narrated Cinematic Experience</p>
+            </div>
+            <button 
+              onClick={togglePlay}
+              className="group flex items-center gap-4 bg-white px-10 py-5 rounded-full text-teal-600 font-black text-2xl shadow-xl hover:scale-105 transition active:scale-95"
+            >
+              PLAY VIDEO <Play fill="currentColor" />
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 };
 
-let db, auth, running = false;
-
-function log(msg, cls='') {
-  const el = document.getElementById('log');
-  el.innerHTML += `<span class="${cls}">${msg}</span>\n`;
-  el.scrollTop = el.scrollHeight;
-}
-
-async function processSet(dataArray, collectionName, prefix, typeLabel) {
-  log(`\n── SYNCING ${typeLabel.toUpperCase()}`, 'hdr');
-  let ok = 0;
-  for (let item of dataArray) {
-    for (let i = 0; i < MONTHS.length; i++) {
-      const {m, y} = MONTHS[i];
-      const amount = item.vals[i] || 0;
-      const docId = `hist_${prefix}_${y}_${String(m).padStart(2,'0')}_${item.cat.replace(/\s+/g, '_')}`;
-      
-      try {
-        await db.collection(collectionName).doc(docId).set({
-          category: item.cat,
-          amount: amount,
-          month: m,
-          year: y,
-          type: typeLabel,
-          imported: true,
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
-        ok++;
-      } catch(e) {
-        log(`  ✗ ${item.cat} [${m}/${y}]: ${e.message}`, 'err');
-      }
-      document.getElementById('prog').value++;
-    }
-    log(`  ✓ ${item.cat} balances written.`, 'ok');
-  }
-  return ok;
-}
-
-async function runImport() {
-  if (running) return;
-  running = true;
-  const btn = document.getElementById('btn');
-  const prog = document.getElementById('prog');
-  btn.disabled = true;
-  prog.style.display = 'block';
-  prog.value = 0;
-  document.getElementById('log').textContent = '';
-
-  try {
-    if (!db) {
-      log('Initialising Firebase...');
-      if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
-      db = firebase.firestore();
-      auth = firebase.auth();
-      
-      log('Authenticating...');
-      await auth.signInAnonymously();
-      log('Authenticated successfully.\n');
-    }
-
-    const totalSteps = (INVESTMENT_DATA.length + CASH_DATA.length) * MONTHS.length;
-    prog.max = totalSteps;
-
-    await processSet(INVESTMENT_DATA, 'investments', 'inv', 'investment');
-    await processSet(CASH_DATA, 'cash', 'csh', 'cash');
-
-    log(`\nSYNC COMPLETE.`, 'info');
-  } catch (err) {
-    log(`\nCRITICAL ERROR: ${err.message}`, 'err');
-  } finally {
-    running = false;
-    btn.disabled = false;
-  }
-}
-</script>
-</body>
-</html>
+export default App;
