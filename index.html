@@ -388,7 +388,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.12.7</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.13.2</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -909,6 +909,38 @@ datalist option{background:var(--bg2);color:var(--text)}
   </div>
 </div>
 
+<!-- QUICK-ADD MODAL -->
+<div class="mbackdrop" id="qadd-modal">
+  <div class="modal" onclick="event.stopPropagation()" style="padding-bottom:28px">
+    <div class="mhdr"><div class="mtitle">Quick Add</div><button class="mclose" onclick="closeMod('qadd-modal')">×</button></div>
+    <div style="font-size:2rem;font-weight:300;font-family:var(--mono);color:var(--text);text-align:center;margin-bottom:4px;letter-spacing:-0.04em" id="qadd-display">₦0</div>
+    <div style="text-align:center;font-size:0.7rem;color:var(--accent);font-weight:700;min-height:18px;margin-bottom:12px" id="qadd-hint"></div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px">
+      <button class="btn btn-g" onclick="qaddKey('1')" style="font-size:1.1rem;padding:14px">1</button>
+      <button class="btn btn-g" onclick="qaddKey('2')" style="font-size:1.1rem;padding:14px">2</button>
+      <button class="btn btn-g" onclick="qaddKey('3')" style="font-size:1.1rem;padding:14px">3</button>
+      <button class="btn btn-g" onclick="qaddKey('4')" style="font-size:1.1rem;padding:14px">4</button>
+      <button class="btn btn-g" onclick="qaddKey('5')" style="font-size:1.1rem;padding:14px">5</button>
+      <button class="btn btn-g" onclick="qaddKey('6')" style="font-size:1.1rem;padding:14px">6</button>
+      <button class="btn btn-g" onclick="qaddKey('7')" style="font-size:1.1rem;padding:14px">7</button>
+      <button class="btn btn-g" onclick="qaddKey('8')" style="font-size:1.1rem;padding:14px">8</button>
+      <button class="btn btn-g" onclick="qaddKey('9')" style="font-size:1.1rem;padding:14px">9</button>
+      <button class="btn btn-g" onclick="qaddKey('000')" style="font-size:0.9rem;padding:14px;letter-spacing:-1px">000</button>
+      <button class="btn btn-g" onclick="qaddKey('0')" style="font-size:1.1rem;padding:14px">0</button>
+      <button class="btn btn-g" onclick="qaddKey('bk')" style="font-size:1.1rem;padding:14px">⌫</button>
+    </div>
+    <div style="margin-bottom:10px">
+      <div style="font-size:0.6rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3);margin-bottom:6px">Category</div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px" id="qadd-cats"></div>
+    </div>
+    <div class="gform">
+      <div class="ig" style="margin-bottom:0"><label class="ilabel">Bank</label><select class="sfield" id="qadd-bank" style="font-size:0.78rem"></select></div>
+      <div class="ig" style="margin-bottom:0"><label class="ilabel">Notes</label><input class="ifield" type="text" id="qadd-notes" placeholder="Optional" style="font-size:0.78rem"></div>
+    </div>
+    <button class="btn btn-p btn-full" style="margin-top:14px" onclick="qaddSave()">Save Expense</button>
+  </div>
+</div>
+
 <script>
 // ══════════════════════════════════════════════════════════════════════════
 // THEME
@@ -952,7 +984,28 @@ function toggleTheme(){
   try{localStorage.setItem('sw3_theme',isLight?'light':'dark');}catch{}
 }
 (function initTheme(){
-  try{if(localStorage.getItem('sw3_theme')==='light') document.body.classList.add('light');}catch{}
+  try{
+    const saved=localStorage.getItem('sw3_theme');
+    if(saved){
+      if(saved==='light') document.body.classList.add('light');
+    } else {
+      // No saved preference — follow system
+      if(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches){
+        document.body.classList.add('light');
+      }
+    }
+    // Keep in sync with system changes (only when user hasn't overridden)
+    if(window.matchMedia){
+      window.matchMedia('(prefers-color-scheme: light)').addEventListener('change',e=>{
+        if(!localStorage.getItem('sw3_theme')){
+          if(e.matches) document.body.classList.add('light');
+          else document.body.classList.remove('light');
+          const ic=document.getElementById('theme-icon');
+          if(ic) ic.textContent=e.matches?'☀️':'🌙';
+        }
+      });
+    }
+  }catch{}
 })();
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1079,6 +1132,10 @@ const PLATFORMS = [
 ];
 
 const DEF_RATES={NGN:1,USD:1600,GBP:2050};
+
+// New feature keys
+const INV_WD_KEY='sw3_inv_withdrawals';
+const SAVINGS_TARGET_KEY='sw3_savings_target_pct';
 
 // Investment asset class metadata (stored separately from balances)
 // Keys: platformKey → {assetClass: 'equity'|'fixed_income', interestRate, compoundType: 'daily_compound'|'daily_accrual'}
@@ -1645,7 +1702,7 @@ function navTo(pg, deepCat){
   const fab=document.getElementById('fab');
   if(['dashboard','expenses','accounts','forecast','debtors'].includes(pg)) fab.className='fab'; else fab.className='fab hidden';
   if(pg==='debtors') fab.onclick=()=>openDebMod();
-  else fab.onclick=()=>openExpModal('expense');
+  else fab.onclick=()=>fabAction();
   if(pg==='expenses'&&deepCat){
     S.expCat=deepCat;
     renderExpenses();
@@ -1765,7 +1822,7 @@ function renderDashboard(){
   const nw=invTotal+cashTotal;
 
   document.getElementById('dash-nw').textContent=fmtCur(nw,cur,m,y)||'—';
-  document.getElementById('dash-nw-sub').textContent=`Investments + Cash · ${MONTHS[m-1]} ${y}`;
+  document.getElementById('dash-nw-sub').innerHTML=`Investments + Cash · ${MONTHS[m-1]} ${y}`+_getNWDeltaBadge(m,y);
 
   const st=bSt(spent,budgTotal);
   // MoM comparison — pull previous month from cache/history
@@ -2381,6 +2438,29 @@ function renderDashAlerts(){
       sub:recurring.map(r=>`${r.payee} (${fN(r.amount)})`).join(' · ')+(total?` · Total: ${fN(total)}`:''),
       link:{label:'Post now →',fn:"openMod('recur-modal')"}
     });
+  }
+
+  // 3) Savings target progress
+  if(isCurrentMonth){
+    const targetPct=getSavingsTarget();
+    if(targetPct>0){
+      const incTotal=S.income.reduce((s,i)=>s+(i.amount||0),0);
+      if(incTotal>0){
+        const spent2=S.txns.reduce((s,t)=>s+(t.amount||0),0);
+        const savedAmt=incTotal-spent2;
+        const actualPct=Math.round(savedAmt/incTotal*100);
+        const targetAmt=Math.round(incTotal*targetPct/100);
+        if(actualPct<targetPct*0.8){
+          alerts.push({type:'warn',icon:'🎯',title:`Savings target: ${actualPct}% of ${targetPct}% goal`,sub:`Targeting ${fN(targetAmt)} saved · actual ${fN(Math.max(0,savedAmt))} · ${fN(Math.max(0,targetAmt-savedAmt))} short`});
+        }
+      }
+    }
+  }
+
+  // 4) Overdue debtors (no activity > 60 days)
+  const overdue=_getOverdueDebtors();
+  if(overdue.length){
+    alerts.push({type:'warn',icon:'⏰',title:`${overdue.length} debtor${overdue.length>1?'s':''} — no activity > 60 days`,sub:overdue.map(d=>d.name+' ('+fN(d.ngnBalance||0)+' due)').join(' · ')});
   }
 
   // Feed notification bell (always, even when el is hidden)
@@ -3148,14 +3228,13 @@ function renderInvestments(){
   _renderInvInto('-2');  // acct-invest tab inside pg-accounts (the live one)
 }
 function invTab(tab,btn){
-  // Handle both ID sets — whichever is in the DOM near this button
   const tabs=['current','trend','edit'];
-  // Determine suffix from context
   const inAccounts=btn.closest('#acct-invest')!=null;
   const s=inAccounts?'-2':'';
   tabs.forEach(t=>{const el=document.getElementById('inv-'+t+s);if(el)el.style.display=t===tab?'block':'none';});
   btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');
-  if(tab==='trend') renderInvTrend(s);
+  if(tab==='trend'){renderInvTrend(s);setTimeout(()=>renderInvAllocChart(s),200);}
+  if(tab==='current') _renderWithdrawalSummary(s);
   if(tab==='edit') renderInvestments();
 }
 async function renderInvTrend(suffix){
@@ -3474,6 +3553,8 @@ async function saveMoveFunds(){
     if(db) db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
 
     toast(`Moved ${fN(amt)} from ${platLabel} → ${to}`);
+    // Log withdrawal for realised gain tracking
+    addInvWithdrawal(from,amt,document.getElementById('move-date')?.value||todayStr(),document.getElementById('move-notes')?.value||'');
   }
 
   haptic([8,40,8]);
@@ -3624,16 +3705,49 @@ async function saveDebtor(){
   finally{S.saving=false;btn.textContent=document.getElementById('d-eid').value?'Update':'Add Debtor';btn.disabled=false;}
 }
 async function recordPmt(id,amt,paid,rate){
-  const in_=prompt('Enter payment amount:');
-  if(!in_||isNaN(parseFloat(in_))) return;
-  const pmt=parseFloat(in_),np=paid+pmt,bal=amt-np;
-  const entry={date:todayStr(),amount:pmt};
+  const d=S.debtors.find(x=>x.id===id);if(!d)return;
+  const cashOpts=getCashAccounts().map(a=>`<option value="${a}">${a}</option>`).join('');
+  document.getElementById('drill-title').textContent='Record Payment — '+d.name;
+  document.getElementById('drill-body').innerHTML=`
+    <div class="ig"><label class="ilabel">Payment Amount (${d.currency})</label>
+      <input class="ifield" type="number" inputmode="decimal" id="rp-amt" placeholder="0" style="font-size:1.1rem;font-family:var(--mono)"></div>
+    <div class="ig"><label class="ilabel">Credit to Account (optional)</label>
+      <select class="sfield" id="rp-bank"><option value="">— Don't credit —</option>${cashOpts}</select></div>
+    <div class="ig"><label class="ilabel">Date</label>
+      <input class="ifield" type="date" id="rp-date" value="${todayStr()}"></div>
+    <button class="btn btn-p btn-full" id="rp-save" onclick="_doRecordPmt('${id}',${amt},${paid},${rate})">Save Payment</button>
+  `;
+  openMod('drill-modal');
+  setTimeout(()=>document.getElementById('rp-amt')?.focus(),200);
+}
+async function _doRecordPmt(id,amt,paid,rate){
+  const pmtEl=document.getElementById('rp-amt');
+  const pmt=parseFloat(pmtEl?.value);
+  if(!pmt||pmt<=0){toast('Enter a valid amount');return;}
+  const bankAcct=document.getElementById('rp-bank')?.value||'';
+  const pmtDate=document.getElementById('rp-date')?.value||todayStr();
+  const np=paid+pmt,bal=amt-np;
+  const entry={date:pmtDate,amount:pmt,creditedTo:bankAcct||null};
+  const btn=document.getElementById('rp-save');
+  if(btn){btn.textContent='Saving…';btn.disabled=true;}
   try{
     const d=S.debtors.find(x=>x.id===id);
     const log=[...((d&&d.pmtLog)||[]),entry];
     await db.collection('debtors').doc(id).update({paid:np,balance:bal,ngnBalance:bal*rate,pmtLog:log});
-    toast('Payment recorded');await loadDebtors();renderDebtors();
-  }catch(e){toast('Error');}
+    if(bankAcct){
+      const pmtNGN=(d?.currency==='NGN'||!d?.currency)?pmt:pmt*rate;
+      const txD=new Date(pmtDate);const dm=txD.getMonth()+1,dy=txD.getFullYear();
+      const cashData={...(cGet(CK.cash(dm,dy))||S.cash)};
+      cashData[bankAcct]=(cashData[bankAcct]||0)+pmtNGN;
+      if(dm===S.expMonth&&dy===S.expYear)S.cash=cashData;
+      cSet(CK.cash(dm,dy),cashData);
+      if(db)db.collection('cashBalances').doc(sid(dm,dy)).set({...cashData,month:dm,year:dy},{merge:true}).catch(()=>{});
+      renderCashPage();renderDashboard();
+    }
+    toast('Payment recorded'+(bankAcct?' · '+bankAcct+' credited':''));
+    closeMod('drill-modal');
+    await loadDebtors();renderDebtors();
+  }catch(e){toast('Error');if(btn){btn.textContent='Save Payment';btn.disabled=false;}}
 }
 function togglePmtLog(id){
   const el=document.getElementById('pmt-log-'+id);
@@ -3740,6 +3854,22 @@ function renderProjTreasury(){
         </div>`).join('')}
       </div>
     </div>`;
+  // Remove previously appended cards to avoid duplication on re-render
+  ['proj-treasury-cf','proj-treasury-st'].forEach(id=>{const old=document.getElementById(id);if(old)old.remove();});
+  // Append cash flow projection card
+  const cfCard=document.createElement('div');cfCard.id='proj-treasury-cf';cfCard.className='card';el.appendChild(cfCard);
+  renderCashFlowProjection(cfCard);
+  // Append savings target card
+  const targetPct=getSavingsTarget();
+  const stCard=document.createElement('div');stCard.id='proj-treasury-st';stCard.className='card';
+  stCard.innerHTML=`<div class="sh" style="margin-bottom:10px"><div class="sh-title">Monthly Savings Target</div></div>
+    <div class="pjrow"><span class="pjlabel">Current target</span><span class="pjval" style="color:var(--accent)">${targetPct?targetPct+'%':'Not set'}</span></div>
+    <div style="display:flex;gap:8px;align-items:flex-end;margin-top:10px">
+      <div class="ig" style="flex:1;margin-bottom:0"><label class="ilabel">Target %</label><input class="ifield" type="number" inputmode="decimal" id="st-pct" placeholder="e.g. 25" value="${targetPct||''}" style="font-size:0.84rem;padding:7px 10px"></div>
+      <button class="btn btn-p btn-sm" onclick="saveSavingsTargetUI()" style="flex-shrink:0;padding:9px 16px">Save</button>
+    </div>
+    <div class="csub" style="margin-top:6px">Alert fires when actual savings fall below 80% of this target.</div>`;
+  el.appendChild(stCard);
 }
 
 function renderProjAnalytics(){
@@ -4362,7 +4492,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.12.7</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.13.2</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     ${renderFxCard()}
   `;
 }
@@ -4691,7 +4821,7 @@ window.addEventListener('online',()=>{
 });
 window.addEventListener('offline',()=>{document.getElementById('offl').style.display='block';setSyncStatus('offline');});
 if(!navigator.onLine) document.getElementById('offl').style.display='block';
-['exp-modal','inv-modal','deb-modal','inc-modal','move-modal'].forEach(id=>{document.getElementById(id).addEventListener('click',function(e){if(e.target===this)closeMod(id);});});
+['exp-modal','inv-modal','deb-modal','inc-modal','move-modal','qadd-modal'].forEach(id=>{document.getElementById(id).addEventListener('click',function(e){if(e.target===this)closeMod(id);});});
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 
 
@@ -4741,6 +4871,230 @@ _requestNotifPermission();
     setTimeout(_waitForDbThenMigrate, 500);
   }
 })();
+
+// ══════════════════════════════════════════════════════════════════════════
+// FAB ACTION — quick-add on dashboard/expenses, full modal elsewhere
+// ══════════════════════════════════════════════════════════════════════════
+function fabAction(){
+  const pg=S.page;
+  if(pg==='dashboard'||pg==='expenses') openQadd();
+  else openExpModal('expense');
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// QUICK-ADD WIDGET
+// ══════════════════════════════════════════════════════════════════════════
+let _qaddAmt='';
+let _qaddCat='';
+
+function _qaddTopCats(){
+  const freq={};
+  S.txns.forEach(t=>{if(t.category)freq[t.category]=(freq[t.category]||0)+1;});
+  const prevM=S.expMonth===1?12:S.expMonth-1,prevY=S.expMonth===1?S.expYear-1:S.expYear;
+  (cGet(CK.txns(prevM,prevY))||[]).forEach(t=>{if(t.category)freq[t.category]=(freq[t.category]||0)+0.5;});
+  const sorted=Object.entries(freq).sort((a,b)=>b[1]-a[1]).map(([c])=>c);
+  const defaults=['Groceries','Food','Energy','Domestic','Personal care','Others'];
+  return[...new Set([...sorted,...defaults])].slice(0,8);
+}
+
+function openQadd(){
+  _qaddAmt='';_qaddCat='';
+  document.getElementById('qadd-display').textContent='₦0';
+  document.getElementById('qadd-hint').textContent='';
+  document.getElementById('qadd-notes').value='';
+  const bankSel=document.getElementById('qadd-bank');
+  if(bankSel) bankSel.innerHTML=getCashAccounts().map(a=>`<option>${a}</option>`).join('');
+  _renderQaddCats();
+  openMod('qadd-modal');
+}
+
+function _renderQaddCats(){
+  const el=document.getElementById('qadd-cats');if(!el)return;
+  const cats=_qaddTopCats();
+  el.innerHTML=cats.map(c=>`<button class="btn btn-sm ${c===_qaddCat?'btn-p':'btn-g'}" onclick="qaddPickCat('${c.replace(/'/g,"\\'")}')" style="font-size:0.68rem;padding:5px 10px">${CAT_ICONS[c]||''} ${c}</button>`).join('');
+}
+
+function qaddPickCat(c){_qaddCat=c;_renderQaddCats();}
+
+function qaddKey(k){
+  if(k==='bk'){_qaddAmt=_qaddAmt.slice(0,-1);}
+  else if(k==='000'){if(_qaddAmt)_qaddAmt+=k;}
+  else{if(_qaddAmt.length<10)_qaddAmt+=k;}
+  const num=parseInt(_qaddAmt)||0;
+  document.getElementById('qadd-display').textContent='₦'+num.toLocaleString('en-NG');
+  const hint=document.getElementById('qadd-hint');
+  if(num>0&&!_qaddCat){
+    let bestCat='',bestScore=0;
+    S.txns.forEach(t=>{if(!t.category)return;const ratio=Math.min(t.amount,num)/Math.max(t.amount,num);if(ratio>0.7&&ratio>bestScore){bestScore=ratio;bestCat=t.category;}});
+    if(hint)hint.textContent=bestCat?`Suggested: ${bestCat}`:'';
+  } else {
+    if(hint)hint.textContent=_qaddCat?`Category: ${_qaddCat}`:'';
+  }
+}
+
+async function qaddSave(){
+  const amt=parseInt(_qaddAmt)||0;
+  if(amt<=0){toast('Enter an amount');return;}
+  const cat=_qaddCat||_qaddTopCats()[0]||'Others';
+  const bank=document.getElementById('qadd-bank')?.value||getCashAccounts()[0];
+  const notes=document.getElementById('qadd-notes')?.value||'';
+  const recentPayee=S.txns.find(t=>t.category===cat)?.payee||cat;
+  const data={amount:amt,category:cat,bank,payee:recentPayee,notes,date:todayStr(),month:S.expMonth,year:S.expYear,type:'expense'};
+  try{
+    data.createdAt=firebase.firestore.FieldValue.serverTimestamp();
+    const ref=await db.collection('transactions').add(data);
+    S.txns.unshift({...data,id:ref.id});
+    cSet(CK.txns(S.expMonth,S.expYear),S.txns);
+    _adjustCash(bank,-amt,S.expMonth,S.expYear);
+    closeMod('qadd-modal');
+    toast(`${fN(amt)} saved · ${cat}`);haptic([8,40,8]);setSyncStatus('synced');
+    renderExpenses();renderDashboard();
+  }catch(e){toast('Error saving');setSyncStatus('error');}
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// INVESTMENT WITHDRAWAL LOG — realised vs unrealised gains
+// ══════════════════════════════════════════════════════════════════════════
+function getInvWithdrawals(){return cGet(INV_WD_KEY)||[];}
+function addInvWithdrawal(pKey,amtNGN,date,notes){
+  const list=getInvWithdrawals();
+  list.push({platformKey:pKey,amountNGN:amtNGN,date:date||todayStr(),notes:notes||''});
+  cSet(INV_WD_KEY,list);
+}
+function getRealisedGain(pKey){
+  const cost=cGet('sw3_inv_cost_'+pKey)||0;if(!cost)return null;
+  const totalWd=getInvWithdrawals().filter(w=>w.platformKey===pKey).reduce((s,w)=>s+(w.amountNGN||0),0);
+  return(S.investments[pKey]||0)+totalWd-cost;
+}
+function _renderWithdrawalSummary(suffix){
+  const s=suffix||'';
+  const elId='inv-wd-summary'+s;
+  let el=document.getElementById(elId);
+  if(!el){
+    const currentDiv=document.getElementById('inv-current'+s);if(!currentDiv)return;
+    el=document.createElement('div');el.id=elId;el.className='card';currentDiv.appendChild(el);
+  }
+  const wds=getInvWithdrawals();
+  if(!wds.length){el.style.display='none';return;}
+  el.style.display='block';
+  const byPlat={};
+  wds.forEach(w=>{byPlat[w.platformKey]=(byPlat[w.platformKey]||0)+(w.amountNGN||0);});
+  const rows=Object.entries(byPlat).map(([k,total])=>{
+    const p=PLATFORMS.find(pl=>pl.key===k);
+    const rg=getRealisedGain(k);
+    return`<div class="pjrow"><span class="pjlabel">${p?p.label:k} withdrawals</span><span class="pjval" style="color:var(--text2)">${fN(Math.round(total))}${rg!==null?`<span style="font-size:0.62rem;color:${rg>=0?'var(--accent)':'var(--red)'};margin-left:4px">${rg>=0?'+':''}${fN(Math.round(rg))}</span>`:''}</span></div>`;
+  }).join('');
+  el.innerHTML=`<div class="sh" style="margin-bottom:8px"><div class="sh-title" style="font-size:0.78rem">Withdrawal History & Realised Gains</div></div>${rows}<div class="csub" style="margin-top:6px">Realised gain = current value + total withdrawn − cost basis</div>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// MONTHLY SAVINGS TARGET
+// ══════════════════════════════════════════════════════════════════════════
+function getSavingsTarget(){return parseFloat(cGet(SAVINGS_TARGET_KEY))||0;}
+function saveSavingsTarget(pct){cSet(SAVINGS_TARGET_KEY,pct);}
+function saveSavingsTargetUI(){
+  const el=document.getElementById('st-pct');
+  const pct=parseFloat(el?.value)||0;
+  saveSavingsTarget(pct);
+  toast(pct?`Savings target set: ${pct}%`:'Savings target cleared');
+  renderDashAlerts();
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// OVERDUE DEBTOR HELPERS
+// ══════════════════════════════════════════════════════════════════════════
+function _getOverdueDebtors(){
+  const now=new Date();
+  return S.debtors.filter(d=>{
+    if(d.expectRepayment===false||(d.ngnBalance||0)<=0)return false;
+    let lastDate=d.date||'';
+    if(d.pmtLog&&d.pmtLog.length)lastDate=d.pmtLog[d.pmtLog.length-1].date;
+    if(!lastDate)return false;
+    return Math.floor((now-new Date(lastDate))/(864e5))>60;
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// NET WORTH DELTA BADGE helper
+// ══════════════════════════════════════════════════════════════════════════
+function _getNWDeltaBadge(m,y){
+  if(m===0)return'';
+  const prevM=m===1?12:m-1,prevY=m===1?y-1:y;
+  const prevInv=cGet(CK.inv(prevM,prevY))||{};
+  const prevCash=cGet(CK.cash(prevM,prevY))||{};
+  const prevNW=PLATFORMS.reduce((s,p)=>s+(prevInv[p.key]||0),0)+getCashAccounts().reduce((s,b)=>s+(prevCash[b]||0),0);
+  if(!prevNW)return'';
+  const curNW=PLATFORMS.reduce((s,p)=>s+(S.investments[p.key]||0),0)+getCashAccounts().reduce((s,b)=>s+(S.cash[b]||0),0);
+  const delta=curNW-prevNW;if(!delta)return'';
+  const pct=Math.round(Math.abs(delta)/prevNW*100);
+  const up=delta>0;
+  return`<span class="mom-badge ${up?'mom-dn':'mom-up'}" style="vertical-align:middle"> ${up?'▲':'▼'} ${fN(Math.abs(delta))} (${pct}%)</span>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// STACKED AREA CHART — Equities vs Fixed Income over time
+// ══════════════════════════════════════════════════════════════════════════
+let _allocChart=null;
+async function renderInvAllocChart(suffix){
+  const s=suffix||'';
+  const trendDiv=document.getElementById('inv-trend'+s);if(!trendDiv)return;
+  const elId='inv-alloc-chart-wrap'+s;
+  if(!document.getElementById(elId)){
+    const wrap=document.createElement('div');
+    wrap.id=elId;wrap.className='card';wrap.style.marginTop='10px';
+    wrap.innerHTML=`<div class="clabel" style="margin-bottom:12px">Equities vs Fixed Income</div><canvas id="inv-alloc-chart${s}" style="max-height:180px"></canvas><div style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap"><div style="display:flex;align-items:center;gap:5px;font-size:0.63rem;color:var(--text2)"><div style="width:8px;height:8px;border-radius:2px;background:#60a5fa"></div>Equities</div><div style="display:flex;align-items:center;gap:5px;font-size:0.63rem;color:var(--text2)"><div style="width:8px;height:8px;border-radius:2px;background:#fbbf24"></div>Fixed Income</div></div>`;
+    trendDiv.appendChild(wrap);
+  }
+  const canvasId='inv-alloc-chart'+s;
+  try{
+    let snap;
+    try{snap=await db.collection('investments').get({source:'server'});}
+    catch(e){snap=await db.collection('investments').get();}
+    if(!snap||snap.empty)return;
+    const sorted=snap.docs.map(d=>{const doc=d.data();return{year:doc.year,month:doc.month,label:`${MS[(doc.month||1)-1]} '${String(doc.year||2024).slice(2)}`,data:doc};}).filter(d=>d.year&&d.month).sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);
+    const pts=sorted.map(d=>{let eq=0,fi=0;PLATFORMS.forEach(p=>{const val=d.data[p.key]||0;if(getInvPlatformMeta(p.key).assetClass==='fixed_income')fi+=val;else eq+=val;});return{label:d.label,eq,fi};}).filter(p=>p.eq+p.fi>0);
+    if(pts.length<2)return;
+    if(_allocChart){try{_allocChart.destroy();}catch(e){}_allocChart=null;}
+    let canvas=document.getElementById(canvasId);if(!canvas)return;
+    const newCanvas=document.createElement('canvas');newCanvas.id=canvasId;newCanvas.style.cssText='max-height:180px';
+    canvas.parentNode.replaceChild(newCanvas,canvas);canvas=newCanvas;
+    const ctx=canvas.getContext('2d');
+    _allocChart=new Chart(ctx,{type:'line',data:{labels:pts.map(p=>p.label),datasets:[{label:'Equities',data:pts.map(p=>p.eq),borderColor:'#60a5fa',backgroundColor:'rgba(96,165,250,0.2)',borderWidth:2,fill:true,tension:0.3,pointRadius:3,pointBackgroundColor:'#60a5fa'},{label:'Fixed Income',data:pts.map(p=>p.fi),borderColor:'#fbbf24',backgroundColor:'rgba(251,191,36,0.15)',borderWidth:2,fill:true,tension:0.3,pointRadius:3,pointBackgroundColor:'#fbbf24'}]},options:{responsive:true,maintainAspectRatio:true,interaction:{mode:'index',intersect:false},plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>c.dataset.label+': '+fmtChartNGN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false,stacked:true}}}});
+  }catch(e){console.warn('allocChart',e);}
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// CASH FLOW PROJECTION + BREAK-EVEN helper
+// ══════════════════════════════════════════════════════════════════════════
+function renderCashFlowProjection(containerEl){
+  if(!containerEl)return;
+  const hist=getHistory().filter(h=>h.income>0||h.expenses>0).slice(-6);
+  if(hist.length<2){containerEl.innerHTML='<div class="csub" style="padding:8px 0">Need more history for projection</div>';return;}
+  const avgInc=hist.reduce((s,h)=>s+(h.income||0),0)/hist.length;
+  const avgExp=hist.reduce((s,h)=>s+(h.expenses||0),0)/hist.length;
+  const cashNow=getCashAccounts().reduce((s,b)=>s+(S.cash[b]||0),0);
+  let monthlyInt=0;
+  const intMeta=getCashInterestMeta();
+  getCashAccounts().forEach(b=>{const ci=intMeta[b];if(ci&&ci.interestRate)monthlyInt+=(S.cash[b]||0)*(ci.interestRate/100/12);});
+  PLATFORMS.forEach(p=>{const meta=getInvPlatformMeta(p.key);if(meta.assetClass==='fixed_income'&&meta.interestRate)monthlyInt+=(S.investments[p.key]||0)*(meta.interestRate/100/12);});
+  const netPerMonth=avgInc+monthlyInt-avgExp;
+  const now=new Date();let runningCash=cashNow;
+  const months=[];
+  for(let i=1;i<=3;i++){const d=new Date(now.getFullYear(),now.getMonth()+i,1);runningCash+=netPerMonth;months.push({label:MS[d.getMonth()]+" '"+String(d.getFullYear()).slice(2),cash:Math.round(runningCash)});}
+  const breakEven=avgExp>avgInc+monthlyInt&&cashNow>0?Math.ceil(cashNow/(avgExp-avgInc-monthlyInt)):null;
+  containerEl.innerHTML=`
+    <div class="sh" style="margin-bottom:10px"><div class="sh-title">3-Month Cash Projection</div></div>
+    <div class="pjrow"><span class="pjlabel">Avg. monthly income (6m)</span><span class="pjval" style="color:var(--accent)">${fN(Math.round(avgInc))}</span></div>
+    ${monthlyInt>500?`<div class="pjrow"><span class="pjlabel">Est. monthly interest</span><span class="pjval" style="color:var(--gold)">+${fN(Math.round(monthlyInt))}</span></div>`:''}
+    <div class="pjrow"><span class="pjlabel">Avg. monthly spend (6m)</span><span class="pjval" style="color:var(--red)">${fN(Math.round(avgExp))}</span></div>
+    <div class="pjrow" style="font-weight:700;border-top:1px solid var(--border);padding-top:6px;margin-top:4px"><span>Monthly net</span><span class="pjval" style="color:${netPerMonth>=0?'var(--accent)':'var(--red)'}">${fN(Math.round(Math.abs(netPerMonth)))} ${netPerMonth>=0?'saved':'deficit'}</span></div>
+    <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
+      <div style="font-size:0.6rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text3);margin-bottom:6px">Projected Cash Balance</div>
+      ${months.map(mo=>`<div class="pjrow"><span class="pjlabel">${mo.label}</span><span class="pjval" style="color:${mo.cash>0?'var(--blue)':'var(--red)'}">${fN(mo.cash)}</span></div>`).join('')}
+    </div>
+    ${breakEven?`<div style="margin-top:10px;padding:8px 10px;border-radius:var(--rsm);background:var(--rdim);font-size:0.72rem;color:var(--red)">⚠ Break-even: cash exhausted in ~${breakEven} month${breakEven!==1?'s':''} at current burn rate</div>`:'<div style="margin-top:6px;font-size:0.68rem;color:var(--accent)">✓ Cash trajectory is positive over next 3 months</div>'}
+  `;
+}
 
 // ── PULL-TO-REFRESH ────────────────────────────────────────────────────
 (function(){
