@@ -388,7 +388,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.13.3</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.13.4</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -2880,7 +2880,7 @@ function getExpLines(cat){
 }
 function updateExpenseLines(){
   const cat=document.getElementById('e-cat')?.value;if(!cat)return;
-  const lines=getExpLines(cat);
+  const lines=getExpLines(cat).slice().sort((a,b)=>a.localeCompare(b));
   const sel=document.getElementById('e-payee-sel');
   if(sel)sel.innerHTML=['-- Select --',...lines,'+ Add new'].map(l=>`<option value="${l}">${l}</option>`).join('');
   const wrap=document.getElementById('e-payee-new-wrap');if(wrap)wrap.style.display='none';
@@ -4514,7 +4514,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.13.3</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.13.4</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     ${renderFxCard()}
   `;
 }
@@ -5135,7 +5135,7 @@ function openMergeCatModal(){
   let txnCount=0;
   const allKeys=Object.keys(localStorage).filter(k=>k.startsWith('sw3_txns_'));
   allKeys.forEach(k=>{
-    const arr=cGet(k.replace('sw3_',''))||[];
+    const arr=cGet(k)||[];
     txnCount+=arr.filter(t=>t.category===_mergeFrom).length;
   });
   // Get current budgets for both
@@ -5189,15 +5189,31 @@ async function execMergeCat(){
     // ── 2. Reassign transactions in all local caches ───────────────────
     const allTxnKeys=Object.keys(localStorage).filter(k=>k.startsWith('sw3_txns_'));
     allTxnKeys.forEach(lsKey=>{
-      const cacheKey=lsKey.replace(/^sw3_/,'');
-      const arr=cGet(cacheKey);
+      const arr=cGet(lsKey);
       if(!arr) return;
       let changed=false;
       arr.forEach(t=>{if(t.category===_mergeFrom){t.category=_mergeInto;changed=true;}});
-      if(changed) cSet(cacheKey,arr);
+      if(changed) cSet(lsKey,arr);
     });
     // Update current month's in-memory txns
     S.txns.forEach(t=>{if(t.category===_mergeFrom)t.category=_mergeInto;});
+
+    // ── 3. Migrate payee lines from source → target ────────────────────
+    // Move CAT_LINES entries (built-in payees) to the target category
+    const srcLines=CAT_LINES[_mergeFrom]||[];
+    if(srcLines.length){
+      if(!CAT_LINES[_mergeInto]) CAT_LINES[_mergeInto]=[];
+      srcLines.forEach(l=>{if(!CAT_LINES[_mergeInto].includes(l))CAT_LINES[_mergeInto].push(l);});
+      CAT_LINES[_mergeFrom]=[];
+    }
+    // Move customExpLines entries (user-added payees) to the target category
+    const srcCustom=S.customExpLines[_mergeFrom]||[];
+    if(srcCustom.length){
+      if(!S.customExpLines[_mergeInto]) S.customExpLines[_mergeInto]=[];
+      srcCustom.forEach(l=>{if(!S.customExpLines[_mergeInto].includes(l))S.customExpLines[_mergeInto].push(l);});
+      delete S.customExpLines[_mergeFrom];
+      cSet(CK.customLines,S.customExpLines);
+    }
 
     // ── 3. Merge budgets across all historical Firestore budget docs ───
     let budgetSnap;
