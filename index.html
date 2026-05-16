@@ -393,7 +393,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.8</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.9</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -4639,7 +4639,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.8</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.9</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     ${renderFxCard()}
   `;
 }
@@ -5008,7 +5008,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.8';
+const APP_VERSION='v3.14.9';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
@@ -5025,6 +5025,42 @@ async function checkForUpdate(){
     }
   }catch(e){}
 }
+// ── USD Cash repair: reads USDHoldings from Firestore investments, writes to cashBalances ──
+async function _repairUSDCash(){
+  if(cGet('sw3_usd_repair_v2')) return; // already done
+  try{
+    const snap=await db.collection('investments').get();
+    if(snap.empty){cSet('sw3_usd_repair_v2','1');return;}
+    const batch=db.batch();
+    let repaired=0;
+    snap.forEach(doc=>{
+      const d=doc.data();
+      if(!d.USDHoldings||d.USDHoldings<=0) return;
+      const m=d.month,y=d.year;
+      if(!m||!y) return;
+      const fxR=getFxRates(m,y);
+      const usdAmt=+(d.USDHoldings/(fxR.USD||1600)).toFixed(2);
+      const cashRef=db.collection('cashBalances').doc(sid(m,y));
+      batch.set(cashRef,{'USD Cash':usdAmt,month:m,year:y},{merge:true});
+      // Also update local cache
+      const cached=cGet(CK.cash(m,y))||{};
+      if(!cached['USD Cash']||cached['USD Cash']===0){
+        cached['USD Cash']=usdAmt;
+        cSet(CK.cash(m,y),cached);
+      }
+      repaired++;
+    });
+    if(repaired>0){
+      await batch.commit();
+      // Refresh current view
+      S.cash=cGet(CK.cash(S.cashMonth||S.expMonth,S.cashYear||S.expYear))||{};
+      if(typeof renderDashboard==='function') renderDashboard();
+      if(typeof renderCashPage==='function') renderCashPage();
+      toast(`USD Cash restored across ${repaired} month(s)`);
+    }
+    cSet('sw3_usd_repair_v2','1');
+  }catch(e){console.warn('USD Cash repair failed:',e);}
+}
 // BOOT
 initFirebase();
 _requestNotifPermission();
@@ -5033,6 +5069,7 @@ setTimeout(checkForUpdate, 3000); // check after initial load settles
 (function _waitForDbThenMigrate(){
   if(typeof db !== 'undefined' && db){
     _migrateFifeToKids();
+    _repairUSDCash();
   } else {
     setTimeout(_waitForDbThenMigrate, 500);
   }
