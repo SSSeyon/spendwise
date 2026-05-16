@@ -388,7 +388,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.13.4</span>
+      <span class="ver-lbl" style="margin-left:3px">v3.13.5</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -546,7 +546,12 @@ datalist option{background:var(--bg2);color:var(--text)}
 
 <!-- EXPENSES -->
 <div class="pg" id="pg-expenses">
-  <div class="pg-title" style="margin-bottom:12px">Expenses</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div class="pg-title" style="margin-bottom:0">Expenses</div>
+    <select class="period-sel" id="exp-currency" onchange="S.dashCurrency=this.value;cSet('sw3_currency',this.value);renderExpenses();renderDashboard()" style="font-size:0.68rem;padding:4px 8px">
+      <option value="NGN">₦ NGN</option><option value="USD">$ USD</option><option value="GBP">£ GBP</option><option value="NATIVE">◈ Effective</option>
+    </select>
+  </div>
   <div class="mrow" id="exp-months"></div>
   <div class="card" id="exp-summary"></div>
   <div style="display:flex;gap:8px;margin-bottom:10px">
@@ -603,7 +608,12 @@ datalist option{background:var(--bg2);color:var(--text)}
 
 <!-- ACCOUNTS (Cash + Investments merged) -->
 <div class="pg" id="pg-accounts">
-  <div class="pg-title" style="margin-bottom:12px">Accounts</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div class="pg-title" style="margin-bottom:0">Accounts</div>
+    <select class="period-sel" id="acct-currency" onchange="S.dashCurrency=this.value;cSet('sw3_currency',this.value);renderInvestments();renderCashPage();renderDashboard()" style="font-size:0.68rem;padding:4px 8px">
+      <option value="NGN">₦ NGN</option><option value="USD">$ USD</option><option value="GBP">£ GBP</option><option value="NATIVE">◈ Effective</option>
+    </select>
+  </div>
   <div class="tabs">
     <button class="tab active" onclick="acctTab('cash',this)">Cash</button>
     <button class="tab" onclick="acctTab('invest',this)">Investments</button>
@@ -684,7 +694,12 @@ datalist option{background:var(--bg2);color:var(--text)}
 
 <!-- FORECAST -->
 <div class="pg" id="pg-forecast">
-  <div class="pg-title" style="margin-bottom:12px">Forecast</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div class="pg-title" style="margin-bottom:0">Forecast</div>
+    <select class="period-sel" id="forecast-currency" onchange="S.dashCurrency=this.value;cSet('sw3_currency',this.value);renderForecast();renderDashboard()" style="font-size:0.68rem;padding:4px 8px">
+      <option value="NGN">₦ NGN</option><option value="USD">$ USD</option><option value="GBP">£ GBP</option><option value="NATIVE">◈ Effective</option>
+    </select>
+  </div>
   <div class="tabs">
     <button class="tab active" onclick="projTab('treasury',this)">Treasury</button>
     <button class="tab" onclick="projTab('networth',this)">Net Worth</button>
@@ -1029,7 +1044,7 @@ const MS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec
 // Categories with their expense lines from Excel
 const CAT_LINES = {
   'Utilities': ['Power'],
-  'Energy': ['Gas','Fuel - Old Ford','Fuel - Ford'],
+  'Fuel': ['Gas','Fuel - Old Ford','Fuel - Ford'],
   'Car maintenance': ['Ford maintenance','Old Ford maintenance','Vehicle papers renewal'],
   'Itunu': ['Itunu'],
   'Domestic': ['Car purchase','Car wash','Service charge','Laundry','Home repairs','Rent','Temu','Cleaner'],
@@ -1056,7 +1071,7 @@ const CATS = _BASE_CATS; // static fallback — always use getAllCats() in rende
 // ── ICONS ──────────────────────────────────────────────────────────────────
 const CAT_ICONS = {
   'Utilities':          '💡',
-  'Energy':             '⛽',
+  'Fuel':               '⛽',
   'Car maintenance':    '🔧',
   'Itunu':              '👤',
   'Domestic':           '🏠',
@@ -1195,7 +1210,7 @@ const FX_RATES = {
   '2026-04':{USD:1600,GBP:2040},'2026-05':{USD:1590,GBP:2020},
 };
 
-const DEF_BUDGETS={Utilities:90000,Energy:150000,Carmaintenance:50000,Itunu:0,Domestic:200000,Food:150000,Groceries:400000,Kids:200000,Internetservices:50000,Recreation:100000,Personalcare:50000,Giftsanddonations:200000,Loans:0,Others:50000,WorkTravel:0,Education:0};
+const DEF_BUDGETS={Utilities:90000,Fuel:150000,Carmaintenance:50000,Itunu:0,Domestic:200000,Food:150000,Groceries:400000,Kids:200000,Internetservices:50000,Recreation:100000,Personalcare:50000,Giftsanddonations:200000,Loans:0,Others:50000,WorkTravel:0,Education:0};
 const FIXED_OBL=[{label:'Service Charge',amount:55000},{label:'Internet & Airtime',amount:30000},{label:'Power',amount:90000},{label:'Fuel',amount:150000}];
 // School fees loaded from localStorage via seed JSON.
 const SCHOOL_FEES_DEFAULT=[];
@@ -1204,7 +1219,7 @@ const SCHOOL_FEES_DEFAULT=[];
 const PAYEE_CAT_MAP=(()=>{const m={};Object.entries(CAT_LINES).forEach(([cat,lines])=>{lines.forEach(l=>{m[l.toLowerCase()]=cat;});});return m;})();
 const PAYEE_KEYWORDS=[
   {kw:'spar',cat:'Groceries'},{kw:'ebeano',cat:'Groceries'},{kw:'blenco',cat:'Groceries'},{kw:'shoprite',cat:'Groceries'},{kw:'supermart',cat:'Groceries'},{kw:'market',cat:'Groceries'},
-  {kw:'fuel',cat:'Energy'},{kw:'petrol',cat:'Energy'},{kw:'diesel',cat:'Energy'},{kw:'gas',cat:'Energy'},
+  {kw:'fuel',cat:'Fuel'},{kw:'petrol',cat:'Fuel'},{kw:'diesel',cat:'Fuel'},{kw:'gas',cat:'Fuel'},
   {kw:'netflix',cat:'Internet services'},{kw:'amazon',cat:'Internet services'},{kw:'airtime',cat:'Internet services'},{kw:'dstv',cat:'Recreation'},{kw:'gotv',cat:'Recreation'},
   {kw:'uber',cat:'Work Travel'},{kw:'bolt',cat:'Work Travel'},{kw:'taxi',cat:'Work Travel'},
   {kw:'pharmacy',cat:'Personal care'},{kw:'drug',cat:'Personal care'},{kw:'hospital',cat:'Personal care'},
@@ -1803,6 +1818,8 @@ function renderAll(){
 function renderDashboard(){
   const m=S.dashMonth,y=S.dashYear,cur=S.dashCurrency;
   const _cs=document.getElementById('dash-currency');if(_cs&&_cs.value!==cur)_cs.value=cur;
+  // Keep all tab currency selects in sync
+  ['exp-currency','acct-currency','forecast-currency'].forEach(id=>{const el=document.getElementById(id);if(el&&el.value!==cur)el.value=cur;});
   const isFullYear=m===0;
   const periodLabel=isFullYear?`${y} — Full Year`:`${MONTHS[m-1]} ${y}`;
   document.getElementById('dash-period-label').textContent=periodLabel;
@@ -2714,13 +2731,17 @@ function renderExpenses(){
     return;
   }
 
-  // All categories — group by category, each group collapsible, items sorted by date within group
-  const groups={};const catOrder=[];
+  // All categories — group by category, sorted by total spend desc, items sorted by date within group
+  const groups={};
   filtered.forEach(tx=>{
-    if(!groups[tx.category]){groups[tx.category]=[];catOrder.push(tx.category);}
+    if(!groups[tx.category]) groups[tx.category]=[];
     groups[tx.category].push(tx);
   });
-  const orderedCats=[...new Set(catOrder)];
+  const orderedCats=Object.keys(groups).sort((a,b)=>{
+    const ta=groups[a].reduce((s,t)=>s+(t.amount||0),0);
+    const tb=groups[b].reduce((s,t)=>s+(t.amount||0),0);
+    return tb-ta;
+  });
 
   listEl.innerHTML=orderedCats.map(cat=>{
     const items=groups[cat];
@@ -4146,13 +4167,14 @@ function renderProjHistory(){
     </div>`;
 }
 function buildHistRows(data){
+  const cur=S.dashCurrency||'NGN';
   return data.map((d,i)=>{
     const rowKey=`${d.year}-${d.month}`;
     return`
     <div style="display:grid;grid-template-columns:80px 1fr 1fr;gap:0;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer;align-items:center" onclick="expandHistRow('${rowKey}',${d.year},${d.month})">
       <div style="font-size:0.75rem;font-weight:600">${d.label}</div>
-      <div style="font-family:var(--mono);font-size:0.71rem;color:var(--accent);text-align:right">${fN(d.income)}</div>
-      <div style="font-family:var(--mono);font-size:0.71rem;color:var(--red);text-align:right">${fN(d.expenses)}</div>
+      <div style="font-family:var(--mono);font-size:0.71rem;color:var(--accent);text-align:right">${fmtCur(d.income,cur,d.month,d.year)}</div>
+      <div style="font-family:var(--mono);font-size:0.71rem;color:var(--red);text-align:right">${fmtCur(d.expenses,cur,d.month,d.year)}</div>
     </div>
     <div id="hist-detail-${rowKey}" style="display:none;background:var(--bg2);border-radius:6px;padding:8px 10px;margin:2px 0 4px;font-size:0.68rem"></div>
   `}).join('');
@@ -4191,6 +4213,14 @@ async function _loadHistDetail(d, el){
     if(inc.length) cSet(CK.inc(m,y),inc);
     if(invDoc.exists) invData=invDoc.data();
     if(cashDoc.exists) cashData=cashDoc.data();
+    // Update sw3_history so summary row matches breakdown totals
+    const liveExp=txns.reduce((s,t)=>s+(t.amount||0),0);
+    const liveInc=inc.reduce((s,i)=>s+(i.amount||0),0);
+    if(liveExp||liveInc){
+      const hist=cGet('sw3_history')||[];
+      const hi=hist.findIndex(h=>h.year===y&&h.month===m);
+      if(hi>=0){hist[hi].expenses=liveExp;hist[hi].income=liveInc;cSet('sw3_history',hist);}
+    }
   }catch(e){
     // Offline fallback
     txns=cGet(CK.txns(m,y))||[];
@@ -4205,31 +4235,30 @@ async function _loadHistDetail(d, el){
   const expRows=Object.entries(cats).sort((a,b)=>b[1]-a[1]).map(([c,v])=>`
     <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
       <span style="font-size:0.7rem;color:var(--text2)">${CAT_ICONS[c]||''} ${c}</span>
-      <div style="text-align:right">
-        <span style="font-family:var(--mono);font-size:0.7rem;color:var(--red)">${fN(v)}</span>
+      <div style="text-align:right;flex-shrink:0;margin-left:6px">
+        <span style="font-family:var(--mono);font-size:0.7rem;color:var(--red)">${fmtCur(v,cur,m,y)}</span>
         <span style="font-size:0.58rem;color:var(--text3);margin-left:4px">${totalExp>0?((v/totalExp)*100).toFixed(1)+'%':''}</span>
       </div>
     </div>`).join('');
   const incRows=Object.entries(incCats).sort((a,b)=>b[1]-a[1]).map(([c,v])=>`
     <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
       <span style="font-size:0.7rem;color:var(--text2)">${c}</span>
-      <span style="font-family:var(--mono);font-size:0.7rem;color:var(--accent)">${fN(v)}</span>
+      <span style="font-family:var(--mono);font-size:0.7rem;color:var(--accent)">${fmtCur(v,cur,m,y)}</span>
     </div>`).join('');
-  // Cash rows: display mode
+  const cur=S.dashCurrency==='NATIVE'?'NATIVE':S.dashCurrency||'NGN';
+  const fxRates=getFxRates(m,y);
+  // Cash rows: display mode — always NGN values, convert via fmtCur
   const cashAccounts=getCashAccounts().concat(['Union']).filter((a,i,arr)=>arr.indexOf(a)===i);
   const cashRows=cashAccounts.filter(a=>cashData[a]!==undefined).map(a=>`
     <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
       <span style="font-size:0.7rem;color:var(--text2)">${a}</span>
-      <span style="font-family:var(--mono);font-size:0.7rem;color:var(--blue)">${fN(cashData[a])}</span>
+      <span style="font-family:var(--mono);font-size:0.7rem;color:var(--blue)">${fmtCur(cashData[a],cur,m,y)}</span>
     </div>`).join('');
-  // Investment rows: display mode
-  const USD_PLATS=['Risevest','Trove','Bamboo','USDHoldings'];
+  // Investment rows: values are stored as NGN; use fmtCur for consistent display
   const invRows=PLATFORMS.filter(p=>invData[p.key]!==undefined&&invData[p.key]!==0).map(p=>{
-    const isUSD=USD_PLATS.includes(p.key);
-    const disp=isUSD?`$${Number(invData[p.key]).toLocaleString('en-NG',{maximumFractionDigits:0})}`:`₦${Number(invData[p.key]).toLocaleString('en-NG',{maximumFractionDigits:0})}`;
     return`<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
       <span style="font-size:0.7rem;color:var(--text2)">${p.label}</span>
-      <span style="font-family:var(--mono);font-size:0.7rem;color:var(--gold)">${disp}</span>
+      <span style="font-family:var(--mono);font-size:0.7rem;color:var(--gold)">${fmtCur(invData[p.key],cur,m,y)}</span>
     </div>`;}).join('');
   // Cash edit inputs
   const cashInputs=cashAccounts.map(a=>`
@@ -4250,11 +4279,11 @@ async function _loadHistDetail(d, el){
   el.innerHTML=`
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start">
       <div>
-        <div style="font-size:0.58rem;font-weight:700;color:var(--accent);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Income — ${fN(totalInc)}</div>
+        <div style="font-size:0.58rem;font-weight:700;color:var(--accent);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Income — ${fmtCur(totalInc,cur,m,y)}</div>
         ${incRows||'<div style="font-size:0.68rem;color:var(--text3);padding:4px 0">—</div>'}
       </div>
       <div>
-        <div style="font-size:0.58rem;font-weight:700;color:var(--red);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Expenses — ${fN(totalExp)}</div>
+        <div style="font-size:0.58rem;font-weight:700;color:var(--red);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Expenses — ${fmtCur(totalExp,cur,m,y)}</div>
         ${expRows||'<div style="font-size:0.68rem;color:var(--text3);padding:4px 0">—</div>'}
       </div>
     </div>
@@ -4514,7 +4543,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.13.4</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.13.5</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     ${renderFxCard()}
   `;
 }
@@ -4915,7 +4944,7 @@ function _qaddTopCats(){
   const prevM=S.expMonth===1?12:S.expMonth-1,prevY=S.expMonth===1?S.expYear-1:S.expYear;
   (cGet(CK.txns(prevM,prevY))||[]).forEach(t=>{if(t.category)freq[t.category]=(freq[t.category]||0)+0.5;});
   const sorted=Object.entries(freq).sort((a,b)=>b[1]-a[1]).map(([c])=>c);
-  const defaults=['Groceries','Food','Energy','Domestic','Personal care','Others'];
+  const defaults=['Groceries','Food','Fuel','Domestic','Personal care','Others'];
   return[...new Set([...sorted,...defaults])].slice(0,8);
 }
 
