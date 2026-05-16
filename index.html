@@ -374,10 +374,15 @@ datalist option{background:var(--bg2);color:var(--text)}
 .asset-eq{background:var(--bdim);color:var(--blue)}
 .asset-fi{background:var(--gdim);color:var(--gold)}
 .int-badge{font-size:0.58rem;padding:1px 5px;border-radius:3px;background:rgba(251,191,36,0.15);color:var(--gold);margin-left:4px}
+  /* ── Version update banner ── */
+  #sw-update-banner{display:none;position:fixed;top:0;left:0;right:0;z-index:9999;background:var(--blue);color:#fff;padding:10px 16px;font-size:0.78rem;font-weight:600;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.3);}
+  #sw-update-banner button{margin-left:12px;background:#fff;color:var(--blue);border:none;border-radius:12px;padding:4px 12px;font-size:0.74rem;font-weight:700;cursor:pointer;}
+  #sw-update-banner .sw-dismiss{margin-left:8px;background:transparent;color:rgba(255,255,255,0.75);font-size:0.7rem;font-weight:400;padding:4px 6px;}
 </style>
 </head>
 <body>
 <div id="ptr-indicator"><span class="ptr-arrow" id="ptr-arrow">↓</span><span class="ptr-label" id="ptr-label">Pull to refresh</span></div>
+<div id="sw-update-banner"><span id="sw-update-msg">A new version is available</span><button onclick="forceHardRefresh()">Update now</button><button class="sw-dismiss" onclick="this.parentElement.style.display='none'">Later</button></div>
 <div class="offl" id="offl">⚡ Offline — showing cached data</div>
 <header class="hdr">
   <div class="hdr-logo" onclick="navTo('dashboard')" style="cursor:pointer">
@@ -388,7 +393,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="location.reload(true)" title="Tap to hard refresh">v3.14.6</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.8</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1113,7 +1118,7 @@ const DEFAULT_CASH_ACCOUNTS = ['GTB','Access','Renmoney','USD Cash'];
 const USD_CASH_ACCOUNTS = ['USD Cash']; // cash accounts denominated in USD
 function isUSDCashAccount(name){return USD_CASH_ACCOUNTS.includes(name);}
 function cashTotalNGN(cashObj,m,y){const r=getFxRates(m||S.expMonth,y||S.expYear);return getCashAccounts().reduce((s,b)=>{const v=(cashObj||S.cash)[b]||0;return s+(isUSDCashAccount(b)?v*(r.USD||1650):v);},0);}
-function getCashAccounts(){ return cGet('sw3_cash_accounts') || DEFAULT_CASH_ACCOUNTS; }
+function getCashAccounts(){const saved=cGet('sw3_cash_accounts');if(!saved)return DEFAULT_CASH_ACCOUNTS;const merged=[...DEFAULT_CASH_ACCOUNTS];saved.forEach(a=>{if(!merged.includes(a))merged.push(a);});return merged;}
 
 // Investment platforms (without Renflex which is now Renmoney in cash)
 const PLATFORMS = [
@@ -1311,6 +1316,8 @@ function loadFromCache(){
       if(!cash['USD Cash']||cash['USD Cash']===0){
         cash['USD Cash']=usdAmt;
         cSet(CK.cash(m,y),cash);
+        // Also write to Firestore so loadCashData doesn't overwrite the migrated value
+        cSet('sw3_usd_cash_pending_migration',{m,y,usdAmt});
       }
     }
     cSet('sw3_migrated_usd_cash','1');
@@ -1561,12 +1568,31 @@ async function loadInvData(m,y){
 }
 
 async function loadCashData(m,y){
-  // Always fetch from Firestore
+  // Flush any pending USD Cash migration write to Firestore (one-time)
+  const pendingMig=cGet('sw3_usd_cash_pending_migration');
+  if(pendingMig&&db){
+    try{
+      const {m:pm,y:py,usdAmt}=pendingMig;
+      const migRef=db.collection('cashBalances').doc(sid(pm,py));
+      await migRef.set({'USD Cash':usdAmt,year:py,month:pm},{merge:true});
+      cSet('sw3_usd_cash_pending_migration',null);
+    }catch(e){}
+  }
+  // Always fetch from Firestore; preserve USD Cash if Firestore doc lacks it
   try{
+    const localCash=cGet(CK.cash(m,y))||{};
     const doc=await db.collection('cashBalances').doc(sid(m,y)).get();
-    if(doc.exists&&doc.data()){S.cash=doc.data();cSet(CK.cash(m,y),S.cash);return;}
+    if(doc.exists&&doc.data()){
+      const merged={...doc.data()};
+      if(!merged['USD Cash']&&localCash['USD Cash']) merged['USD Cash']=localCash['USD Cash'];
+      S.cash=merged;cSet(CK.cash(m,y),S.cash);return;
+    }
     const snap=await db.collection('cashBalances').orderBy('year','desc').orderBy('month','desc').limit(1).get();
-    if(!snap.empty){S.cash=snap.docs[0].data();cSet(CK.cash(m,y),S.cash);}
+    if(!snap.empty){
+      const merged={...snap.docs[0].data()};
+      if(!merged['USD Cash']&&localCash['USD Cash']) merged['USD Cash']=localCash['USD Cash'];
+      S.cash=merged;cSet(CK.cash(m,y),S.cash);
+    }
   }catch(e){}
 }
 
@@ -4613,7 +4639,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.6</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.8</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     ${renderFxCard()}
   `;
 }
@@ -4981,9 +5007,28 @@ async function _migrateFifeToKids(){
     console.warn('Fife→Kids migration failed:',e);
   }
 }
+// ── Version check against GitHub Pages ──
+const APP_VERSION='v3.14.8';
+async function checkForUpdate(){
+  try{
+    const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
+    if(!res.ok)return;
+    const html=await res.text();
+    const m=html.match(/ver-lbl[^>]*>\s*(v[\d.]+)\s*</);
+    if(!m)return;
+    const remote=m[1].trim();
+    if(remote!==APP_VERSION){
+      const banner=document.getElementById('sw-update-banner');
+      const msg=document.getElementById('sw-update-msg');
+      if(msg)msg.textContent=`Update available: ${APP_VERSION} → ${remote}`;
+      if(banner)banner.style.display='block';
+    }
+  }catch(e){}
+}
 // BOOT
 initFirebase();
 _requestNotifPermission();
+setTimeout(checkForUpdate, 3000); // check after initial load settles
 // Wait until db is initialised before running one-time migrations
 (function _waitForDbThenMigrate(){
   if(typeof db !== 'undefined' && db){
