@@ -388,7 +388,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px">v3.14.2</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="location.reload(true)" title="Tap to hard refresh">v3.14.4</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -703,14 +703,12 @@ datalist option{background:var(--bg2);color:var(--text)}
   <div class="tabs">
     <button class="tab active" onclick="projTab('treasury',this)">Treasury</button>
     <button class="tab" onclick="projTab('history',this)">History</button>
-    <button class="tab" onclick="projTab('statements',this)">Statements</button>
   </div>
   <div id="proj-treasury"></div>
   <div id="proj-networth" style="display:none"></div>
   <div id="proj-analytics" style="display:none"></div>
   <div id="proj-history" style="display:none"></div>
   <div id="proj-obligations" style="display:none"></div>
-  <div id="proj-statements" style="display:none"></div>
 </div>
 
 <!-- SETTINGS -->
@@ -3839,13 +3837,12 @@ function dashChartTab(tab, btn){
 // ══════════════════════════════════════════════════════════════════════════
 // FORECAST — Treasury, Net Worth, Analytics, History, Fixed Bills
 // ══════════════════════════════════════════════════════════════════════════
-function renderForecast(){renderProjTreasury();renderProjHistory();renderProjStatements();}
+function renderForecast(){renderProjTreasury();renderProjHistory();}
 function projTab(tab,btn){
   ['treasury','networth','analytics','history','obligations','statements'].forEach(t=>{
     const el=document.getElementById('proj-'+t);if(el)el.style.display=t===tab?'block':'none';
   });
   btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');
-  if(tab==='statements') renderProjStatements();
 }
 
 function renderProjTreasury(){
@@ -4179,175 +4176,6 @@ function removeFeeEntry(idx){
   const fs=cGet(CK.schoolFees)||SCHOOL_FEES_DEFAULT.map((f,i)=>({...f,id:i}));
   fs.splice(idx,1);cSet(CK.schoolFees,fs);renderProjFees();toast('Removed');
 }
-
-// ══════════════════════════════════════════════════════════════════════════
-// FINANCIAL STATEMENTS
-// ══════════════════════════════════════════════════════════════════════════
-let _stmtPeriod='month'; // 'month' | 'year'
-let _stmtTab='income';   // 'income' | 'balance' | 'cashflow'
-
-function renderProjStatements(){
-  const el=document.getElementById('proj-statements');if(!el)return;
-  const cur=S.dashCurrency||'NGN';
-  const m=S.expMonth,y=S.expYear;
-  el.innerHTML=`
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <div style="display:flex;gap:5px">
-        <button class="btn btn-sm ${_stmtPeriod==='month'?'btn-p':'btn-g'}" onclick="_stmtPeriod='month';renderProjStatements()">Monthly</button>
-        <button class="btn btn-sm ${_stmtPeriod==='year'?'btn-p':'btn-g'}" onclick="_stmtPeriod='year';renderProjStatements()">Annual</button>
-      </div>
-      <button class="btn btn-g btn-sm" onclick="_exportStatements()">&#8595; CSV</button>
-    </div>
-    <div style="display:flex;gap:5px;margin-bottom:12px;overflow-x:auto;padding-bottom:4px">
-      <button class="btn btn-sm ${_stmtTab==='income'?'btn-p':'btn-g'}" onclick="_stmtTab='income';renderProjStatements()" style="white-space:nowrap">Income Statement</button>
-      <button class="btn btn-sm ${_stmtTab==='balance'?'btn-p':'btn-g'}" onclick="_stmtTab='balance';renderProjStatements()" style="white-space:nowrap">Balance Sheet</button>
-      <button class="btn btn-sm ${_stmtTab==='cashflow'?'btn-p':'btn-g'}" onclick="_stmtTab='cashflow';renderProjStatements()" style="white-space:nowrap">Cash Flow</button>
-    </div>
-    <div id="stmt-body"></div>`;
-  const stmtEl=document.getElementById('stmt-body');
-  if(_stmtTab==='income') _renderIncomeStatement(stmtEl,cur,m,y);
-  else if(_stmtTab==='balance') _renderBalanceSheet(stmtEl,cur,m,y);
-  else _renderCashFlowStatement(stmtEl,cur,m,y);
-}
-
-function _stmtRow(label,val,cur,m,y,opts){
-  opts=opts||{};
-  const color=opts.color||'var(--text)',bold=opts.bold||false,indent=opts.indent||0,border=opts.border||false,highlight=opts.highlight||false;
-  const valFmt=val===null?'—':fmtCur(Math.abs(val),cur,m,y);
-  const sign=val!==null&&val<0?'(':'';
-  const signEnd=val!==null&&val<0?')':'';
-  return'<div style="display:flex;justify-content:space-between;align-items:center;padding:'+(bold?'8':'5')+'px 0;'+(border?'border-top:1px solid var(--border2);margin-top:4px;':'')+(highlight?'background:var(--bg2);border-radius:4px;padding:6px 8px;margin:2px -8px;':'')+'"><span style="font-size:'+(bold?'0.76':'0.72')+'rem;font-weight:'+(bold?700:400)+';color:var(--text2);padding-left:'+(indent*12)+'px">'+label+'</span><span style="font-family:var(--mono);font-size:'+(bold?'0.8':'0.72')+'rem;font-weight:'+(bold?700:400)+';color:'+color+'">'+sign+valFmt+signEnd+'</span></div>';
-}
-
-function _stmtHeader(title,subtitle){
-  return'<div style="margin-bottom:8px"><div style="font-size:0.6rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text3)">'+title+'</div>'+(subtitle?'<div style="font-size:0.58rem;color:var(--text3);margin-top:1px">'+subtitle+'</div>':'')+'</div>';
-}
-
-function _getPeriodData(m,y){
-  if(_stmtPeriod==='month'){
-    const txns=m===S.expMonth&&y===S.expYear?S.txns:(cGet(CK.txns(m,y))||[]);
-    const inc=m===S.expMonth&&y===S.expYear?S.income:(cGet(CK.inc(m,y))||[]);
-    return{txns:txns,inc:inc,label:MONTHS[m-1]+' '+y};
-  } else {
-    var txns=[],inc=[];
-    for(var mo=1;mo<=12;mo++){txns=txns.concat(cGet(CK.txns(mo,y))||[]);inc=inc.concat(cGet(CK.inc(mo,y))||[]);}
-    return{txns:txns,inc:inc,label:y+' — Full Year'};
-  }
-}
-
-function _renderIncomeStatement(el,cur,m,y){
-  const pd=_getPeriodData(m,y);const txns=pd.txns,inc=pd.inc,label=pd.label;
-  const totalIncome=inc.reduce(function(s,i){return s+(i.amount||0);},0);
-  const catSpend={};txns.forEach(function(t){catSpend[t.category]=(catSpend[t.category]||0)+(t.amount||0);});
-  const totalExp=txns.reduce(function(s,t){return s+(t.amount||0);},0);
-  const net=totalIncome-totalExp;
-  const savingsPct=totalIncome>0?((net/totalIncome)*100).toFixed(1):null;
-  const incBySource={};inc.forEach(function(i){const k=i.category||i.payee||'Other';incBySource[k]=(incBySource[k]||0)+(i.amount||0);});
-  var html='<div class="card">'+_stmtHeader('Income Statement',label);
-  html+='<div style="margin-bottom:10px"><div style="font-size:0.62rem;font-weight:700;color:var(--accent);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Revenue</div>';
-  Object.entries(incBySource).sort(function(a,b){return b[1]-a[1];}).forEach(function(e){html+=_stmtRow(e[0],e[1],cur,m,y,{indent:1});});
-  html+=_stmtRow('Total Revenue',totalIncome,cur,m,y,{bold:true,color:'var(--accent)'});
-  html+='</div><div style="margin-bottom:10px"><div style="font-size:0.62rem;font-weight:700;color:var(--red);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Expenditure</div>';
-  Object.entries(catSpend).sort(function(a,b){return b[1]-a[1];}).forEach(function(e){html+=_stmtRow(e[0],e[1],cur,m,y,{indent:1});});
-  html+=_stmtRow('Total Expenditure',totalExp,cur,m,y,{bold:true,color:'var(--red)'});
-  html+='</div>'+_stmtRow('Net Surplus / (Deficit)',net,cur,m,y,{bold:true,color:net>=0?'var(--accent)':'var(--red)',border:true,highlight:true});
-  if(savingsPct!==null) html+='<div style="text-align:right;font-size:0.65rem;color:var(--text3);margin-top:4px">Savings rate: '+savingsPct+'%</div>';
-  html+='</div>';
-  el.innerHTML=html;
-}
-
-function _renderBalanceSheet(el,cur,m,y){
-  const inv=S.investments,cash=S.cash;
-  const invTotal=PLATFORMS.reduce(function(s,p){return s+(inv[p.key]||0);},0);
-  const cashTotal=getCashAccounts().reduce(function(s,b){return s+(cash[b]||0);},0);
-  const debtorsOwed=S.debtors.filter(function(d){return d.expectRepayment!==false&&(d.ngnBalance||0)>0;}).reduce(function(s,d){return s+(d.ngnBalance||0);},0);
-  const liabilities=S.debtors.filter(function(d){return d.expectRepayment===false;}).reduce(function(s,d){return s+(d.ngnBalance||0);},0);
-  const totalAssets=invTotal+cashTotal+debtorsOwed;
-  const netWorth=totalAssets-liabilities;
-  var html='<div class="card">'+_stmtHeader('Balance Sheet','As at '+MONTHS[m-1]+' '+y);
-  html+='<div style="margin-bottom:10px"><div style="font-size:0.62rem;font-weight:700;color:var(--blue);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Assets</div>';
-  html+='<div style="font-size:0.6rem;color:var(--text3);padding:2px 0 4px 12px">Cash &amp; Equivalents</div>';
-  getCashAccounts().forEach(function(b){html+=_stmtRow(b,cash[b]||0,cur,m,y,{indent:2});});
-  html+=_stmtRow('Total Cash',cashTotal,cur,m,y,{indent:1,color:'var(--blue)'});
-  html+='<div style="font-size:0.6rem;color:var(--text3);padding:6px 0 4px 12px">Investments</div>';
-  PLATFORMS.filter(function(p){return inv[p.key];}).forEach(function(p){html+=_stmtRow(p.label,inv[p.key]||0,cur,m,y,{indent:2});});
-  html+=_stmtRow('Total Investments',invTotal,cur,m,y,{indent:1,color:'var(--accent)'});
-  if(debtorsOwed){
-    html+='<div style="font-size:0.6rem;color:var(--text3);padding:6px 0 4px 12px">Receivables</div>';
-    S.debtors.filter(function(d){return d.expectRepayment!==false&&(d.ngnBalance||0)>0;}).forEach(function(d){html+=_stmtRow(d.name,d.ngnBalance||0,cur,m,y,{indent:2});});
-    html+=_stmtRow('Total Receivables',debtorsOwed,cur,m,y,{indent:1,color:'var(--gold)'});
-  }
-  html+=_stmtRow('TOTAL ASSETS',totalAssets,cur,m,y,{bold:true,color:'var(--blue)',border:true});
-  html+='</div>';
-  if(liabilities){
-    html+='<div style="margin-bottom:10px"><div style="font-size:0.62rem;font-weight:700;color:var(--red);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Liabilities</div>';
-    S.debtors.filter(function(d){return d.expectRepayment===false&&(d.ngnBalance||0)>0;}).forEach(function(d){html+=_stmtRow(d.name,d.ngnBalance||0,cur,m,y,{indent:1});});
-    html+=_stmtRow('TOTAL LIABILITIES',liabilities,cur,m,y,{bold:true,color:'var(--red)',border:true});
-    html+='</div>';
-  }
-  html+=_stmtRow('NET WORTH',netWorth,cur,m,y,{bold:true,color:netWorth>=0?'var(--accent)':'var(--red)',border:true,highlight:true});
-  html+='</div>';
-  el.innerHTML=html;
-}
-
-function _renderCashFlowStatement(el,cur,m,y){
-  const pd=_getPeriodData(m,y);const txns=pd.txns,inc=pd.inc,label=pd.label;
-  const invCats={'Investments':1,'Savings':1,'Transfer':1};
-  const opExp=txns.filter(function(t){return!invCats[t.category];}).reduce(function(s,t){return s+(t.amount||0);},0);
-  const opInc=inc.reduce(function(s,i){return s+(i.amount||0);},0);
-  const opNet=opInc-opExp;
-  const wds=typeof getInvWithdrawals==='function'?getInvWithdrawals():[];
-  const periodWds=_stmtPeriod==='month'?wds.filter(function(w){return w.date&&parseInt(w.date.slice(0,4))===y&&parseInt(w.date.slice(5,7))===m;}):wds.filter(function(w){return w.date&&parseInt(w.date.slice(0,4))===y;});
-  const outflows=txns.filter(function(t){return invCats[t.category];}).reduce(function(s,t){return s+(t.amount||0);},0);
-  const inflows=periodWds.reduce(function(s,w){return s+(w.amountNGN||0);},0);
-  const investNet=inflows-outflows;
-  const finOutflow=S.debtors.filter(function(d){if(!d.date)return false;var dy=parseInt(d.date.slice(0,4)),dm=parseInt(d.date.slice(5,7));return _stmtPeriod==='month'?(dy===y&&dm===m):(dy===y);}).reduce(function(s,d){return s+(d.amount||0)*(d.rate||1);},0);
-  const finInflow=S.debtors.reduce(function(s,d){if(!d.pmtLog)return s;return s+d.pmtLog.filter(function(p){if(!p.date)return false;var py=parseInt(p.date.slice(0,4)),pm=parseInt(p.date.slice(5,7));return _stmtPeriod==='month'?(py===y&&pm===m):(py===y);}).reduce(function(s2,p){return s2+(p.amount||0)*(d.rate||1);},0);},0);
-  const finNet=finInflow-finOutflow;
-  const netChange=opNet+investNet+finNet;
-  var html='<div class="card">'+_stmtHeader('Cash Flow Statement',label);
-  html+='<div style="margin-bottom:10px"><div style="font-size:0.62rem;font-weight:700;color:var(--accent);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Operating Activities</div>';
-  html+=_stmtRow('Income received',opInc,cur,m,y,{indent:1,color:'var(--accent)'});
-  html+=_stmtRow('Expenses paid',opExp,cur,m,y,{indent:1,color:'var(--red)'});
-  html+=_stmtRow('Net operating cash flow',opNet,cur,m,y,{bold:true,color:opNet>=0?'var(--accent)':'var(--red)'});
-  html+='</div><div style="margin-bottom:10px"><div style="font-size:0.62rem;font-weight:700;color:var(--gold);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Investing Activities</div>';
-  if(outflows) html+=_stmtRow('Invested into platforms',outflows,cur,m,y,{indent:1,color:'var(--red)'});
-  if(inflows) html+=_stmtRow('Withdrawals from investments',inflows,cur,m,y,{indent:1,color:'var(--accent)'});
-  if(!outflows&&!inflows) html+='<div style="font-size:0.68rem;color:var(--text3);padding:4px 0 4px 12px">No investment activity recorded</div>';
-  html+=_stmtRow('Net investing cash flow',investNet,cur,m,y,{bold:true,color:investNet>=0?'var(--accent)':'var(--red)'});
-  html+='</div><div style="margin-bottom:10px"><div style="font-size:0.62rem;font-weight:700;color:var(--blue);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.05em">Financing Activities</div>';
-  if(finOutflow) html+=_stmtRow('Loans disbursed',finOutflow,cur,m,y,{indent:1,color:'var(--red)'});
-  if(finInflow) html+=_stmtRow('Loan repayments received',finInflow,cur,m,y,{indent:1,color:'var(--accent)'});
-  if(!finOutflow&&!finInflow) html+='<div style="font-size:0.68rem;color:var(--text3);padding:4px 0 4px 12px">No financing activity in period</div>';
-  html+=_stmtRow('Net financing cash flow',finNet,cur,m,y,{bold:true,color:finNet>=0?'var(--accent)':'var(--red)'});
-  html+='</div>'+_stmtRow('NET CHANGE IN CASH',netChange,cur,m,y,{bold:true,color:netChange>=0?'var(--accent)':'var(--red)',border:true,highlight:true});
-  html+='<div style="font-size:0.6rem;color:var(--text3);margin-top:8px;line-height:1.5">Note: Investing activity only captures transfers tagged as Investments/Savings/Transfer. All other outflows appear in operating activities.</div>';
-  html+='</div>';
-  el.innerHTML=html;
-}
-
-function _exportStatements(){
-  const cur=S.dashCurrency||'NGN',m=S.expMonth,y=S.expYear;
-  const pd=_getPeriodData(m,y);const txns=pd.txns,inc=pd.inc,label=pd.label;
-  const rows=[['SpendWise Financial Statements — '+label],[''],
-    ['INCOME STATEMENT'],['Revenue'],
-    ...inc.map(function(i){return[i.category||i.payee||'Other',i.amount];}),
-    ['Total Revenue',inc.reduce(function(s,i){return s+(i.amount||0);},0)],
-    [''],['Expenditure']
-  ];
-  const catSpend={};txns.forEach(function(t){catSpend[t.category]=(catSpend[t.category]||0)+(t.amount||0);});
-  Object.entries(catSpend).sort(function(a,b){return b[1]-a[1];}).forEach(function(e){rows.push([e[0],e[1]]);});
-  rows.push(['Total Expenditure',txns.reduce(function(s,t){return s+(t.amount||0);},0)]);
-  const totalInc=inc.reduce(function(s,i){return s+(i.amount||0);},0);
-  const totalExp=txns.reduce(function(s,t){return s+(t.amount||0);},0);
-  rows.push(['Net Surplus / (Deficit)',totalInc-totalExp]);
-  const csv=rows.map(function(r){return r.map(function(c){return typeof c==='string'&&c.includes(',')?'"'+c+'"':(c===undefined?'':(c===null?'':''+c));}).join(',');}).join('\n');
-  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');a.href=url;a.download='statements-'+label.replace(/\s/g,'-')+'.csv';a.click();
-  URL.revokeObjectURL(url);toast('Statements exported');
-}
-
 function renderProjHistory(){
   document.getElementById('proj-history').innerHTML=`
     <div class="card">
@@ -4744,7 +4572,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.2</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.4</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     ${renderFxCard()}
   `;
 }
