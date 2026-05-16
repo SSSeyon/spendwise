@@ -388,7 +388,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="location.reload(true)" title="Tap to hard refresh">v3.14.4</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="location.reload(true)" title="Tap to hard refresh">v3.14.5</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -756,13 +756,13 @@ datalist option{background:var(--bg2);color:var(--text)}
       <button class="btn btn-inc btn-sm" id="type-income" onclick="setTxnType('income')" style="flex:1">Income</button>
       <button class="btn btn-exp btn-sm" id="type-transfer" onclick="setTxnType('transfer')" style="flex:1">Transfer</button>
     </div>
-    <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" type="number" inputmode="decimal" id="e-amt" placeholder="0" style="font-size:1.2rem"></div>
+    <div class="ig"><label class="ilabel" id="e-amt-label">Amount (₦)</label><input class="ifield" type="number" inputmode="decimal" id="e-amt" placeholder="0" style="font-size:1.2rem"></div>
     <!-- Expense fields -->
     <div id="e-expense-fields">
       <div class="gform">
         <div class="ig"><label class="ilabel">Category</label><select class="sfield" id="e-cat" onchange="updateExpenseLines()"></select></div>
         <div class="ig"><label class="ilabel">Bank</label>
-          <select class="sfield" id="e-bank"></select>
+          <select class="sfield" id="e-bank" onchange="updateExpAmtLabel()"></select>
         </div>
       </div>
       <div class="ig">
@@ -869,7 +869,7 @@ datalist option{background:var(--bg2);color:var(--text)}
 <div class="mbackdrop" id="inc-modal">
   <div class="modal" onclick="event.stopPropagation()">
     <div class="mhdr"><div class="mtitle">Record Income</div><button class="mclose" onclick="closeMod('inc-modal')">×</button></div>
-    <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" type="number" inputmode="decimal" id="i-amt" placeholder="0" style="font-size:1.2rem"></div>
+    <div class="ig"><label class="ilabel" id="i-amt-label">Amount (₦)</label><input class="ifield" type="number" inputmode="decimal" id="i-amt" placeholder="0" style="font-size:1.2rem"></div>
     <div class="gform">
       <div class="ig"><label class="ilabel">Category</label>
         <select class="sfield" id="i-cat">
@@ -878,7 +878,7 @@ datalist option{background:var(--bg2);color:var(--text)}
         </select>
       </div>
       <div class="ig"><label class="ilabel">Bank Received Into</label>
-        <select class="sfield" id="i-bank"><option>GTB</option><option>Access</option><option>Renmoney</option></select>
+        <select class="sfield" id="i-bank" onchange="updateIncAmtLabel()"></select>
       </div>
     </div>
     <div class="gform">
@@ -1109,7 +1109,10 @@ function platformLogoEl(key, color, size=20){
   return `<img src="${url}" width="${size}" height="${size}" style="border-radius:50%;object-fit:contain;background:#fff;flex-shrink:0" onerror="_logoFallbackPlatform(this,'${color}',${size})">`;
 }
 
-const DEFAULT_CASH_ACCOUNTS = ['GTB','Access','Renmoney'];
+const DEFAULT_CASH_ACCOUNTS = ['GTB','Access','Renmoney','GTB USD'];
+const USD_CASH_ACCOUNTS = ['GTB USD']; // cash accounts denominated in USD
+function isUSDCashAccount(name){return USD_CASH_ACCOUNTS.includes(name)||name.toUpperCase().includes('USD')&&!name.includes('Invest');}
+function cashTotalNGN(cashObj,m,y){const r=getFxRates(m||S.expMonth,y||S.expYear);return getCashAccounts().reduce((s,b)=>{const v=(cashObj||S.cash)[b]||0;return s+(isUSDCashAccount(b)?v*(r.USD||1650):v);},0);}
 function getCashAccounts(){ return cGet('sw3_cash_accounts') || DEFAULT_CASH_ACCOUNTS; }
 
 // Investment platforms (without Renflex which is now Renmoney in cash)
@@ -1856,7 +1859,8 @@ function renderDashboard(){
 
   const budgTotal=Object.values(S.budgets).reduce((s,v)=>s+(v||0),0);
   const cash=S.cash;
-  const cashTotal=getCashAccounts().reduce((s,b)=>s+(cash[b]||0),0);
+  const _fxR=getFxRates(m,y);
+  const cashTotal=getCashAccounts().reduce((s,b)=>{const v=cash[b]||0;return s+(isUSDCashAccount(b)?v*(_fxR.USD||1650):v);},0);
   const inv=S.investments;
   const invTotal=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
   const nw=invTotal+cashTotal;
@@ -1926,7 +1930,7 @@ function renderDashboard(){
   const cashBadgeEl=document.getElementById('dash-cash-badge');
   if(cashBadgeEl) cashBadgeEl.textContent=cashTotal?fmtCur(cashTotal,cur,m,y):'—';
   const cashBodyEl=document.getElementById('dash-cash-body');
-  if(cashBodyEl) cashBodyEl.innerHTML=cashAccts.map((b,i)=>{const val=cash[b]||0;const pct=cashTotal?Math.round(val/cashTotal*100):0;return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;${i<cashAccts.length-1?'border-bottom:1px solid var(--border)':''}"><div style="display:flex;align-items:center;gap:8px">${bankLogoEl(b,22)}<div><div style="font-size:0.78rem;font-weight:600">${b}</div><div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}% of total</div></div></div><div style="font-family:var(--mono);font-size:0.86rem;color:${val?'var(--blue)':'var(--text3)'};">${val?fmtCur(val,cur,m,y):'—'}</div></div>`;}).join('');
+  if(cashBodyEl) cashBodyEl.innerHTML=cashAccts.map((b,i)=>{const val=cash[b]||0;const pct=cashTotal?Math.round((isUSDCashAccount(b)?val*(_fxR.USD||1650):val)/cashTotal*100):0;const dispVal=isUSDCashAccount(b)?`$${val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`:fmtCur(val,cur,m,y);return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;${i<cashAccts.length-1?'border-bottom:1px solid var(--border)':''}"><div style="display:flex;align-items:center;gap:8px">${bankLogoEl(b,22)}<div><div style="font-size:0.78rem;font-weight:600">${b}</div><div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}% of total</div></div></div><div style="font-family:var(--mono);font-size:0.86rem;color:${val?'var(--blue)':'var(--text3)'};">${val?dispVal:'—'}</div></div>`;}).join('');
 
   // Investments (collapsible card)
   document.getElementById('dash-inv-total').textContent=invTotal?fmtCur(invTotal,cur==='NATIVE'?'NGN':cur,m,y):'—';
@@ -2517,7 +2521,7 @@ function renderNWTrendChart(){
     const inv=cGet(CK.inv(h.month,h.year))||{};
     const cash=cGet(CK.cash(h.month,h.year))||{};
     const invT=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
-    const cashT=getCashAccounts().reduce((s,b)=>s+(cash[b]||0),0);
+    const cashT=cashTotalNGN(cash);
     return{label:h.label,nw:invT+cashT};
   }).filter(p=>p.nw>0);
   if(pts.length<2) return;
@@ -2550,7 +2554,7 @@ function renderDashFullYear(y,totalInc,totalExp,cur){
   const refInv=cGet(CK.inv(refMonth,y))||S.investments||{};
   const refCash=cGet(CK.cash(refMonth,y))||S.cash||{};
   const refInvTotal=PLATFORMS.reduce((s,p)=>s+(refInv[p.key]||0),0);
-  const refCashTotal=getCashAccounts().reduce((s,b)=>s+(refCash[b]||0),0);
+  const refCashTotal=cashTotalNGN(refCash,refMonth,y);
   const refNW=refInvTotal+refCashTotal;
   const refLabel=y<currentYear?`Dec ${y}`:`${MONTHS[refMonth-1]} ${y}`;
   document.getElementById('dash-nw').textContent=refNW?fmtCur(refNW,cur,refMonth,y):'—';
@@ -2569,7 +2573,7 @@ function renderDashFullYear(y,totalInc,totalExp,cur){
   const _cb=document.getElementById('dash-cash-badge');
   if(_cb)_cb.textContent=refCashTotal?fmtCur(refCashTotal,cur,refMonth,y):'—';
   const _cbody=document.getElementById('dash-cash-body');
-  if(_cbody)_cbody.innerHTML=getCashAccounts().map(b=>{const v=refCash[b]||0;return v?`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)"><span style="font-size:0.72rem">${b}</span><span style="font-family:var(--mono);font-size:0.76rem;color:var(--blue)">${fmtCur(v,cur,refMonth,y)}</span></div>`:''}).join('')||'<div class="csub">No cash data</div>';
+  if(_cbody)_cbody.innerHTML=getCashAccounts().map(b=>{const v=refCash[b]||0;if(!v)return'';const disp=isUSDCashAccount(b)?'$'+v.toFixed(2):fmtCur(v,cur,refMonth,y);return`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)"><span style="font-size:0.72rem">${b}</span><span style="font-family:var(--mono);font-size:0.76rem;color:var(--blue)">${disp}</span></div>`;}).join('')||'<div class="csub">No cash data</div>';
   document.getElementById('dash-inv-total').textContent=refInvTotal?fmtCur(refInvTotal,cur==='NATIVE'?'NGN':cur,refMonth,y):'—';
   document.getElementById('dash-inv').innerHTML=PLATFORMS.filter(p=>refInv[p.key]).map(p=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)"><span style="font-size:0.72rem">${p.label}</span><span style="font-family:var(--mono);font-size:0.76rem;color:${p.color}">${fmtCur(refInv[p.key],cur==='NATIVE'?'NGN':cur,refMonth,y)}</span></div>`).join('')||'<div class="csub">No investment data</div>';
   document.getElementById('dash-abar').innerHTML='';
@@ -2941,6 +2945,7 @@ function openExpModal(type){
   catSel.innerHTML=getAllCats().map(c=>`<option value="${c}">${CAT_ICONS[c]||''} ${c}</option>`).join('');
   const bankOpts=getCashAccounts().map(a=>`<option>${a}</option>`).join('');
   document.getElementById('e-bank').innerHTML=bankOpts;
+  updateExpAmtLabel();
   const ib2=document.getElementById('i-bank2');if(ib2)ib2.innerHTML=bankOpts;
   const xf=document.getElementById('xfr2-from'),xt=document.getElementById('xfr2-to');
   if(xf)xf.innerHTML=bankOpts;if(xt)xt.innerHTML=bankOpts;
@@ -3069,7 +3074,11 @@ async function saveExpense(){
   S.saving=true;const btn=document.getElementById('e-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
   const editId=document.getElementById('e-edit-id').value;
   const freq=document.getElementById('e-recur')?.value;
-  const data={amount:amt,category:document.getElementById('e-cat').value,bank:document.getElementById('e-bank').value,payee,notes:document.getElementById('e-notes').value,date:document.getElementById('e-date').value,month:S.expMonth,year:S.expYear,type:'expense'};
+  const expBank=document.getElementById('e-bank').value;
+  const expIsUSD=isUSDCashAccount(expBank);
+  const expFxRates=getFxRates(S.expMonth,S.expYear);
+  const amtNGN=expIsUSD?Math.round(amt*expFxRates.USD):amt;
+  const data={amount:amt,amtNGN,currency:expIsUSD?'USD':'NGN',category:document.getElementById('e-cat').value,bank:expBank,payee,notes:document.getElementById('e-notes').value,date:document.getElementById('e-date').value,month:S.expMonth,year:S.expYear,type:'expense'};
   if(freq&&!editId){
     const rl=getRecurring();
     rl.push({payee,amount:amt,category:data.category,bank:data.bank,notes:data.notes,frequency:freq,type:'expense',nextRun:nextRunDate(freq,data.date),lastPosted:data.date});
@@ -3123,9 +3132,22 @@ async function delExpense(id){
 // ══════════════════════════════════════════════════════════════════════════
 // INCOME
 // ══════════════════════════════════════════════════════════════════════════
+function updateIncAmtLabel(){
+  const bank=document.getElementById('i-bank')?.value||'';
+  const lbl=document.getElementById('i-amt-label');
+  if(lbl) lbl.textContent=isUSDCashAccount(bank)?'Amount ($)':'Amount (₦)';
+}
+function updateExpAmtLabel(){
+  const bank=document.getElementById('e-bank')?.value||'';
+  const lbl=document.getElementById('e-amt-label');
+  if(lbl) lbl.textContent=isUSDCashAccount(bank)?'Amount ($)':'Amount (₦)';
+}
 function openIncModal(){
   document.getElementById('i-date').value=todayStr();
   ['i-amt','i-notes'].forEach(id=>document.getElementById(id).value='');
+  // Populate bank select dynamically
+  const bankSel=document.getElementById('i-bank');
+  if(bankSel){bankSel.innerHTML=getCashAccounts().map(a=>`<option>${a}</option>`).join('');updateIncAmtLabel();}
   openMod('inc-modal');
   setTimeout(()=>document.getElementById('i-amt').focus(),300);
 }
@@ -3135,22 +3157,25 @@ async function saveIncome(){
   if(!amt||amt<=0){toast('Enter a valid amount');return;}
   S.saving=true;const btn=document.getElementById('i-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
   const bank=document.getElementById('i-bank').value;
-  const data={amount:amt,category:document.getElementById('i-cat').value,bank,notes:document.getElementById('i-notes').value,date:document.getElementById('i-date').value,month:S.expMonth,year:S.expYear,createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+  const isUSD=isUSDCashAccount(bank);
+  const fxRates=getFxRates(S.expMonth,S.expYear);
+  const amtNGN=isUSD?Math.round(amt*fxRates.USD):amt;
+  const data={amount:amt,amtNGN,currency:isUSD?'USD':'NGN',category:document.getElementById('i-cat').value,bank,notes:document.getElementById('i-notes').value,date:document.getElementById('i-date').value,month:S.expMonth,year:S.expYear,createdAt:firebase.firestore.FieldValue.serverTimestamp()};
   try{
     await db.collection('income').add(data);
-    // Add to bank balance
+    // Credit bank balance — store in native currency of the account
     const cashDoc=await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).get();
     const cashData=cashDoc.exists?{...cashDoc.data()}:{month:S.expMonth,year:S.expYear};
-    cashData[bank]=(cashData[bank]||0)+amt;
+    cashData[bank]=(cashData[bank]||0)+amt; // USD accounts store USD value
     await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).set(cashData,{merge:true});
     S.cash=cashData;cSet(CK.cash(S.expMonth,S.expYear),cashData);
     closeMod('inc-modal');toast(`Income recorded · ${bank} updated`);haptic([8,40,8]);setSyncStatus('synced');
     await loadIncome(S.expMonth,S.expYear);
-    // Update historical summary so new income reflects in charts/history immediately
+    // Update historical summary using NGN-equivalent amount
     const hist=cGet('sw3_history')||[];
     const hIdx=hist.findIndex(h=>h.year===S.expYear&&h.month===S.expMonth);
-    if(hIdx>=0){hist[hIdx].income=(hist[hIdx].income||0)+amt;}
-    else{const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];hist.push({year:S.expYear,month:S.expMonth,label:MS2[S.expMonth-1]+" '"+String(S.expYear).slice(2),income:amt,expenses:S.txns.reduce((s,t)=>s+(t.amount||0),0)});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
+    if(hIdx>=0){hist[hIdx].income=(hist[hIdx].income||0)+amtNGN;}
+    else{const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];hist.push({year:S.expYear,month:S.expMonth,label:MS2[S.expMonth-1]+" '"+String(S.expYear).slice(2),income:amtNGN,expenses:S.txns.reduce((s,t)=>s+(t.amount||0),0)});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
     cSet('sw3_history',hist);
     renderDashboard();renderCashPage();
   }catch(e){toast('Error saving income');setSyncStatus('error');}
@@ -3421,18 +3446,22 @@ function renderCashPage(){
   const months=[];for(let i=curM();i>=1;i--) months.push(i);
   document.getElementById('cash-months').innerHTML=months.map(mo=>`<div class="mpill ${mo===m?'active':''}" onclick="changeCashMonth(${mo})">${MS[mo-1]}</div>`).join('');
   document.getElementById('cash-month-label').textContent=`${MONTHS[m-1]} ${y}`;
-  const cash=S.cash,total=ACCTS.reduce((s,b)=>s+(cash[b]||0),0);
+  const cash=S.cash;
+  const fxR=getFxRates(m,y);
+  const total=ACCTS.reduce((s,b)=>{const v=cash[b]||0;return s+(isUSDCashAccount(b)?v*(fxR.USD||1650):v);},0);
+  const total_ngn=total; // NGN-equivalent total for % calculations
   const intMeta=getCashInterestMeta();
-  document.getElementById('cash-summary').innerHTML=`<div class="clabel">Total Cash — ${MONTHS[m-1]} ${y}</div><div class="cval">${total?fN(total):'—'}</div><div class="csub">${ACCTS.join(' · ')}</div>`;
+  document.getElementById('cash-summary').innerHTML=`<div class="clabel">Total Cash — ${MONTHS[m-1]} ${y}</div><div class="cval">${total?fN(Math.round(total)):'—'}</div><div class="csub">${ACCTS.join(' · ')}</div>`;
   document.getElementById('cash-breakdown').innerHTML=ACCTS.map((b,i)=>{
-    const val=cash[b]||0,pct=total?Math.round(val/total*100):0;
+    const val=cash[b]||0,pct=total_ngn?Math.round((isUSDCashAccount(b)?(val*(getFxRates(m,y).USD||1650)):val)/total_ngn*100):0;
     const ci=intMeta[b];
     const intInfo=ci&&ci.interestRate?`<span class="int-badge">${ci.interestRate}% p.a.</span>`:'';
     const projInt=ci&&ci.interestRate&&val?calcInterestAccrual(val,ci.interestRate,'daily_compound'):0;
-    const intProjection=projInt>100?`<div style="font-size:0.6rem;color:var(--gold);margin-top:1px">~${fN(Math.round(projInt))} interest this month</div>`:'';
-    return`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;${i<ACCTS.length-1?'border-bottom:1px solid var(--border)':''}"><div style="display:flex;align-items:center;gap:8px">${bankLogoEl(b,26)}<div><div style="font-size:0.82rem;font-weight:600">${b}${intInfo}</div><div style="font-size:0.65rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${total?pct+'%':'—'}</div>${intProjection}</div></div><div style="font-family:var(--mono);font-size:0.9rem;color:${val?'var(--blue)':'var(--text3)'}">${val?fN(val):'—'}</div></div>`;
+    const intProjection=projInt>0.5?`<div style="font-size:0.6rem;color:var(--gold);margin-top:1px">~${isUSDCashAccount(b)?'$'+projInt.toFixed(2):fN(Math.round(projInt))} interest this month</div>`:'';
+    const dispVal=isUSDCashAccount(b)?`$${val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`:fN(val);
+    return`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;${i<ACCTS.length-1?'border-bottom:1px solid var(--border)':''}"><div style="display:flex;align-items:center;gap:8px">${bankLogoEl(b,26)}<div><div style="font-size:0.82rem;font-weight:600">${b}${intInfo}</div><div style="font-size:0.65rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}%</div>${intProjection}</div></div><div style="font-family:var(--mono);font-size:0.9rem;color:${val?'var(--blue)':'var(--text3)'}">${val?dispVal:'—'}</div></div>`;
   }).join('');
-  document.getElementById('cash-inputs').innerHTML=`<div class="gform">${ACCTS.map(b=>`<div class="ig"><label class="ilabel">${b} (₦)</label><input class="ifield" type="number" inputmode="decimal" id="cash-${b.toLowerCase().replace(/\s+/g,'-')}" placeholder="0" value="${cash[b]||''}"></div>`).join('')}</div>`;
+  document.getElementById('cash-inputs').innerHTML=`<div class="gform">${ACCTS.map(b=>`<div class="ig"><label class="ilabel">${b} (${isUSDCashAccount(b)?'$':'₦'})</label><input class="ifield" type="number" inputmode="decimal" id="cash-${b.toLowerCase().replace(/\s+/g,'-')}" placeholder="0" value="${cash[b]||''}"></div>`).join('')}</div>`;
   // Cash interest settings section
   let intHtml=`<div class="card" style="margin-bottom:10px"><div class="clabel" style="margin-bottom:10px">Interest Rates</div>`;
   intHtml+=ACCTS.map(b=>{
@@ -3848,7 +3877,7 @@ function projTab(tab,btn){
 function renderProjTreasury(){
   const el=document.getElementById('proj-treasury');if(!el)return;
   const hist=getHistory().filter(h=>h.expenses>0).slice(-6);
-  const cash=S.cash,cashTotal=getCashAccounts().reduce((s,b)=>s+(cash[b]||0),0);
+  const cash=S.cash,cashTotal=cashTotalNGN(cash);
   const avgSpend=hist.length?hist.reduce((s,h)=>s+h.expenses,0)/hist.length:0;
   const avgInc=hist.length?hist.reduce((s,h)=>s+(h.income||0),0)/hist.length:0;
   const {fixed:_tFixed,custom:_tCustom}=_getAllObl();const allObl=[..._tFixed,..._tCustom];
@@ -4073,7 +4102,7 @@ function renderProjNW(){
   const avgSave=recent.length?recent.reduce((s,h)=>s+Math.max(0,(h.income-h.expenses)/h.income),0)/recent.length:0;
   const inv=S.investments,cash=S.cash;
   const invTotal=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
-  const cashTotal=getCashAccounts().reduce((s,b)=>s+(cash[b]||0),0);
+  const cashTotal=cashTotalNGN(cash);
   const debtorsOwed=S.debtors.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0);
   const nw=invTotal+cashTotal+debtorsOwed;
   document.getElementById('proj-networth').innerHTML=`
@@ -4081,7 +4110,7 @@ function renderProjNW(){
     ${nw>0?`<div class="card"><div class="clabel" style="margin-bottom:10px">Current Net Worth Breakdown</div>
       <div class="pjrow"><span class="pjlabel">Investments</span><span class="pjval" style="color:var(--accent)">${fN(invTotal)}</span></div>
       <div class="pjrow"><span class="pjlabel">Cash (GTB · Access · Union · Renmoney)</span><span class="pjval" style="color:var(--blue)">${fN(cashTotal)}</span></div>
-      ${getCashAccounts().map(b=>`<div style="font-size:0.65rem;font-family:var(--mono);color:var(--text2);padding:2px 0">${b}: ${fN(cash[b]||0)}</div>`).join('')}
+      ${getCashAccounts().map(b=>{const v=cash[b]||0;const disp=isUSDCashAccount(b)?'$'+v.toFixed(2):fN(v);return`<div style="font-size:0.65rem;font-family:var(--mono);color:var(--text2);padding:2px 0">${b}: ${disp}</div>`;}).join('')}
       ${debtorsOwed?`<div class="pjrow" style="margin-top:8px"><span class="pjlabel">Debtors (expected)</span><span class="pjval" style="color:var(--gold)">${fN(debtorsOwed)}</span></div>`:''}
       <div class="pjrow" style="font-weight:700;border-top:1px solid var(--border2);margin-top:6px;padding-top:10px"><span>Total</span><span class="pjval" style="color:var(--accent)">${fN(nw)}</span></div>
       <div class="abar" style="margin-top:10px">
@@ -4093,7 +4122,7 @@ function renderProjNW(){
 }
 
 function renderProjRun(){
-  const cash=S.cash,cashTotal=getCashAccounts().reduce((s,b)=>s+(cash[b]||0),0);
+  const cash=S.cash,cashTotal=cashTotalNGN(S.cash);
   const recent=getHistory().filter(h=>h.expenses).slice(-6);
   const avgSpend=recent.length?recent.reduce((s,h)=>s+h.expenses,0)/recent.length:0;
   const runway=avgSpend?(cashTotal/avgSpend).toFixed(1):null;
@@ -4572,7 +4601,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.4</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.5</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     ${renderFxCard()}
   `;
 }
@@ -4694,12 +4723,12 @@ function drillDown(type){
     title=`Net Worth — ${MONTHS[m-1]} ${y}`;
     const inv=S.investments,cash=S.cash;
     const invTotal=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
-    const cashTotal=getCashAccounts().reduce((s,b)=>s+(cash[b]||0),0);
+    const cashTotal=cashTotalNGN(cash,m,y);
     const debtOwed=S.debtors.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0);
     body=`<div style="font-size:0.65rem;font-weight:700;color:var(--text3);text-transform:uppercase;padding:6px 0 4px">Investments</div>`;
     body+=PLATFORMS.map(p=>fmtRow(p.label+` <span style="font-size:0.58rem;color:var(--text3)">${p.currency}</span>`,fmtPlatformVal(inv[p.key]||0,p.key,cur,m,y),p.color)).join('');
     body+=`<div style="font-size:0.65rem;font-weight:700;color:var(--text3);text-transform:uppercase;padding:10px 0 4px">Cash</div>`;
-    body+=getCashAccounts().map(b=>fmtRow(b,fmtCur(cash[b]||0,cur,m,y),'var(--blue)')).join('');
+    body+=getCashAccounts().map(b=>{const v=cash[b]||0;const disp=isUSDCashAccount(b)?'$'+v.toFixed(2):fmtCur(v,cur,m,y);return fmtRow(b,disp,'var(--blue)');}).join('');
     if(debtOwed) body+=`<div style="font-size:0.65rem;font-weight:700;color:var(--text3);text-transform:uppercase;padding:10px 0 4px">Debtors (expected)</div>`+
       S.debtors.filter(d=>d.expectRepayment!==false).map(d=>fmtRow(d.name,fmtCur(d.ngnBalance||0,cur,m,y),'var(--gold)')).join('');
     body+=`<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700;border-top:1px solid var(--border);margin-top:4px"><span>Total Net Worth</span><span style="font-family:var(--mono);color:var(--accent)">${fmtCur(invTotal+cashTotal+debtOwed,cur==='NATIVE'?'NGN':cur,m,y)}</span></div>`;
@@ -4707,7 +4736,7 @@ function drillDown(type){
   else if(type==='cash'){
     title=`Cash — ${MONTHS[m-1]} ${y}`;
     const cash=S.cash;
-    const total=getCashAccounts().reduce((s,b)=>s+(cash[b]||0),0);
+    const total=cashTotalNGN(cash,m,y);
     body=getCashAccounts().map(b=>fmtRow(b,fmtCur(cash[b]||0,cur,m,y),'var(--blue)')).join('');
     body+=`<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700"><span>Total</span><span style="font-family:var(--mono);color:var(--blue)">${fmtCur(total,cur,m,y)}</span></div>`;
   }
@@ -5021,9 +5050,9 @@ function _getNWDeltaBadge(m,y){
   const prevM=m===1?12:m-1,prevY=m===1?y-1:y;
   const prevInv=cGet(CK.inv(prevM,prevY))||{};
   const prevCash=cGet(CK.cash(prevM,prevY))||{};
-  const prevNW=PLATFORMS.reduce((s,p)=>s+(prevInv[p.key]||0),0)+getCashAccounts().reduce((s,b)=>s+(prevCash[b]||0),0);
+  const prevNW=PLATFORMS.reduce((s,p)=>s+(prevInv[p.key]||0),0)+cashTotalNGN(prevCash);
   if(!prevNW)return'';
-  const curNW=PLATFORMS.reduce((s,p)=>s+(S.investments[p.key]||0),0)+getCashAccounts().reduce((s,b)=>s+(S.cash[b]||0),0);
+  const curNW=PLATFORMS.reduce((s,p)=>s+(S.investments[p.key]||0),0)+cashTotalNGN(S.cash);
   const delta=curNW-prevNW;if(!delta)return'';
   const pct=Math.round(Math.abs(delta)/prevNW*100);
   const up=delta>0;
@@ -5074,7 +5103,7 @@ function renderCashFlowProjection(containerEl){
   if(hist.length<2){containerEl.innerHTML='<div class="csub" style="padding:8px 0">Need more history for projection</div>';return;}
   const avgInc=hist.reduce((s,h)=>s+(h.income||0),0)/hist.length;
   const avgExp=hist.reduce((s,h)=>s+(h.expenses||0),0)/hist.length;
-  const cashNow=getCashAccounts().reduce((s,b)=>s+(S.cash[b]||0),0);
+  const cashNow=cashTotalNGN(S.cash);
   let monthlyInt=0;
   const intMeta=getCashInterestMeta();
   getCashAccounts().forEach(b=>{const ci=intMeta[b];if(ci&&ci.interestRate)monthlyInt+=(S.cash[b]||0)*(ci.interestRate/100/12);});
