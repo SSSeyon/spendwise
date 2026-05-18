@@ -394,7 +394,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.10</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.14</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -651,7 +651,7 @@ datalist option{background:var(--bg2);color:var(--text)}
           <div class="ig"><label class="ilabel">From</label><select class="sfield" id="xfr-from"></select></div>
           <div class="ig"><label class="ilabel">To</label><select class="sfield" id="xfr-to"></select></div>
         </div>
-        <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" type="number" inputmode="decimal" id="xfr-amt" placeholder="0"></div>
+        <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" type="text" id="xfr-amt" placeholder="0"></div>
         <button class="btn btn-g btn-full" onclick="transferFunds()">Transfer Between Accounts</button>
         <button class="btn btn-p btn-full" style="margin-top:8px" onclick="openMoveFunds()">Move: Cash ↔ Investment</button>
       </div>
@@ -772,7 +772,7 @@ datalist option{background:var(--bg2);color:var(--text)}
       <button class="btn btn-inc btn-sm" id="type-income" onclick="setTxnType('income')" style="flex:1">Income</button>
       <button class="btn btn-exp btn-sm" id="type-transfer" onclick="setTxnType('transfer')" style="flex:1">Transfer</button>
     </div>
-    <div class="ig"><label class="ilabel" id="e-amt-label">Amount (₦)</label><input class="ifield" type="number" inputmode="decimal" id="e-amt" placeholder="0" style="font-size:1.2rem"></div>
+    <div class="ig"><label class="ilabel" id="e-amt-label">Amount (₦)</label><input class="ifield" type="text" id="e-amt" placeholder="0" style="font-size:1.2rem"></div>
     <!-- Expense fields -->
     <div id="e-expense-fields">
       <div class="gform">
@@ -860,7 +860,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     </div>
     <div class="ig">
       <label class="ilabel">Amount (₦)</label>
-      <input class="ifield" type="number" inputmode="decimal" id="move-amt" placeholder="0" style="font-size:1.1rem">
+      <input class="ifield" type="text" id="move-amt" placeholder="0" style="font-size:1.1rem">
     </div>
     <div class="ig">
       <label class="ilabel">Date</label>
@@ -885,7 +885,7 @@ datalist option{background:var(--bg2);color:var(--text)}
 <div class="mbackdrop" id="inc-modal">
   <div class="modal" onclick="event.stopPropagation()">
     <div class="mhdr"><div class="mtitle">Record Income</div><button class="mclose" onclick="closeMod('inc-modal')">×</button></div>
-    <div class="ig"><label class="ilabel" id="i-amt-label">Amount (₦)</label><input class="ifield" type="number" inputmode="decimal" id="i-amt" placeholder="0" style="font-size:1.2rem"></div>
+    <div class="ig"><label class="ilabel" id="i-amt-label">Amount (₦)</label><input class="ifield" type="text" id="i-amt" placeholder="0" style="font-size:1.2rem"></div>
     <div class="gform">
       <div class="ig"><label class="ilabel">Category</label>
         <select class="sfield" id="i-cat">
@@ -937,12 +937,12 @@ datalist option{background:var(--bg2);color:var(--text)}
       <div class="ig"><label class="ilabel">Type</label><select class="sfield" id="d-type"><option>Loan</option><option>Gift</option><option>Other</option></select></div>
     </div>
     <div class="gform">
-      <div class="ig"><label class="ilabel">Amount</label><input class="ifield" type="number" inputmode="decimal" id="d-amt" placeholder="0"></div>
-      <div class="ig"><label class="ilabel">Paid So Far</label><input class="ifield" type="number" inputmode="decimal" id="d-paid" placeholder="0"></div>
+      <div class="ig"><label class="ilabel">Amount</label><input class="ifield" type="text" id="d-amt" placeholder="0"></div>
+      <div class="ig"><label class="ilabel">Paid So Far</label><input class="ifield" type="text" id="d-paid" placeholder="0"></div>
     </div>
     <div class="ig"><label class="ilabel">Disbursed From Account</label><select class="sfield" id="d-acct"><option value="">— None / Don't deduct —</option></select></div>
     <div class="ig"><label class="ilabel">Date of Transaction</label><input class="ifield" type="date" id="d-date"></div>
-    <div class="ig"><label class="ilabel">Exchange Rate to ₦ (blank = default)</label><input class="ifield" type="number" inputmode="decimal" id="d-rate" placeholder="e.g. 1600"></div>
+    <div class="ig"><label class="ilabel">Exchange Rate to ₦ (blank = default)</label><input class="ifield" type="text" id="d-rate" placeholder="e.g. 1600"></div>
     <div class="ig"><label class="ilabel">Notes</label><input class="ifield" type="text" id="d-notes" placeholder="Optional"></div>
     <button class="btn btn-p btn-full" id="deb-save" onclick="saveDebtor()">Add Debtor</button>
     <input type="hidden" id="d-eid">
@@ -1376,6 +1376,19 @@ function _syncNumDisplay(input){
   const raw=input.value.replace(/,/g,'');
   if(disp) disp.textContent=raw?fmtThousands(raw):'';
 }
+function _evalExpr(raw){
+  // Safely evaluate simple arithmetic expressions: digits, +, -, *, /, (, ), spaces, commas, dots
+  const cleaned=raw.replace(/,/g,'').trim();
+  if(!cleaned) return '';
+  if(/^[\d.]+$/.test(cleaned)) return cleaned; // plain number, no eval needed
+  if(!/^[\d.+\-*/()\s]+$/.test(cleaned)) return cleaned; // unexpected chars, leave as-is
+  try{
+    // eslint-disable-next-line no-new-func
+    const result=Function('"use strict";return ('+cleaned+')')();
+    if(typeof result==='number'&&isFinite(result)) return String(Math.round(result*100)/100);
+  }catch(e){}
+  return cleaned;
+}
 function _makeNumInput(el){
   // Wrap existing input in num-wrap if not already
   if(el.closest('.num-wrap')) return;
@@ -1386,11 +1399,17 @@ function _makeNumInput(el){
   el.style.color='transparent';el.style.caretColor='var(--text)';
   el.addEventListener('input',()=>_syncNumDisplay(el));
   el.addEventListener('focus',()=>{if(disp)disp.style.opacity='0.4';});
-  el.addEventListener('blur',()=>{if(disp)disp.style.opacity='1';});
+  el.addEventListener('blur',()=>{
+    // Evaluate any expression, then reformat
+    const evaled=_evalExpr(el.value);
+    if(evaled!==el.value) el.value=evaled;
+    if(disp)disp.style.opacity='1';
+    _syncNumDisplay(el);
+  });
   _syncNumDisplay(el);
 }
 function initNumInputs(scope){
-  (scope||document).querySelectorAll('input[type="number"],input[inputmode="decimal"],input[inputmode="numeric"]').forEach(el=>{
+  (scope||document).querySelectorAll('input[type="number"],input[type="text"].ifield,input[inputmode="decimal"],input[inputmode="numeric"]').forEach(el=>{
     if(!el.closest('.num-wrap')) _makeNumInput(el);
     else _syncNumDisplay(el);
   });
@@ -3330,11 +3349,11 @@ ${val?dispVal:'—'}${returnBadge}</div></div>`;
             <option value="fixed_income"${isFI?' selected':''}>Fixed Income</option>
           </select>
         </div>
-        <div class="ig" style="margin-bottom:6px"><label class="ilabel">Balance</label><input class="ifield" type="number" inputmode="decimal" id="inv-edit-${p.key}${s}" placeholder="0" value="${dispVal}" data-currency="${p.currency}"></div>
-        <div class="ig" style="margin-bottom:6px"><label class="ilabel" style="font-size:0.6rem;color:var(--text3)">Cost basis ${isUSD?'(USD)':'(₦)'} — optional</label><input class="ifield" style="font-size:0.72rem;padding:4px 8px" type="number" inputmode="decimal" id="inv-cost-${p.key}${s}" placeholder="0" value="${costDisp}"></div>
+        <div class="ig" style="margin-bottom:6px"><label class="ilabel">Balance</label><input class="ifield" type="text" id="inv-edit-${p.key}${s}" placeholder="0" value="${dispVal}" data-currency="${p.currency}"></div>
+        <div class="ig" style="margin-bottom:6px"><label class="ilabel" style="font-size:0.6rem;color:var(--text3)">Cost basis ${isUSD?'(USD)':'(₦)'} — optional</label><input class="ifield" style="font-size:0.72rem;padding:4px 8px" type="text" id="inv-cost-${p.key}${s}" placeholder="0" value="${costDisp}"></div>
         <div id="inv-fi-fields-${p.key}${s}" style="${isFI?'':'display:none'}">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-            <div class="ig" style="margin-bottom:0"><label class="ilabel">Annual Rate (%)</label><input class="ifield" type="number" inputmode="decimal" id="inv-rate-${p.key}${s}" placeholder="e.g. 18" value="${intRate}" style="font-size:0.8rem;padding:6px 10px"></div>
+            <div class="ig" style="margin-bottom:0"><label class="ilabel">Annual Rate (%)</label><input class="ifield" type="text" id="inv-rate-${p.key}${s}" placeholder="e.g. 18" value="${intRate}" style="font-size:0.8rem;padding:6px 10px"></div>
             <div class="ig" style="margin-bottom:0"><label class="ilabel">Compound Type</label><select class="sfield" id="inv-ct-${p.key}${s}" style="font-size:0.75rem;padding:6px 10px">
               <option value="daily_accrual"${cType==='daily_accrual'?' selected':''}>Daily Accrual</option>
               <option value="daily_compound"${cType==='daily_compound'?' selected':''}>Daily Compound</option>
@@ -3471,7 +3490,7 @@ function openInvMod(){
     const isUSD=p.currency==='USD';
     const dispVal=isUSD&&storedNGN?(storedNGN/fxRates.USD).toFixed(2):(storedNGN||'');
     const lbl=isUSD?`$ USD (rate: ₦${fxRates.USD}/$)`:'₦ NGN';
-    return`<div class="ig"><label class="ilabel" style="display:flex;align-items:center;gap:6px">${platformLogoEl(p.key,p.color,16)} ${p.label} <span style="font-size:0.68rem;color:var(--text3)">(${lbl})</span></label><input class="ifield" type="number" inputmode="decimal" id="inv-${p.key}" placeholder="0" value="${dispVal}" data-currency="${p.currency}"></div>`;
+    return`<div class="ig"><label class="ilabel" style="display:flex;align-items:center;gap:6px">${platformLogoEl(p.key,p.color,16)} ${p.label} <span style="font-size:0.68rem;color:var(--text3)">(${lbl})</span></label><input class="ifield" type="text" id="inv-${p.key}" placeholder="0" value="${dispVal}" data-currency="${p.currency}"></div>`;
   }).join('');
   openMod('inv-modal');
 }
@@ -3513,7 +3532,7 @@ function renderCashPage(){
     const dispVal=isUSDCashAccount(b)?`$${val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`:fN(val);
     return`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;${i<ACCTS.length-1?'border-bottom:1px solid var(--border)':''}"><div style="display:flex;align-items:center;gap:8px">${bankLogoEl(b,26)}<div><div style="font-size:0.82rem;font-weight:600">${b}${intInfo}</div><div style="font-size:0.65rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}%</div>${intProjection}</div></div><div style="font-family:var(--mono);font-size:0.9rem;color:${val?'var(--blue)':'var(--text3)'}">${val?dispVal:'—'}</div></div>`;
   }).join('');
-  document.getElementById('cash-inputs').innerHTML=`<div class="gform">${ACCTS.map(b=>`<div class="ig"><label class="ilabel">${b} (${isUSDCashAccount(b)?'$':'₦'})</label><input class="ifield" type="number" inputmode="decimal" id="cash-${b.toLowerCase().replace(/\s+/g,'-')}" placeholder="0" value="${cash[b]||''}"></div>`).join('')}</div>`;
+  document.getElementById('cash-inputs').innerHTML=`<div class="gform">${ACCTS.map(b=>`<div class="ig"><label class="ilabel">${b} (${isUSDCashAccount(b)?'$':'₦'})</label><input class="ifield" type="text" id="cash-${b.toLowerCase().replace(/\s+/g,'-')}" placeholder="0" value="${cash[b]||''}"></div>`).join('')}</div>`;
   // Cash interest settings section
   let intHtml=`<div class="card" style="margin-bottom:10px"><div class="clabel" style="margin-bottom:10px">Interest Rates</div>`;
   intHtml+=ACCTS.map(b=>{
@@ -3521,7 +3540,7 @@ function renderCashPage(){
     return`<div style="padding:8px 0;border-bottom:1px solid var(--border)">
       <div style="font-size:0.78rem;font-weight:600;margin-bottom:5px">${b}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <div class="ig" style="margin-bottom:0"><label class="ilabel">Annual Rate (%)</label><input class="ifield" type="number" inputmode="decimal" id="cash-int-${b.toLowerCase().replace(/\s+/g,'-')}" placeholder="0 = none" value="${ci.interestRate||''}" style="font-size:0.78rem;padding:5px 9px"></div>
+        <div class="ig" style="margin-bottom:0"><label class="ilabel">Annual Rate (%)</label><input class="ifield" type="text" id="cash-int-${b.toLowerCase().replace(/\s+/g,'-')}" placeholder="0 = none" value="${ci.interestRate||''}" style="font-size:0.78rem;padding:5px 9px"></div>
         <div class="ig" style="margin-bottom:0"><label class="ilabel">Type</label><select class="sfield" id="cash-ct-${b.toLowerCase().replace(/\s+/g,'-')}" style="font-size:0.75rem;padding:5px 9px">
           <option value="daily_compound"${(ci.compoundType||'daily_compound')==='daily_compound'?' selected':''}>Daily Compound</option>
         </select></div>
@@ -3844,7 +3863,7 @@ async function recordPmt(id,amt,paid,rate){
   document.getElementById('drill-title').textContent='Record Payment — '+d.name;
   document.getElementById('drill-body').innerHTML=`
     <div class="ig"><label class="ilabel">Payment Amount (${d.currency})</label>
-      <input class="ifield" type="number" inputmode="decimal" id="rp-amt" placeholder="0" style="font-size:1.1rem;font-family:var(--mono)"></div>
+      <input class="ifield" type="text" id="rp-amt" placeholder="0" style="font-size:1.1rem;font-family:var(--mono)"></div>
     <div class="ig"><label class="ilabel">Credit to Account (optional)</label>
       <select class="sfield" id="rp-bank"><option value="">— Don't credit —</option>${cashOpts}</select></div>
     <div class="ig"><label class="ilabel">Date</label>
@@ -3999,7 +4018,7 @@ function renderProjTreasury(){
   stCard.innerHTML=`<div class="sh" style="margin-bottom:10px"><div class="sh-title">Monthly Savings Target</div></div>
     <div class="pjrow"><span class="pjlabel">Current target</span><span class="pjval" style="color:var(--accent)">${targetPct?targetPct+'%':'Not set'}</span></div>
     <div style="display:flex;gap:8px;align-items:flex-end;margin-top:10px">
-      <div class="ig" style="flex:1;margin-bottom:0"><label class="ilabel">Target %</label><input class="ifield" type="number" inputmode="decimal" id="st-pct" placeholder="e.g. 25" value="${targetPct||''}" style="font-size:0.84rem;padding:7px 10px"></div>
+      <div class="ig" style="flex:1;margin-bottom:0"><label class="ilabel">Target %</label><input class="ifield" type="text" id="st-pct" placeholder="e.g. 25" value="${targetPct||''}" style="font-size:0.84rem;padding:7px 10px"></div>
       <button class="btn btn-p btn-sm" onclick="saveSavingsTargetUI()" style="flex-shrink:0;padding:9px 16px">Save</button>
     </div>
     <div class="csub" style="margin-top:6px">Alert fires when actual savings fall below 80% of this target.</div>`;
@@ -4084,7 +4103,7 @@ function renderProjObligations(){
         </div>
         <div id="obl-fixed-edit-${i}" style="display:none;background:var(--bg2);border-radius:6px;padding:8px 10px;margin:2px 0 6px">
           <div class="ig" style="margin-bottom:6px"><label class="ilabel">Label</label><input class="ifield" id="obl-fe-lbl-${i}" type="text" value="${o.label}"></div>
-          <div class="ig" style="margin-bottom:8px"><label class="ilabel">Amount (₦)</label><input class="ifield" id="obl-fe-amt-${i}" type="number" inputmode="decimal" value="${o.amount}"></div>
+          <div class="ig" style="margin-bottom:8px"><label class="ilabel">Amount (₦)</label><input class="ifield" id="obl-fe-amt-${i}" type="text" value="${o.amount}"></div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-p btn-sm" onclick="saveFixedObl(${i})">Save</button>
             <button class="btn btn-g btn-sm" onclick="document.getElementById('obl-fixed-edit-${i}').style.display='none'">Cancel</button>
@@ -4103,7 +4122,7 @@ function renderProjObligations(){
     <div class="card" id="obl-add-card" style="display:none">
       <div class="clabel" style="margin-bottom:10px">Add Fixed Bill</div>
       <div class="ig"><label class="ilabel">Label</label><input class="ifield" id="obl-lbl" type="text" placeholder="e.g. School fees"></div>
-      <div class="ig"><label class="ilabel">Monthly Amount (₦)</label><input class="ifield" id="obl-amt" type="number" inputmode="decimal" placeholder="0"></div>
+      <div class="ig"><label class="ilabel">Monthly Amount (₦)</label><input class="ifield" id="obl-amt" type="text" placeholder="0"></div>
       <div style="display:flex;gap:8px;margin-top:4px">
         <button class="btn btn-p btn-sm" onclick="saveObligation()">Save</button>
         <button class="btn btn-g btn-sm" onclick="document.getElementById('obl-add-card').style.display='none'">Cancel</button>
@@ -4210,7 +4229,7 @@ function renderProjFees(){
     <div class="card" id="fee-edit-card" style="display:none">
       <div class="clabel" style="margin-bottom:10px" id="fee-edit-title">Add Fee</div>
       <div class="ig"><label class="ilabel">Label</label><input class="ifield" id="fee-lbl" type="text" placeholder="e.g. Term 3 – Jun '26"></div>
-      <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" id="fee-amt" type="number" inputmode="decimal" placeholder="0"></div>
+      <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" id="fee-amt" type="text" placeholder="0"></div>
       <div style="display:flex;gap:8px;margin-top:4px">
         <button class="btn btn-p btn-sm" onclick="saveFeeEntry()">Save</button>
         <button class="btn btn-g btn-sm" onclick="document.getElementById('fee-edit-card').style.display='none'">Cancel</button>
@@ -4373,14 +4392,14 @@ function _renderHistDetail(el,txns,inc,invData,cashData,m,y,sid_){
   const cashInputs=cashAccounts.map(a=>`
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
       <label style="font-size:0.62rem;color:var(--text2);width:68px;flex-shrink:0">${a}</label>
-      <input class="ifield" type="number" inputmode="decimal" id="hd-cash-${sid_}-${a}" placeholder="0" value="${cashData[a]!==undefined?cashData[a]:''}" style="padding:4px 8px;font-size:0.72rem;font-family:var(--mono)">
+      <input class="ifield" type="text" id="hd-cash-${sid_}-${a}" placeholder="0" value="${cashData[a]!==undefined?cashData[a]:''}" style="padding:4px 8px;font-size:0.72rem;font-family:var(--mono)">
     </div>`).join('');
   const invInputs=PLATFORMS.map(p=>{
     const isUSD=USD_PLATS.includes(p.key);
     const dispCur=isUSD?'USD':'₦';
     return`<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
       <label style="font-size:0.62rem;color:var(--text2);width:88px;flex-shrink:0">${p.label} <span style="color:var(--text3)">(${dispCur})</span></label>
-      <input class="ifield" type="number" inputmode="decimal" id="hd-inv-${sid_}-${p.key}" placeholder="0" value="${invData[p.key]!==undefined?invData[p.key]:''}" style="padding:4px 8px;font-size:0.72rem;font-family:var(--mono)">
+      <input class="ifield" type="text" id="hd-inv-${sid_}-${p.key}" placeholder="0" value="${invData[p.key]!==undefined?invData[p.key]:''}" style="padding:4px 8px;font-size:0.72rem;font-family:var(--mono)">
     </div>`;}).join('');
   const editId=`hd-edit-${sid_}`;
   const noBalances=!cashRows&&!invRows;
@@ -4481,7 +4500,7 @@ function renderSettBudget(){
       <div style="font-size:0.68rem;color:var(--text2)">Budget for ${MONTHS[S.expMonth-1]} ${S.expYear}</div>
       ${hasPrevBudget?`<button class="btn btn-g btn-sm" onclick="copyLastBudget()">↩ Copy budget ${MS[prevM-1]}</button>`:''}
     </div>
-    ${getAllCats().map(c=>{const k=ck(c);const prevSpend=prevCatSpend[c]||0;return`<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:0.72rem;color:var(--text2)">${CAT_ICONS[c]||''} ${c}</span>${prevSpend?`<span style="font-size:0.58rem;color:var(--text3);font-family:var(--mono);cursor:pointer;white-space:nowrap" onclick="document.getElementById('b-${k}').value=${prevSpend};updateBudgetTotal()" title="Copy last month actual">↩${fN(prevSpend).replace('₦','')}</span>`:'<span style="width:32px"></span>'}<input class="ifield" type="number" inputmode="decimal" id="b-${k}" placeholder="0" value="${S.budgets[k]||''}" style="width:100px;flex-shrink:0;font-size:0.76rem;padding:5px 8px" oninput="updateBudgetTotal()"></div>`;}).join('')}
+    ${getAllCats().map(c=>{const k=ck(c);const prevSpend=prevCatSpend[c]||0;return`<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:0.72rem;color:var(--text2)">${CAT_ICONS[c]||''} ${c}</span>${prevSpend?`<span style="font-size:0.58rem;color:var(--text3);font-family:var(--mono);cursor:pointer;white-space:nowrap" onclick="document.getElementById('b-${k}').value=${prevSpend};updateBudgetTotal()" title="Copy last month actual">↩${fN(prevSpend).replace('₦','')}</span>`:'<span style="width:32px"></span>'}<input class="ifield" type="text" id="b-${k}" placeholder="0" value="${S.budgets[k]||''}" style="width:100px;flex-shrink:0;font-size:0.76rem;padding:5px 8px" oninput="updateBudgetTotal()"></div>`;}).join('')}
     <div style="display:flex;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);margin-bottom:12px;font-weight:700;font-size:0.84rem"><span>Total</span><span id="budget-total-display" style="font-family:var(--mono);color:var(--accent)">${fN(total)}</span></div>
     <div style="display:flex;gap:8px;margin-bottom:16px">
       <button class="btn btn-g btn-sm" onclick="copyActualSpend()">↩ Copy all actual spend</button>
@@ -4651,7 +4670,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.10</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.14</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     ${renderFxCard()}
   `;
 }
@@ -4694,8 +4713,8 @@ function renderFxCard(){
       <div class="exp-card-sub" style="margin-bottom:10px">Current rates for <strong>${String(m).padStart(2,'0')}/${y}</strong>: $1 = ₦${cur.USD} &nbsp;|&nbsp; £1 = ₦${cur.GBP}. Override any month below; leave blank to use built-in rates.</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;align-items:end;margin-bottom:10px">
         <div><label class="ilabel">Month</label><select class="sfield" id="fx-month">${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((mn,i)=>`<option value="${i+1}"${(i+1)===m?' selected':''}>${mn}</option>`).join('')}</select></div>
-        <div><label class="ilabel">USD → ₦</label><input class="ifield" type="number" id="fx-usd" inputmode="decimal" placeholder="e.g. 1590" value="${cur.USD}"></div>
-        <div><label class="ilabel">GBP → ₦</label><input class="ifield" type="number" id="fx-gbp" inputmode="decimal" placeholder="e.g. 2020" value="${cur.GBP}"></div>
+        <div><label class="ilabel">USD → ₦</label><input class="ifield" type="text" id="fx-usd" placeholder="e.g. 1590" value="${cur.USD}"></div>
+        <div><label class="ilabel">GBP → ₦</label><input class="ifield" type="text" id="fx-gbp" placeholder="e.g. 2020" value="${cur.GBP}"></div>
       </div>
       <button class="btn btn-p btn-sm" onclick="saveFxOverride()">Save Rate</button>
       ${overrideRows?`<div style="margin-top:12px"><div class="exp-card-sub" style="margin-bottom:6px">Custom overrides:</div>${overrideRows}</div>`:''}
@@ -5020,7 +5039,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.10';
+const APP_VERSION='v3.14.14';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
