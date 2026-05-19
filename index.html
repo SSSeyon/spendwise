@@ -375,6 +375,25 @@ datalist option{background:var(--bg2);color:var(--text)}
 .asset-eq{background:var(--bdim);color:var(--blue)}
 .asset-fi{background:var(--gdim);color:var(--gold)}
 .int-badge{font-size:0.58rem;padding:1px 5px;border-radius:3px;background:rgba(251,191,36,0.15);color:var(--gold);margin-left:4px}
+  /* ── Dashboard Calendar ── */
+  .dcal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;}
+  .dcal-hd{font-size:0.58rem;font-weight:700;color:var(--text3);text-align:center;padding:3px 0;}
+  .dcal-cell{position:relative;min-height:30px;border-radius:6px;display:flex;align-items:center;justify-content:center;padding:4px 2px;cursor:default;}
+  .dcal-cell.dcal-has{background:var(--card2);cursor:pointer;}
+  .dcal-cell.dcal-has:active{background:var(--adim);}
+  .dcal-cell.dcal-today .dcal-day{background:var(--accent);color:#fff;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;}
+  .dcal-day{font-size:0.68rem;font-weight:600;color:var(--text2);line-height:1;}
+  .dcal-cell.dcal-has .dcal-day{color:var(--text);}
+  .dcal-badge{font-family:var(--font);font-size:0.5rem;font-weight:800;vertical-align:super;line-height:1;color:var(--blue);margin-left:1px;}
+  .dcal-badge.dcal-badge-inc{background:rgba(52,211,153,0.15);color:#34d399;}
+  .dcal-badge.dcal-badge-exp{background:var(--rdim);color:var(--red);}
+  .dcal-empty{background:transparent!important;cursor:default!important;}
+  /* Calendar day popup */
+  .dcal-popup{display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.55);align-items:flex-end;justify-content:center;}
+  .dcal-popup-inner{background:var(--card);border-radius:18px 18px 0 0;width:100%;max-width:480px;max-height:70vh;overflow-y:auto;padding:16px;}
+  .dcal-popup-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
+  .dcal-popup-hd span{font-size:0.9rem;font-weight:700;color:var(--text);}
+  .dcal-popup-close{background:var(--card2);border:none;color:var(--text2);font-size:0.8rem;width:26px;height:26px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;}
   /* ── Version update banner ── */
   #sw-update-banner{display:none;position:fixed;top:0;left:0;right:0;z-index:9999;background:var(--blue);color:#fff;padding:10px 16px;font-size:0.78rem;font-weight:600;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.3);}
   #sw-update-banner button{margin-left:12px;background:#fff;color:var(--blue);border:none;border-radius:12px;padding:4px 12px;font-size:0.74rem;font-weight:700;cursor:pointer;}
@@ -394,7 +413,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.14</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.16</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -468,6 +487,15 @@ datalist option{background:var(--bg2);color:var(--text)}
           </div>
         </div>
         <div id="dash-recent" style="margin-top:8px"></div>
+      </div>
+    </div>
+    <div class="dash-card-wrap" data-card="calendar">
+      <div class="card">
+        <div class="collapsible-hdr open" id="dash-calendar-hdr" onclick="toggleCollapsible('dash-calendar','dash-calendar-hdr')">
+          <div style="font-size:0.82rem;font-weight:700">Calendar</div>
+          <span class="chevron"><svg width="20" height="12" viewBox="0 0 20 12" fill="none"><polyline points="2,2 10,10 18,2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        </div>
+        <div id="dash-calendar" style="margin-top:4px"></div>
       </div>
     </div>
     <div class="dash-card-wrap" data-card="budget">
@@ -708,7 +736,7 @@ datalist option{background:var(--bg2);color:var(--text)}
 <div class="pg" id="pg-forecast">
   <div class="pg-sticky">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-    <div class="pg-title" style="margin-bottom:0">Forecast</div>
+    <div class="pg-title" style="margin-bottom:0">Analytics</div>
     <select class="period-sel" id="forecast-currency" onchange="S.dashCurrency=this.value;cSet('sw3_currency',this.value);renderForecast();renderDashboard()" style="font-size:0.68rem;padding:4px 8px">
       <option value="NGN">₦ NGN</option><option value="USD">$ USD</option><option value="GBP">£ GBP</option><option value="NATIVE">◈ Effective</option>
     </select>
@@ -746,7 +774,7 @@ datalist option{background:var(--bg2);color:var(--text)}
   <div class="bn active" data-pg="dashboard" onclick="navTo('dashboard')"><div class="bn-icon">◈</div>Home</div>
   <div class="bn" data-pg="expenses" onclick="navTo('expenses')"><div class="bn-icon">↕</div>Expenses</div>
   <div class="bn" data-pg="accounts" onclick="navTo('accounts')"><div class="bn-icon">⬡</div>Accounts</div>
-  <div class="bn" data-pg="forecast" onclick="navTo('forecast')"><div class="bn-icon">◌</div>Forecast</div>
+  <div class="bn" data-pg="forecast" onclick="navTo('forecast')"><div class="bn-icon">◌</div>Analytics</div>
   <div class="bn" data-pg="settings" onclick="navTo('settings')"><div class="bn-icon">⊕</div>More</div>
 </nav>
 
@@ -2001,7 +2029,7 @@ function renderDashboard(){
   const cashBadgeEl=document.getElementById('dash-cash-badge');
   if(cashBadgeEl) cashBadgeEl.textContent=cashTotal?fmtCur(cashTotal,cur,m,y):'—';
   const cashBodyEl=document.getElementById('dash-cash-body');
-  if(cashBodyEl) cashBodyEl.innerHTML=cashAccts.map((b,i)=>{const val=cash[b]||0;const pct=cashTotal?Math.round((isUSDCashAccount(b)?val*(_fxR.USD||1650):val)/cashTotal*100):0;const dispVal=isUSDCashAccount(b)?(cur==='NGN'||cur==='NATIVE'?'$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fmtCur(val*(_fxR.USD||1650),cur,m,y)):fmtCur(val,cur,m,y);return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;${i<cashAccts.length-1?'border-bottom:1px solid var(--border)':''}"><div style="display:flex;align-items:center;gap:8px">${bankLogoEl(b,22)}<div><div style="font-size:0.78rem;font-weight:600">${b}</div><div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}% of total</div></div></div><div style="font-family:var(--mono);font-size:0.86rem;color:${val?'var(--blue)':'var(--text3)'};">${val?dispVal:'—'}</div></div>`;}).join('');
+  if(cashBodyEl) cashBodyEl.innerHTML=cashAccts.map((b,i)=>{const val=cash[b]||0;const pct=cashTotal?Math.round((isUSDCashAccount(b)?val*(_fxR.USD||1650):val)/cashTotal*100):0;const dispVal=isUSDCashAccount(b)?(cur==='NATIVE'?'$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fmtCur(val*(_fxR.USD||1650),cur,m,y)):fmtCur(val,cur,m,y);return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;${i<cashAccts.length-1?'border-bottom:1px solid var(--border)':''}"><div style="display:flex;align-items:center;gap:8px">${bankLogoEl(b,22)}<div><div style="font-size:0.78rem;font-weight:600">${b}</div><div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}% of total</div></div></div><div style="font-family:var(--mono);font-size:0.86rem;color:${val?'var(--blue)':'var(--text3)'};">${val?dispVal:'—'}</div></div>`;}).join('');
 
   // Investments (collapsible card)
   document.getElementById('dash-inv-total').textContent=invTotal?fmtCur(invTotal,cur==='NATIVE'?'NGN':cur,m,y):'—';
@@ -2046,12 +2074,96 @@ function renderDashboard(){
 
   // Recent transactions
   const recEl=document.getElementById('dash-recent');
-  const combined=[...txns.slice(0,3).map(t=>({...t,type:'exp'})),...incList.slice(0,2).map(t=>({...t,type:'inc'}))].sort((a,b)=>a.date>b.date?-1:1).slice(0,5);
+  const combined=[...txns.map(t=>({...t,type:'exp'})),...incList.map(t=>({...t,type:'inc'}))].sort((a,b)=>a.date>b.date?-1:1).slice(0,5);
   if(!combined.length){recEl.innerHTML='<div class="empty"><div class="empty-i">↕</div>No transactions yet</div>';}
   else{recEl.innerHTML='<div class="txlist">'+combined.map(tx=>`<div class="txi"><div><div class="txi-cat">${tx.category?(CAT_ICONS[tx.category]||'')+' '+tx.category:tx.payee||'—'}</div><div class="txi-meta">${tx.payee||tx.notes||'—'} · ${tx.date}</div></div><div class="${tx.type==='inc'?'txi-amt txi-inc':'txi-amt txi-exp'}">${tx.type==='inc'?'+':''}${fmtCur(tx.amount,cur,m,y)}</div></div>`).join('')+'</div>';}
 
+  // Calendar
+  renderDashCalendar(m, y, [...S.txns, ...S.income.map(i=>({...i,type:'inc'}))]);
+
   // Smart alerts
   renderDashAlerts();
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// DASHBOARD CALENDAR
+// ══════════════════════════════════════════════════════════════════════════
+function renderDashCalendar(m, y, txns){
+  const el=document.getElementById('dash-calendar');
+  if(!el) return;
+
+  const MS_SHORT=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+  // Build map: "YYYY-MM-DD" → [txn, ...]
+  const byDate={};
+  txns.forEach(tx=>{
+    if(!tx.date) return;
+    const key=tx.date.length===10?tx.date:tx.date.slice(0,10);
+    if(!byDate[key]) byDate[key]=[];
+    byDate[key].push(tx);
+  });
+
+  // Calendar grid
+  const firstDay=new Date(y, m-1, 1).getDay(); // 0=Sun
+  const daysInMonth=new Date(y, m, 0).getDate();
+  const todayStr=new Date().toISOString().slice(0,10);
+
+  let cells='';
+  // Header
+  cells+=MS_SHORT.map(d=>`<div class="dcal-hd">${d}</div>`).join('');
+  // Empty leading cells
+  for(let i=0;i<firstDay;i++) cells+=`<div class="dcal-cell dcal-empty"></div>`;
+  // Day cells
+  for(let d=1;d<=daysInMonth;d++){
+    const dateStr=`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dayTxns=byDate[dateStr]||[];
+    const count=dayTxns.length;
+    const isToday=dateStr===todayStr;
+    const hasTxns=count>0;
+    const expCount=dayTxns.filter(t=>t.type!=='inc').length;
+    const incCount=dayTxns.filter(t=>t.type==='inc').length;
+    const badge=hasTxns?`<sup class="dcal-badge${incCount&&!expCount?' dcal-badge-inc':expCount&&!incCount?' dcal-badge-exp':''}">${count}</sup>`:'';
+    cells+=`<div class="dcal-cell${isToday?' dcal-today':''}${hasTxns?' dcal-has':''}" onclick="${hasTxns?`showDayTxns('${dateStr}',event)`:''}"><span class="dcal-day">${d}${badge}</span></div>`;
+  }
+
+  el.innerHTML=`<div class="card" style="padding:12px 10px">
+    <div class="sh" style="margin-bottom:10px"><div class="sh-title">📅 ${MONTH_NAMES[m-1]} ${y}</div></div>
+    <div class="dcal-grid">${cells}</div>
+  </div>`;
+}
+
+function showDayTxns(dateStr, evt){
+  evt&&evt.stopPropagation();
+  const m=S.expMonth,y=S.expYear;
+  const cur=S.dashCurrency||'NGN';
+  const all=[...S.txns,...S.income.map(i=>({...i,type:'inc'}))];
+  const dayTxns=all.filter(tx=>{
+    const k=tx.date&&tx.date.length>=10?tx.date.slice(0,10):tx.date;
+    return k===dateStr;
+  });
+  if(!dayTxns.length) return;
+
+  const d=new Date(dateStr);
+  const label=d.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'});
+
+  // Reuse existing modal or create inline popup
+  let pop=document.getElementById('dcal-popup');
+  if(!pop){
+    pop=document.createElement('div');
+    pop.id='dcal-popup';
+    pop.className='dcal-popup';
+    pop.innerHTML='<div class="dcal-popup-inner"><div class="dcal-popup-hd"><span id="dcal-popup-title"></span><button class="dcal-popup-close" onclick="this.closest(\'.dcal-popup\').style.display=\'none\'">✕</button></div><div id="dcal-popup-body"></div></div>';
+    pop.onclick=e=>{if(e.target===pop)pop.style.display='none';};
+    document.body.appendChild(pop);
+  }
+  document.getElementById('dcal-popup-title').textContent=label;
+  document.getElementById('dcal-popup-body').innerHTML='<div class="txlist">'+dayTxns.map(tx=>{
+    const isInc=tx.type==='inc';
+    return`<div class="txi"><div><div class="txi-cat">${tx.category?(CAT_ICONS[tx.category]||'')+'\u00a0'+tx.category:tx.payee||'—'}</div><div class="txi-meta">${tx.payee||tx.notes||'—'}</div></div><div class="${isInc?'txi-amt txi-inc':'txi-amt txi-exp'}">${isInc?'+':'−'}${fmtCur(tx.amount,cur,m,y)}</div></div>`;
+  }).join('')+'</div>';
+  pop.style.display='flex';
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -3529,7 +3641,7 @@ function renderCashPage(){
     const intInfo=ci&&ci.interestRate?`<span class="int-badge">${ci.interestRate}% p.a.</span>`:'';
     const projInt=ci&&ci.interestRate&&val?calcInterestAccrual(val,ci.interestRate,'daily_compound'):0;
     const intProjection=projInt>0.5?`<div style="font-size:0.6rem;color:var(--gold);margin-top:1px">~${isUSDCashAccount(b)?'$'+projInt.toFixed(2):fN(Math.round(projInt))} interest this month</div>`:'';
-    const dispVal=isUSDCashAccount(b)?`$${val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`:fN(val);
+    const _fxR2=getFxRates(m,y);const _cashCur=cGet('sw3_currency')||'NGN';const dispVal=isUSDCashAccount(b)?((_cashCur==='NATIVE')?'$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fmtCur(val*(_fxR2.USD||1650),_cashCur,m,y)):fN(val);
     return`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;${i<ACCTS.length-1?'border-bottom:1px solid var(--border)':''}"><div style="display:flex;align-items:center;gap:8px">${bankLogoEl(b,26)}<div><div style="font-size:0.82rem;font-weight:600">${b}${intInfo}</div><div style="font-size:0.65rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}%</div>${intProjection}</div></div><div style="font-family:var(--mono);font-size:0.9rem;color:${val?'var(--blue)':'var(--text3)'}">${val?dispVal:'—'}</div></div>`;
   }).join('');
   document.getElementById('cash-inputs').innerHTML=`<div class="gform">${ACCTS.map(b=>`<div class="ig"><label class="ilabel">${b} (${isUSDCashAccount(b)?'$':'₦'})</label><input class="ifield" type="text" id="cash-${b.toLowerCase().replace(/\s+/g,'-')}" placeholder="0" value="${cash[b]||''}"></div>`).join('')}</div>`;
@@ -4382,7 +4494,7 @@ function _renderHistDetail(el,txns,inc,invData,cashData,m,y,sid_){
   const cashRows=cashAccounts.filter(a=>cashData[a]!==undefined).map(a=>`
     <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
       <span style="font-size:0.7rem;color:var(--text2)">${a}</span>
-      <span style="font-family:var(--mono);font-size:0.7rem;color:var(--blue)">${isUSDCashAccount(a)?(cur==='NGN'||cur==='NATIVE'?'$'+cashData[a].toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fmtCur(cashData[a]*(getFxRates(m,y).USD||1600),cur,m,y)):fmtCur(cashData[a],cur,m,y)}</span>
+      <span style="font-family:var(--mono);font-size:0.7rem;color:var(--blue)">${isUSDCashAccount(a)?(cur==='NATIVE'?'$'+cashData[a].toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fmtCur(cashData[a]*(getFxRates(m,y).USD||1600),cur,m,y)):fmtCur(cashData[a],cur,m,y)}</span>
     </div>`).join('');
   const invRows=PLATFORMS.filter(p=>invData[p.key]!==undefined&&invData[p.key]!==0).map(p=>`
     <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
@@ -4670,7 +4782,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.14</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.16</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     ${renderFxCard()}
   `;
 }
@@ -5039,7 +5151,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.14';
+const APP_VERSION='v3.14.16';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
