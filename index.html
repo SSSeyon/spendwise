@@ -72,14 +72,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);-webkit-font
 /* ── THEME TOGGLE ── */
 .theme-btn{background:none;border:none;cursor:pointer;padding:6px;display:flex;align-items:center;justify-content:center;color:var(--text2);transition:color 0.18s;border-radius:var(--rsm);font-size:1.1rem;line-height:1}
 .theme-btn:hover{color:var(--text);background:var(--bg2)}
-.theme-btn-knob{display:none}
 body.light .theme-btn{color:#e6a800}
 body.light .theme-btn:hover{color:#c68a00;background:rgba(230,168,0,0.1)}
-body.light .theme-btn-knob{}
-.theme-btn-icon{transition:opacity 0.18s}
-.theme-icon-moon{right:4px;opacity:1}
-.theme-icon-sun{left:4px;opacity:0}
-/* theme icon opacity rules removed — single-icon approach uses JS swap instead */
 
 /* ── LAYOUT ── */
 .app{display:flex;flex-direction:column;height:100vh;padding-top:var(--hh);padding-bottom:var(--nh)}
@@ -178,7 +172,7 @@ body.light .theme-btn-knob{}
 
 /* ── MONTH PILLS ── */
 .mrow{display:flex;gap:5px;margin-bottom:12px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
-.pg-sticky{position:sticky;top:0;z-index:50;background:var(--bg0);padding-top:4px;padding-bottom:2px;margin-left:-16px;margin-right:-16px;padding-left:16px;padding-right:16px}
+.pg-sticky{position:sticky;top:0;z-index:50;background:var(--bg);padding-top:4px;padding-bottom:2px;margin-left:-16px;margin-right:-16px;padding-left:16px;padding-right:16px}
 .mrow::-webkit-scrollbar{display:none}
 .mpill{flex-shrink:0;padding:4px 12px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text2);font-size:0.66rem;font-weight:700;cursor:pointer;font-family:var(--font);transition:all 0.13s}
 .mpill.active{border-color:var(--accent);background:var(--adim);color:var(--accent)}
@@ -224,8 +218,6 @@ body.light .theme-btn-knob{}
 /* ── TOAST ── */
 .toast{position:fixed;bottom:calc(14px + 56px + 14px);left:50%;transform:translateX(-50%) translateY(12px);background:var(--bg1);border:1px solid var(--border);border-radius:20px;padding:8px 18px;font-size:0.76rem;font-weight:600;z-index:300;opacity:0;transition:all 0.2s;pointer-events:none;white-space:nowrap;box-shadow:var(--shadow);color:var(--text)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-
-/* ── ALERTS ── */
 
 /* ── PULL-TO-REFRESH ──────────────────────────────────────────────────── */
 #ptr-indicator{position:fixed;top:var(--hh);left:0;right:0;z-index:200;display:flex;align-items:center;justify-content:center;height:0;overflow:hidden;transition:height 0.15s ease;background:var(--bg2);border-bottom:1px solid var(--border)}
@@ -379,7 +371,7 @@ datalist option{background:var(--bg2);color:var(--text)}
   .dcal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;}
   .dcal-hd{font-size:0.58rem;font-weight:700;color:var(--text3);text-align:center;padding:3px 0;}
   .dcal-cell{position:relative;min-height:30px;border-radius:6px;display:flex;align-items:center;justify-content:center;padding:4px 2px;cursor:default;}
-  .dcal-cell.dcal-has{background:var(--card2);cursor:pointer;}
+  .dcal-cell.dcal-has{background:var(--bg2);cursor:pointer;}
   .dcal-cell.dcal-has:active{background:var(--adim);}
   .dcal-cell.dcal-today .dcal-day{background:var(--accent);color:#fff;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;}
   .dcal-day{font-size:0.68rem;font-weight:600;color:var(--text2);line-height:1;}
@@ -393,7 +385,7 @@ datalist option{background:var(--bg2);color:var(--text)}
   .dcal-popup-inner{background:var(--card);border-radius:18px 18px 0 0;width:100%;max-width:480px;max-height:70vh;overflow-y:auto;padding:16px;}
   .dcal-popup-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
   .dcal-popup-hd span{font-size:0.9rem;font-weight:700;color:var(--text);}
-  .dcal-popup-close{background:var(--card2);border:none;color:var(--text2);font-size:0.8rem;width:26px;height:26px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .dcal-popup-close{background:var(--bg2);border:none;color:var(--text2);font-size:0.8rem;width:26px;height:26px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;}
   /* ── Version update banner ── */
   #sw-update-banner{display:none;position:fixed;top:0;left:0;right:0;z-index:9999;background:var(--blue);color:#fff;padding:10px 16px;font-size:0.78rem;font-weight:600;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.3);}
   #sw-update-banner button{margin-left:12px;background:#fff;color:var(--blue);border:none;border-radius:12px;padding:4px 12px;font-size:0.74rem;font-weight:700;cursor:pointer;}
@@ -413,7 +405,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.17</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.19</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -613,37 +605,6 @@ datalist option{background:var(--bg2);color:var(--text)}
   </div>
 </div>
 
-<!-- INVESTMENTS -->
-<div class="pg" id="pg-investments">
-  <div class="pg-sticky">
-  <div class="pg-title" style="margin-bottom:8px">Investments</div>
-  <div class="tabs" style="margin-bottom:6px">
-    <button class="tab active" onclick="invTab('current',this)">Current</button>
-    <button class="tab" onclick="invTab('trend',this)">Trend</button>
-    <button class="tab" onclick="invTab('edit',this)">Edit</button>
-  </div>
-  </div>
-  <div id="inv-current">
-    <div class="card" id="inv-total"></div>
-    <div id="inv-platforms"></div>
-    <div class="card" id="inv-alloc" style="display:none">
-      <div class="clabel" style="margin-bottom:8px">Allocation</div>
-      <div class="abar" id="inv-abar"></div>
-      <div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:8px" id="inv-legend"></div>
-    </div>
-  </div>
-  <div id="inv-trend" style="display:none">
-    <div class="card"><div class="clabel" style="margin-bottom:12px">Portfolio Growth</div><canvas id="inv-chart" style="max-height:200px"></canvas></div>
-  </div>
-  <div id="inv-edit" style="display:none">
-    <div class="card">
-      <div class="clabel" style="margin-bottom:10px">Update Balances — <span id="inv-edit-label"></span></div>
-      <div id="inv-edit-fields"></div>
-      <button class="btn btn-p btn-full" onclick="saveInvFromEdit()">Save Balances</button>
-    </div>
-  </div>
-</div>
-
 <!-- ACCOUNTS (Cash + Investments merged) -->
 <div class="pg" id="pg-accounts">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
@@ -747,8 +708,6 @@ datalist option{background:var(--bg2);color:var(--text)}
   </div>
   </div>
   <div id="proj-treasury"></div>
-  <div id="proj-networth" style="display:none"></div>
-  <div id="proj-analytics" style="display:none"></div>
   <div id="proj-history" style="display:none"></div>
   <div id="proj-obligations" style="display:none"></div>
 </div>
@@ -945,16 +904,6 @@ datalist option{background:var(--bg2);color:var(--text)}
   </div>
 </div>
 
-<!-- INVESTMENT MODAL -->
-<div class="mbackdrop" id="inv-modal">
-  <div class="modal" onclick="event.stopPropagation()">
-    <div class="mhdr"><div class="mtitle">Update Investment Balances</div><button class="mclose" onclick="closeMod('inv-modal')">×</button></div>
-    <div style="font-size:0.68rem;color:var(--text2);margin-bottom:12px" id="inv-mod-label"></div>
-    <div id="inv-mod-fields"></div>
-    <button class="btn btn-p btn-full" id="inv-save" onclick="saveInvestments()">Save Balances</button>
-  </div>
-</div>
-
 <!-- DEBTOR MODAL -->
 <div class="mbackdrop" id="deb-modal">
   <div class="modal" onclick="event.stopPropagation()">
@@ -1127,7 +1076,6 @@ const PLATFORM_LOGOS = {
   'Risevest':      LOGO_DATA.risevest,
   'Trove':         LOGO_DATA.trove,
   'Bamboo':        LOGO_DATA.bamboo,
-  'USDHoldings':   LOGO_DATA.gtb,
 };
 
 function _logoFallbackBank(el,name,size){
@@ -1305,8 +1253,7 @@ function openRecurModal(){
 function deleteRecurring(i){const list=getRecurring();list.splice(i,1);saveRecurring(list);openRecurModal();renderRecurringCard();}
 
 // HISTORY is loaded from localStorage (seeded via JSON import).
-const HISTORY_FALLBACK=[];
-function getHistory(){return cGet('sw3_history')||HISTORY_FALLBACK;}
+function getHistory(){return cGet('sw3_history')||[];}
 
 // ══════════════════════════════════════════════════════════════════════════
 // STATE
@@ -1444,7 +1391,6 @@ function initNumInputs(scope){
 }
 
 function fmtChartNGN(v){if(Math.abs(v)>=1e6)return'₦'+(v/1e6).toFixed(2)+'M';if(Math.abs(v)>=1e3)return'₦'+(v/1e3).toFixed(1)+'K';return'₦'+v.toFixed(0);}
-function fmtChartUSD(v){if(Math.abs(v)>=1e3)return'$'+(v/1e3).toFixed(2)+'K';return'$'+v.toFixed(2);}
 function fmtChartMoney(v){return fmtChartNGN(v);}
 const fNum=n=>n==null||isNaN(n)?'—':Number(n).toLocaleString('en-NG',{maximumFractionDigits:0});
 const ck=c=>c.replace(/[^a-zA-Z]/g,'');
@@ -3593,32 +3539,6 @@ async function saveInvFromEdit(){
   }
   finally{S.saving=false;}
 }
-function openInvMod(){
-  const m=S.expMonth,y=S.expYear;
-  const fxRates=getFxRates(m,y);
-  document.getElementById('inv-mod-label').textContent=`${MONTHS[m-1]} ${y} — closing balances`;
-  document.getElementById('inv-mod-fields').innerHTML=PLATFORMS.map(p=>{
-    const storedNGN=S.investments[p.key]||0;
-    const isUSD=p.currency==='USD';
-    const dispVal=isUSD&&storedNGN?(storedNGN/fxRates.USD).toFixed(2):(storedNGN||'');
-    const lbl=isUSD?`$ USD (rate: ₦${fxRates.USD}/$)`:'₦ NGN';
-    return`<div class="ig"><label class="ilabel" style="display:flex;align-items:center;gap:6px">${platformLogoEl(p.key,p.color,16)} ${p.label} <span style="font-size:0.68rem;color:var(--text3)">(${lbl})</span></label><input class="ifield" type="text" id="inv-${p.key}" placeholder="0" value="${dispVal}" data-currency="${p.currency}"></div>`;
-  }).join('');
-  openMod('inv-modal');
-}
-async function saveInvestments(){
-  if(S.saving) return;S.saving=true;const btn=document.getElementById('inv-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
-  const fxRates=getFxRates(S.expMonth,S.expYear);
-  const data={month:S.expMonth,year:S.expYear};
-  PLATFORMS.forEach(p=>{
-    const v=parseFloat(document.getElementById('inv-'+p.key).value);
-    if(isNaN(v)){data[p.key]=0;}
-    else{data[p.key]=p.currency==='USD'?Math.round(v*fxRates.USD):v;}
-  });
-  try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});S.investments=data;cSet(CK.inv(S.expMonth,S.expYear),data);closeMod('inv-modal');toast('Balances saved');setSyncStatus('synced');renderInvestments();renderDashboard();}
-  catch(e){toast('Error saving');setSyncStatus('error');}
-  finally{S.saving=false;btn.textContent='Save Balances';btn.disabled=false;}
-}
 
 // ══════════════════════════════════════════════════════════════════════════
 // CASH PAGE
@@ -4049,7 +3969,7 @@ function dashChartTab(tab, btn){
 // ══════════════════════════════════════════════════════════════════════════
 function renderForecast(){renderProjTreasury();renderProjHistory();}
 function projTab(tab,btn){
-  ['treasury','networth','analytics','history','obligations','statements'].forEach(t=>{
+  ['treasury','history','obligations'].forEach(t=>{
     const el=document.getElementById('proj-'+t);if(el)el.style.display=t===tab?'block':'none';
   });
   btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');
@@ -4135,52 +4055,6 @@ function renderProjTreasury(){
     </div>
     <div class="csub" style="margin-top:6px">Alert fires when actual savings fall below 80% of this target.</div>`;
   el.appendChild(stCard);
-}
-
-function renderProjAnalytics(){
-  const el=document.getElementById('proj-analytics');if(!el)return;
-  const hist=getHistory().slice(-6);
-  if(hist.length<2){el.innerHTML='<div class="empty"><div class="empty-i">◌</div>Need at least 2 months of data</div>';return;}
-  const catHistory={};
-  hist.forEach(h=>{const txns=cGet(CK.txns(h.month,h.year))||[];txns.forEach(t=>{if(!catHistory[t.category])catHistory[t.category]=[];catHistory[t.category].push(t.amount||0);});});
-  const curCatSpend={};S.txns.forEach(t=>{curCatSpend[t.category]=(curCatSpend[t.category]||0)+(t.amount||0);});
-  const anomalies=[];
-  Object.entries(catHistory).forEach(([cat,amounts])=>{
-    if(amounts.length<2||amounts.reduce((a,b)=>a+b,0)/amounts.length<5000)return;
-    const avg=amounts.reduce((a,b)=>a+b,0)/amounts.length;
-    const cur=curCatSpend[cat]||0;
-    const pctDiff=avg>0?((cur-avg)/avg*100):0;
-    anomalies.push({cat,cur,avg,pctDiff,isHigh:pctDiff>20,isLow:pctDiff<-20});
-  });
-  anomalies.sort((a,b)=>Math.abs(b.pctDiff)-Math.abs(a.pctDiff));
-  const latest=hist[hist.length-1],prev=hist[hist.length-2];
-  const incDelta=latest?.income&&prev?.income?((latest.income-prev.income)/prev.income*100):null;
-  const expDelta=latest?.expenses&&prev?.expenses?((latest.expenses-prev.expenses)/prev.expenses*100):null;
-  const maxCatSpend=Math.max(...Object.values(curCatSpend),1);
-  el.innerHTML=`
-    <div class="card">
-      <div class="sh" style="margin-bottom:10px"><div class="sh-title">Month-on-Month</div><span style="font-size:0.68rem;color:var(--text2)">${prev?.label} → ${latest?.label}</span></div>
-      ${incDelta!==null?`<div class="pjrow"><span class="pjlabel">Income</span><span class="pjval" style="color:${incDelta>=0?'var(--accent)':'var(--red)'}">${incDelta>=0?'+':''}${incDelta.toFixed(1)}%</span></div>`:''}
-      ${expDelta!==null?`<div class="pjrow"><span class="pjlabel">Expenses</span><span class="pjval" style="color:${expDelta>0?'var(--red)':'var(--accent)'}">${expDelta>=0?'+':''}${expDelta.toFixed(1)}%</span></div>`:''}
-    </div>
-    <div class="card">
-      <div class="sh" style="margin-bottom:10px"><div class="sh-title">Spend Anomalies</div><span style="font-size:0.62rem;color:var(--text3)">vs 6-month avg</span></div>
-      ${anomalies.length?anomalies.slice(0,8).map(a=>`
-        <div style="padding:9px 0;border-bottom:1px solid var(--border)">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-            <span style="font-size:0.76rem;font-weight:600">${a.cat}</span>
-            <span style="font-size:0.7rem;font-family:var(--mono);color:${a.isHigh?'var(--red)':a.isLow?'var(--accent)':'var(--text2)'}">${a.pctDiff>=0?'+':''}${a.pctDiff.toFixed(0)}% vs avg</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;font-size:0.65rem;color:var(--text2);font-family:var(--mono)">
-            <span>This month: ${fN(a.cur)}</span><span>6m avg: ${fN(a.avg)}</span>
-          </div>
-          ${a.isHigh?`<div style="margin-top:4px;font-size:0.62rem;color:var(--red)">⚠ ${a.cat} is ${a.pctDiff.toFixed(0)}% above average</div>`:a.isLow&&a.cur>0?`<div style="margin-top:4px;font-size:0.62rem;color:var(--accent)">↓ ${a.cat} is ${Math.abs(a.pctDiff).toFixed(0)}% below average</div>`:''}
-        </div>`).join(''):'<div class="empty" style="padding:16px">No anomalies detected yet</div>'}
-    </div>
-    <div class="card">
-      <div class="sh" style="margin-bottom:10px"><div class="sh-title">Top Categories</div><span style="font-size:0.62rem;color:var(--text3)">this month</span></div>
-      ${Object.entries(curCatSpend).sort((a,b)=>b[1]-a[1]).slice(0,5).map(([c,v])=>`<div class="cr"><div class="cr-top"><span class="cr-name">${c}</span><span class="cr-spent">${fN(v)}</span></div><div class="prog"><div class="pf ok" style="width:${Math.min(100,(v/maxCatSpend)*100)}%"></div></div></div>`).join('')||'<div class="empty" style="padding:10px">No data this month</div>'}
-    </div>`;
 }
 
 function _getAllObl(){
@@ -4276,41 +4150,6 @@ function removeObligation(i){
   const custom=cGet('sw3_custom_obl')||[];
   custom.splice(i,1);cSet('sw3_custom_obl',custom);
   renderProjObligations();toast('Removed');
-}
-
-function renderProjNW(){
-  const recent=getHistory().filter(h=>h.income&&h.expenses).slice(-6);
-  const avgSave=recent.length?recent.reduce((s,h)=>s+Math.max(0,(h.income-h.expenses)/h.income),0)/recent.length:0;
-  const inv=S.investments,cash=S.cash;
-  const invTotal=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
-  const cashTotal=cashTotalNGN(cash);
-  const debtorsOwed=S.debtors.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0);
-  const nw=invTotal+cashTotal+debtorsOwed;
-  document.getElementById('proj-networth').innerHTML=`
-    <div class="card"><div class="clabel">Avg. Savings Rate — 6 months</div><div class="cval" style="color:${avgSave>0.2?'var(--accent)':'var(--gold)'}">${(avgSave*100).toFixed(1)}%</div><div class="csub">${avgSave>0.3?'Strong savings discipline':avgSave>0.1?'Moderate — room to improve':'Low — review discretionary spend'}</div></div>
-    ${nw>0?`<div class="card"><div class="clabel" style="margin-bottom:10px">Current Net Worth Breakdown</div>
-      <div class="pjrow"><span class="pjlabel">Investments</span><span class="pjval" style="color:var(--accent)">${fN(invTotal)}</span></div>
-      <div class="pjrow"><span class="pjlabel">Cash (GTB · Access · Union · Renmoney)</span><span class="pjval" style="color:var(--blue)">${fN(cashTotal)}</span></div>
-      ${getCashAccounts().map(b=>{const v=cash[b]||0;const disp=isUSDCashAccount(b)?'$'+v.toFixed(2):fN(v);return`<div style="font-size:0.65rem;font-family:var(--mono);color:var(--text2);padding:2px 0">${b}: ${disp}</div>`;}).join('')}
-      ${debtorsOwed?`<div class="pjrow" style="margin-top:8px"><span class="pjlabel">Debtors (expected)</span><span class="pjval" style="color:var(--gold)">${fN(debtorsOwed)}</span></div>`:''}
-      <div class="pjrow" style="font-weight:700;border-top:1px solid var(--border2);margin-top:6px;padding-top:10px"><span>Total</span><span class="pjval" style="color:var(--accent)">${fN(nw)}</span></div>
-      <div class="abar" style="margin-top:10px">
-        <div style="flex:${invTotal};background:var(--accent);opacity:0.8"></div>
-        <div style="flex:${cashTotal};background:var(--blue);opacity:0.8"></div>
-        ${debtorsOwed?`<div style="flex:${debtorsOwed};background:var(--gold);opacity:0.8"></div>`:''}
-      </div></div>`:``}
-  `;
-}
-
-function renderProjRun(){
-  const cash=S.cash,cashTotal=cashTotalNGN(S.cash);
-  const recent=getHistory().filter(h=>h.expenses).slice(-6);
-  const avgSpend=recent.length?recent.reduce((s,h)=>s+h.expenses,0)/recent.length:0;
-  const runway=avgSpend?(cashTotal/avgSpend).toFixed(1):null;
-  const {fixed:_runFixed,custom:_runCustom}=_getAllObl();
-  const _runAll=[..._runFixed,..._runCustom];
-  const fixedTotal=_runAll.reduce((s,o)=>s+o.amount,0);
-  document.getElementById('proj-runway').innerHTML=`<div class="card"><div class="clabel">Cash Runway</div><div class="cval" style="color:${runway>3?'var(--accent)':runway>1?'var(--gold)':'var(--red)'}">${runway?runway+' months':'—'}</div><div class="csub">Cash ${fN(cashTotal)} · Avg. spend ${fN(avgSpend)}/mo</div></div><div class="card"><div class="clabel" style="margin-bottom:10px">Fixed Monthly Obligations</div>${_runAll.map(o=>`<div class="pjrow"><span class="pjlabel">${o.label}</span><span class="pjval">${fN(o.amount)}</span></div>`).join('')}<div class="pjrow" style="font-weight:700"><span>Total Fixed</span><span class="pjval" style="color:var(--accent)">${fN(fixedTotal)}</span></div></div>`;
 }
 
 function renderProjFees(){
@@ -4782,7 +4621,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.17</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.19</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     ${renderFxCard()}
   `;
 }
@@ -5111,7 +4950,7 @@ window.addEventListener('online',()=>{
 });
 window.addEventListener('offline',()=>{document.getElementById('offl').style.display='block';setSyncStatus('offline');});
 if(!navigator.onLine) document.getElementById('offl').style.display='block';
-['exp-modal','inv-modal','deb-modal','inc-modal','move-modal','merge-cat-modal'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('click',function(e){if(e.target===this)closeMod(id);});});
+['exp-modal','deb-modal','inc-modal','move-modal','merge-cat-modal'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('click',function(e){if(e.target===this)closeMod(id);});});
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 
 
@@ -5151,7 +4990,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.17';
+const APP_VERSION='v3.14.19';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
