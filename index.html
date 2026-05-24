@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.23</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.24</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1162,21 +1162,34 @@ const CASH_INT_KEY='sw3_cash_interest';
 function getCashInterestMeta(){return cGet(CASH_INT_KEY)||{};}
 function saveCashInterestMeta(meta){cSet(CASH_INT_KEY,meta);}
 
-// Interest projection helper: given principal, annual rate, days, compound type
-// Returns the projected interest accrual for the remainder of the month
-function calcInterestAccrual(principal, annualRatePct, compoundType){
-  if(!principal||!annualRatePct) return 0;
+// Interest accrual helper
+// principal: NGN amount (the clean principal, without prior accrued interest)
+// annualRatePct: e.g. 18 for 18%
+// compoundType: 'daily_compound' | 'daily_accrual'
+// entryDate: ISO date string (YYYY-MM-DD) when the principal was recorded — defaults to month start
+// maturityDate: ISO date string (YYYY-MM-DD) — for daily_accrual, interest stops at maturity
+// Returns { interest, projectedBalance, daysAccrued, isMatured }
+function calcInterestAccrual(principal, annualRatePct, compoundType, entryDate, maturityDate){
+  if(!principal||!annualRatePct) return {interest:0,projectedBalance:principal||0,daysAccrued:0,isMatured:false};
   const r=annualRatePct/100;
-  const now=new Date();
-  const daysInMonth=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
-  const daysLeft=daysInMonth-now.getDate();
-  if(compoundType==='daily_compound'){
-    // Compound daily for remaining days
-    return principal*(Math.pow(1+r/365,daysLeft)-1);
-  } else {
-    // Simple daily accrual (interest calculated on principal each day, paid at month end)
-    return principal*(r/365)*daysLeft;
+  const today=new Date();today.setHours(0,0,0,0);
+  const from=entryDate?new Date(entryDate):new Date(today.getFullYear(),today.getMonth(),1);
+  from.setHours(0,0,0,0);
+  let to=new Date(today);
+  let isMatured=false;
+  if(maturityDate&&compoundType==='daily_accrual'){
+    const mat=new Date(maturityDate);mat.setHours(0,0,0,0);
+    if(mat<=today){to=mat;isMatured=true;}
   }
+  const daysAccrued=Math.max(0,Math.round((to-from)/(1000*60*60*24)));
+  let interest=0;
+  if(compoundType==='daily_compound'){
+    interest=principal*(Math.pow(1+r/365,daysAccrued)-1);
+  } else {
+    // daily_accrual: simple interest on principal
+    interest=principal*(r/365)*daysAccrued;
+  }
+  return {interest:Math.round(interest),projectedBalance:Math.round(principal+interest),daysAccrued,isMatured};
 }
 
 // FX rates by month (USD/NGN and GBP/NGN averages)
@@ -3385,8 +3398,16 @@ function _renderInvInto(suffix){
     const returnPct=(costNGN>0&&val>0)?((val-costNGN)/costNGN*100):null;
     const returnBadge=returnPct!==null?`<span style="font-size:0.6rem;font-family:var(--mono);margin-left:5px;color:${returnPct>=0?'var(--accent)':'var(--red)'}">${returnPct>=0?'+':''}${returnPct.toFixed(1)}%</span>`:'';
     const meta=getInvPlatformMeta(p.key);
-    const intInfo=meta.assetClass==='fixed_income'&&meta.interestRate?`<span class="int-badge">${meta.interestRate}% p.a.</span>`:'';
-    return`<div class="prow" style="display:flex;align-items:center;gap:10px"><div style="flex-shrink:0">${platformLogoEl(p.key,p.color,26)}</div><div style="flex:1;min-width:0"><div class="pname">${p.label}${badge}${intInfo}</div><div class="ppct">${pct}%</div></div><div class="pval" style="color:${val?p.color:'var(--text3)'}">
+    let intInfo='',accrualSub='';
+    if(meta.assetClass==='fixed_income'&&meta.interestRate){
+      intInfo=`<span class="int-badge">${meta.interestRate}% p.a.</span>`;
+      const {interest,projectedBalance,daysAccrued,isMatured}=calcInterestAccrual(val,meta.interestRate,meta.compoundType||'daily_accrual',meta.principalEntryDate,meta.maturityDate||null);
+      const matLabel=meta.maturityDate?` · matures ${meta.maturityDate}`:'';
+      const statusLabel=isMatured?'<span style="color:var(--red);font-size:0.58rem"> · Matured</span>':'';
+      if(interest>0) accrualSub=`<div style="font-size:0.6rem;color:var(--gold);margin-top:2px">+${fN(interest)} accrued over ${daysAccrued}d → ${fmtPlatformVal(projectedBalance,p.key,cur,m,y)}${matLabel}${statusLabel}</div>`;
+      else if(isMatured) accrualSub=`<div style="font-size:0.6rem;color:var(--red);margin-top:2px">Matured ${meta.maturityDate}</div>`;
+    }
+    return`<div class="prow" style="display:flex;align-items:center;gap:10px"><div style="flex-shrink:0">${platformLogoEl(p.key,p.color,26)}</div><div style="flex:1;min-width:0"><div class="pname">${p.label}${badge}${intInfo}</div><div class="ppct">${pct}%</div>${accrualSub}</div><div class="pval" style="color:${val?p.color:'var(--text3)'}">
 ${val?dispVal:'—'}${returnBadge}</div></div>`;
   }
 
@@ -3425,6 +3446,9 @@ ${val?dispVal:'—'}${returnBadge}</div></div>`;
       const isFI=meta.assetClass==='fixed_income';
       const intRate=meta.interestRate||'';
       const cType=meta.compoundType||'daily_accrual';
+      const matDate=meta.maturityDate||'';
+      const entryDate=meta.principalEntryDate||'';
+      const entryLabel=entryDate?`Principal as of ${entryDate}`:'Principal as of today (on save)';
       return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px 12px;margin-bottom:8px">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
           ${platformLogoEl(p.key,p.color,16)}
@@ -3435,19 +3459,21 @@ ${val?dispVal:'—'}${returnBadge}</div></div>`;
             <option value="fixed_income"${isFI?' selected':''}>Fixed Income</option>
           </select>
         </div>
-        <div class="ig" style="margin-bottom:6px"><label class="ilabel">Balance</label><input class="ifield" type="text" id="inv-edit-${p.key}${s}" placeholder="0" value="${dispVal}" data-currency="${p.currency}"></div>
+        <div class="ig" style="margin-bottom:6px"><label class="ilabel">Principal Balance <span style="font-size:0.6rem;color:var(--text3);font-weight:400">${isFI?'— '+entryLabel:''}</span></label><input class="ifield" type="text" id="inv-edit-${p.key}${s}" placeholder="0" value="${dispVal}" data-currency="${p.currency}"></div>
         <div class="ig" style="margin-bottom:6px"><label class="ilabel" style="font-size:0.6rem;color:var(--text3)">Cost basis ${isUSD?'(USD)':'(₦)'} — optional</label><input class="ifield" style="font-size:0.72rem;padding:4px 8px" type="text" id="inv-cost-${p.key}${s}" placeholder="0" value="${costDisp}"></div>
         <div id="inv-fi-fields-${p.key}${s}" style="${isFI?'':'display:none'}">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
             <div class="ig" style="margin-bottom:0"><label class="ilabel">Annual Rate (%)</label><input class="ifield" type="text" id="inv-rate-${p.key}${s}" placeholder="e.g. 18" value="${intRate}" style="font-size:0.8rem;padding:6px 10px"></div>
-            <div class="ig" style="margin-bottom:0"><label class="ilabel">Compound Type</label><select class="sfield" id="inv-ct-${p.key}${s}" style="font-size:0.75rem;padding:6px 10px">
+            <div class="ig" style="margin-bottom:0"><label class="ilabel">Accrual Type</label><select class="sfield" id="inv-ct-${p.key}${s}" style="font-size:0.75rem;padding:6px 10px" onchange="toggleInvFIFields('${p.key}','${s}')">
               <option value="daily_accrual"${cType==='daily_accrual'?' selected':''}>Daily Accrual</option>
               <option value="daily_compound"${cType==='daily_compound'?' selected':''}>Daily Compound</option>
             </select></div>
           </div>
-          <div style="font-size:0.6rem;color:var(--text3);margin-top:5px;line-height:1.4">
-            <strong>Daily Accrual:</strong> interest calculated on principal daily, paid at month end.<br>
-            <strong>Daily Compound:</strong> interest adds to principal each day.
+          <div id="inv-mat-row-${p.key}${s}" class="ig" style="margin-bottom:6px;${isFI&&cType==='daily_accrual'?'':'display:none'}"><label class="ilabel">Maturity Date</label><input class="ifield" type="date" id="inv-mat-${p.key}${s}" value="${matDate}" style="font-size:0.78rem;padding:5px 8px"></div>
+          <div style="font-size:0.6rem;color:var(--text3);margin-top:4px;line-height:1.5">
+            <strong>Daily Accrual:</strong> simple interest on principal; set a maturity date to cap accrual.<br>
+            <strong>Daily Compound:</strong> interest compounds into principal each day.<br>
+            Interest is computed from the principal entry date and added to the stored balance on save.
           </div>
         </div>
       </div>`;
@@ -3457,9 +3483,13 @@ ${val?dispVal:'—'}${returnBadge}</div></div>`;
 }
 function toggleInvFIFields(pKey, suffix){
   const sel=document.getElementById('inv-ac-'+pKey+suffix);
+  const ctSel=document.getElementById('inv-ct-'+pKey+suffix);
   const fiDiv=document.getElementById('inv-fi-fields-'+pKey+suffix);
+  const matRow=document.getElementById('inv-mat-row-'+pKey+suffix);
   if(!sel||!fiDiv) return;
-  fiDiv.style.display=sel.value==='fixed_income'?'block':'none';
+  const isFI=sel.value==='fixed_income';
+  fiDiv.style.display=isFI?'block':'none';
+  if(matRow) matRow.style.display=(isFI&&ctSel&&ctSel.value==='daily_accrual')?'':'none';
 }
 function renderInvestments(){
   _renderInvInto('');    // pg-investments page (legacy, may not be visible)
@@ -3527,14 +3557,37 @@ async function saveInvFromEdit(){
   if(S.saving) return;S.saving=true;setSyncStatus('syncing');
   const data={month:S.expMonth,year:S.expYear};
   const fxRates=getFxRates(S.expMonth,S.expYear);
+  const today=new Date().toISOString().slice(0,10);
   PLATFORMS.forEach(p=>{
     const el=document.getElementById('inv-edit-'+p.key+'-2')||document.getElementById('inv-edit-'+p.key);
     const v=el?parseFloat(el.value):NaN;
-    if(isNaN(v)){data[p.key]=0;}
-    else{data[p.key]=p.currency==='USD'?Math.round(v*fxRates.USD):v;}
+    if(isNaN(v)){data[p.key]=0;return;}
+    const principalNGN=p.currency==='USD'?Math.round(v*fxRates.USD):v;
+    // For fixed income, compute accrued interest from entry date and add to principal
+    const acEl=document.getElementById('inv-ac-'+p.key+'-2')||document.getElementById('inv-ac-'+p.key);
+    const ac=acEl?acEl.value:'equity';
+    if(ac==='fixed_income'){
+      const rateEl=document.getElementById('inv-rate-'+p.key+'-2')||document.getElementById('inv-rate-'+p.key);
+      const ctEl=document.getElementById('inv-ct-'+p.key+'-2')||document.getElementById('inv-ct-'+p.key);
+      const matEl=document.getElementById('inv-mat-'+p.key+'-2')||document.getElementById('inv-mat-'+p.key);
+      const rate=rateEl?parseFloat(rateEl.value):NaN;
+      const ct=ctEl?ctEl.value:'daily_accrual';
+      const mat=matEl?matEl.value:'';
+      // Use the previously saved principalEntryDate as the from-date for accrual
+      const prevMeta=getInvPlatformMeta(p.key);
+      const entryDate=prevMeta.principalEntryDate||today;
+      if(!isNaN(rate)&&rate>0){
+        const {projectedBalance}=calcInterestAccrual(principalNGN,rate,ct,entryDate,mat||null);
+        data[p.key]=projectedBalance;
+      } else {
+        data[p.key]=principalNGN;
+      }
+    } else {
+      data[p.key]=principalNGN;
+    }
   });
   S.investments=data;cSet(CK.inv(S.expMonth,S.expYear),data);
-  // Save cost basis values (persistent across months)
+  // Save cost basis values
   PLATFORMS.forEach(p=>{
     const costEl=document.getElementById('inv-cost-'+p.key+'-2')||document.getElementById('inv-cost-'+p.key);
     if(!costEl||costEl.value==='') return;
@@ -3544,11 +3597,12 @@ async function saveInvFromEdit(){
       cSet('sw3_inv_cost_'+p.key,costNGN);
     }
   });
-  // Save asset class and interest rate metadata
+  // Save asset class, interest rate, compound type, maturity date, and entry date
   PLATFORMS.forEach(p=>{
     const acEl=document.getElementById('inv-ac-'+p.key+'-2')||document.getElementById('inv-ac-'+p.key);
     const rateEl=document.getElementById('inv-rate-'+p.key+'-2')||document.getElementById('inv-rate-'+p.key);
     const ctEl=document.getElementById('inv-ct-'+p.key+'-2')||document.getElementById('inv-ct-'+p.key);
+    const matEl=document.getElementById('inv-mat-'+p.key+'-2')||document.getElementById('inv-mat-'+p.key);
     if(!acEl) return;
     const ac=acEl.value;
     const meta={assetClass:ac};
@@ -3556,11 +3610,13 @@ async function saveInvFromEdit(){
       const rate=parseFloat(rateEl.value);
       if(!isNaN(rate)&&rate>0) meta.interestRate=rate;
       if(ctEl) meta.compoundType=ctEl.value;
+      if(matEl&&matEl.value) meta.maturityDate=matEl.value;
+      meta.principalEntryDate=today; // reset entry date to today on every save
     }
     saveInvPlatformMeta(p.key,meta);
   });
   renderInvestments();renderDashboard();
-  try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});toast('Balances saved');haptic([8,40,8]);setSyncStatus('synced');}
+  try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});toast('Balances saved (interest applied)');haptic([8,40,8]);setSyncStatus('synced');}
   catch(e){
     oqAdd('investments',sid(S.expMonth,S.expYear),data,true);
     toast('Saved offline — will sync when connected');
@@ -3587,7 +3643,7 @@ function renderCashPage(){
     const val=cash[b]||0,pct=total_ngn?Math.round((isUSDCashAccount(b)?(val*(getFxRates(m,y).USD||1650)):val)/total_ngn*100):0;
     const ci=intMeta[b];
     const intInfo=ci&&ci.interestRate?`<span class="int-badge">${ci.interestRate}% p.a.</span>`:'';
-    const projInt=ci&&ci.interestRate&&val?calcInterestAccrual(val,ci.interestRate,'daily_compound'):0;
+    const projInt=ci&&ci.interestRate&&val?calcInterestAccrual(val,ci.interestRate,'daily_compound',null,null).interest:0;
     const intProjection=projInt>0.5?`<div style="font-size:0.6rem;color:var(--gold);margin-top:1px">~${isUSDCashAccount(b)?'$'+projInt.toFixed(2):fN(Math.round(projInt))} interest this month</div>`:'';
     const _fxR2=getFxRates(m,y);
     let dispVal;
@@ -4797,7 +4853,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.23</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.24</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -5282,7 +5338,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.23';
+const APP_VERSION='v3.14.24';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
