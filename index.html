@@ -405,7 +405,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.20</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.21</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1001,22 +1001,22 @@ const MS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec
 
 // Categories with their expense lines from Excel
 const CAT_LINES = {
-  'Utilities': [],
-  'Fuel': [],
-  'Car maintenance': [],
-  'Itunu': [],
-  'Domestic': [],
-  'Food': [],
-  'Groceries': [],
-  'Kids': [],
-  'Internet services': [],
-  'Recreation': [],
-  'Personal care': [],
-  'Gifts and donations': [],
-  'Loans': [],
-  'Others': [],
-  'Work Travel': [],
-  'Education': [],
+  'Utilities': ['Power'],
+  'Fuel': ['Gas','Fuel - Old Ford','Fuel - Ford'],
+  'Car maintenance': ['Ford maintenance','Old Ford maintenance','Vehicle papers renewal'],
+  'Itunu': ['Itunu'],
+  'Domestic': ['Car purchase','Car wash','Service charge','Laundry','Home repairs','Rent','Temu','Cleaner'],
+  'Food': ['Lunch','Eat out'],
+  'Groceries': ['Ozzy shopping','Super Saver','Globus','Spar','Ebeano','Blenco','Sinomart','Cash groceries','Other groceries'],
+  'Kids': ["Fife's school fees","Fife's (Other)","Fife's Bday"],
+  'Internet services': ['Netflix/Amazon','Internet +Airtime'],
+  'Recreation': ['UK Visa','DSTV','Outing','Outing BDG'],
+  'Personal care': ['Medications','Personal care'],
+  'Gifts and donations': ['Mama','Mum','Pentho','Pego','Dunsin','Gbago Day','Jennifer','Gbago','Tadeyon','Senapon Whesu','Mausi Whesu','Cash gifts','Baba Sesi','Athingban','Segowe','Sejiro','Yemi','Tope','Francis','MBO',"Dad's Bday","JO's Bday","Kola's Wedding","Olamide's wedding",'Pirotress','Xmas Gifts','Xmas gift (Gatemen)','Others'],
+  'Loans': ['Semasa','Gbewato','Morin','House of Mayrie','Mauton','Tobi Talia','Jennifer','Maugbe'],
+  'Others': ['Cash Withdrawal','Others'],
+  'Work Travel': ['Home-MMIA','MMIA - Home','Westgate','Westgate - RB','LC Waikiki','RB - The View','Java House','RB - Westgate (Jen)','RB - Pizza Garden (all)','Pizza Garden (All)','Mall to RB (FJ)','RB to Mercure (JO)','RB to Riverside (JO)','Radisson - Address (All)','Address -Radisson (All)','Riverside - Marriot (All)'],
+  'Education': ['Tuition','School fees'],
 };
 const _BASE_CATS = Object.keys(CAT_LINES);
 // getCustomCats is safe to call any time — reads localStorage directly, no dependency on cGet/S
@@ -1178,7 +1178,16 @@ const SCHOOL_FEES_DEFAULT=[];
 
 // ── SMART CATEGORISATION — payee keyword → category ──
 const PAYEE_CAT_MAP=(()=>{const m={};Object.entries(CAT_LINES).forEach(([cat,lines])=>{lines.forEach(l=>{m[l.toLowerCase()]=cat;});});return m;})();
-const PAYEE_KEYWORDS=[];
+const PAYEE_KEYWORDS=[
+  {kw:'spar',cat:'Groceries'},{kw:'ebeano',cat:'Groceries'},{kw:'blenco',cat:'Groceries'},{kw:'shoprite',cat:'Groceries'},{kw:'supermart',cat:'Groceries'},{kw:'market',cat:'Groceries'},
+  {kw:'fuel',cat:'Fuel'},{kw:'petrol',cat:'Fuel'},{kw:'diesel',cat:'Fuel'},{kw:'gas',cat:'Fuel'},
+  {kw:'netflix',cat:'Internet services'},{kw:'amazon',cat:'Internet services'},{kw:'airtime',cat:'Internet services'},{kw:'dstv',cat:'Recreation'},{kw:'gotv',cat:'Recreation'},
+  {kw:'uber',cat:'Work Travel'},{kw:'bolt',cat:'Work Travel'},{kw:'taxi',cat:'Work Travel'},
+  {kw:'pharmacy',cat:'Personal care'},{kw:'drug',cat:'Personal care'},{kw:'hospital',cat:'Personal care'},
+  {kw:'school',cat:'Kids'},{kw:'tuition',cat:'Education'},{kw:'fees',cat:'Kids'},
+  {kw:'rent',cat:'Domestic'},{kw:'laundry',cat:'Domestic'},{kw:'cleaner',cat:'Domestic'},
+  {kw:'restaurant',cat:'Food'},{kw:'lunch',cat:'Food'},{kw:'dinner',cat:'Food'},{kw:'eat',cat:'Food'},
+];
 function smartCat(payee){
   if(!payee)return null;
   const lower=payee.toLowerCase().trim();
@@ -4693,7 +4702,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.20</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.21</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -4712,24 +4721,6 @@ function renderSettData(){
         <input class="ifield" id="new-default-acct" placeholder="e.g. Zenith" style="flex:1;font-size:0.76rem;padding:6px 10px">
         <button class="btn btn-p btn-sm" onclick="addDefaultAccount()">+ Add</button>
       </div>
-    </div>
-    <div class="exp-card" style="margin-top:10px">
-      <div class="exp-card-title" style="margin-bottom:6px">Fixed Monthly Bills</div>
-      <div class="exp-card-sub" style="margin-bottom:10px">These feed into your treasury projections and cash flow analysis.</div>
-      <div id="fixed-obl-list">
-        ${(cGet('sw3_fixed_obl')||FIXED_OBL.map(o=>({...o}))).map((o,i)=>`
-          <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">
-            <span style="flex:1;font-size:0.74rem">${o.label}</span>
-            <input class="ifield" type="text" id="fobl-amt-${i}" value="${o.amount}" style="width:90px;font-size:0.74rem;padding:4px 8px;flex-shrink:0">
-            <button class="txi-del" onclick="removeFixedOblData(${i})" title="Remove">×</button>
-          </div>`).join('')}
-      </div>
-      <div style="display:flex;gap:6px;margin-top:10px;align-items:center;flex-wrap:wrap">
-        <input class="ifield" id="new-fobl-lbl" placeholder="Label" style="flex:1;min-width:100px;font-size:0.76rem;padding:6px 10px">
-        <input class="ifield" id="new-fobl-amt" placeholder="Amount (₦)" style="width:100px;flex-shrink:0;font-size:0.76rem;padding:6px 10px">
-        <button class="btn btn-p btn-sm" onclick="addFixedOblData()">+ Add</button>
-      </div>
-      <button class="btn btn-g btn-sm btn-full" style="margin-top:10px" onclick="saveFixedOblData()">Save Bills</button>
     </div>
     ${renderFxCard()}
   `;
@@ -4759,32 +4750,6 @@ function removeDefaultAccount(name){
   cSet('sw3_cash_accounts',saved.filter(a=>a!==name));
   renderSettData();renderCashPage();renderDashboard();
   toast(`Removed "${name}" from default accounts`);
-}
-function addFixedOblData(){
-  const lbl=document.getElementById('new-fobl-lbl')?.value.trim();
-  const amt=parseFloat(document.getElementById('new-fobl-amt')?.value);
-  if(!lbl||isNaN(amt)||amt<0){toast('Enter a label and amount');return;}
-  const fixed=cGet('sw3_fixed_obl')||FIXED_OBL.map(o=>({...o}));
-  fixed.push({label:lbl,amount:amt});
-  cSet('sw3_fixed_obl',fixed);
-  document.getElementById('new-fobl-lbl').value='';
-  document.getElementById('new-fobl-amt').value='';
-  renderSettData();toast('Bill added');
-}
-function removeFixedOblData(i){
-  const fixed=cGet('sw3_fixed_obl')||FIXED_OBL.map(o=>({...o}));
-  fixed.splice(i,1);
-  cSet('sw3_fixed_obl',fixed);
-  renderSettData();toast('Bill removed');
-}
-function saveFixedOblData(){
-  const fixed=cGet('sw3_fixed_obl')||FIXED_OBL.map(o=>({...o}));
-  fixed.forEach((o,i)=>{
-    const inp=document.getElementById('fobl-amt-'+i);
-    if(inp){const v=parseFloat(inp.value);if(!isNaN(v)&&v>=0)o.amount=v;}
-  });
-  cSet('sw3_fixed_obl',fixed);
-  toast('Fixed bills saved');
 }
 function saveFxOverride(){
   const m=parseInt(document.getElementById('fx-month').value);
@@ -5150,7 +5115,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.20';
+const APP_VERSION='v3.14.21';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
