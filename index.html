@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.28</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.30</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1183,34 +1183,66 @@ const CASH_INT_KEY='sw3_cash_interest';
 function getCashInterestMeta(){return cGet(CASH_INT_KEY)||{};}
 function saveCashInterestMeta(meta){cSet(CASH_INT_KEY,meta);}
 
-// Interest accrual helper
-// principal: NGN amount (the clean principal, without prior accrued interest)
-// annualRatePct: e.g. 18 for 18%
-// compoundType: 'daily_compound' | 'daily_accrual'
-// entryDate: ISO date string (YYYY-MM-DD) when the principal was recorded — defaults to month start
-// maturityDate: ISO date string (YYYY-MM-DD) — for daily_accrual, interest stops at maturity
-// Returns { interest, projectedBalance, daysAccrued, isMatured }
-function calcInterestAccrual(principal, annualRatePct, compoundType, entryDate, maturityDate){
-  if(!principal||!annualRatePct) return {interest:0,projectedBalance:principal||0,daysAccrued:0,isMatured:false};
+// ── Interest accrual helpers ───────────────────────────────────────────
+// Computes simple daily or compound interest for a single segment.
+// Returns interest in NGN (number).
+function _calcSegmentInterest(principal, annualRatePct, compoundType, fromDate, toDate){
+  if(!principal||!annualRatePct||!fromDate) return 0;
   const r=annualRatePct/100;
+  const from=new Date(fromDate);from.setHours(0,0,0,0);
+  const to=new Date(toDate);to.setHours(0,0,0,0);
+  const days=Math.max(0,Math.round((to-from)/(1000*60*60*24)));
+  if(!days) return 0;
+  if(compoundType==='daily_compound') return principal*(Math.pow(1+r/365,days)-1);
+  return principal*(r/365)*days; // daily_accrual: simple
+}
+
+// Main accrual function — works across multiple principal segments.
+// meta: {interestRate, compoundType, startDate, maturityDate, ledger:[{principal,from,to}]}
+// Returns {interest, projectedBalance, daysAccrued, isMatured}
+function calcInterestAccrual(principal, annualRatePct, compoundType, startDate, maturityDate, ledger){
+  if(!principal||!annualRatePct) return {interest:0,projectedBalance:principal||0,daysAccrued:0,isMatured:false};
   const today=new Date();today.setHours(0,0,0,0);
-  const from=entryDate?new Date(entryDate):new Date(today.getFullYear(),today.getMonth(),1);
-  from.setHours(0,0,0,0);
-  let to=new Date(today);
+  const todayStr=today.toISOString().slice(0,10);
+  let effectiveTo=today;
   let isMatured=false;
-  if(maturityDate&&compoundType==='daily_accrual'){
+  if(maturityDate&&compoundType!=='daily_compound'){
     const mat=new Date(maturityDate);mat.setHours(0,0,0,0);
-    if(mat<=today){to=mat;isMatured=true;}
+    if(mat<=today){effectiveTo=mat;isMatured=true;}
   }
-  const daysAccrued=Math.max(0,Math.round((to-from)/(1000*60*60*24)));
-  let interest=0;
-  if(compoundType==='daily_compound'){
-    interest=principal*(Math.pow(1+r/365,daysAccrued)-1);
+  const effectiveToStr=effectiveTo.toISOString().slice(0,10);
+
+  let totalInterest=0;
+  let totalDays=0;
+
+  if(ledger&&ledger.length){
+    // Sum interest across all closed segments
+    ledger.forEach(seg=>{
+      const segTo=seg.to<effectiveToStr?seg.to:effectiveToStr;
+      if(seg.from>=effectiveToStr) return;
+      const i=_calcSegmentInterest(seg.principal,annualRatePct,compoundType,seg.from,segTo);
+      const d=Math.max(0,Math.round((new Date(segTo)-new Date(seg.from))/(1000*60*60*24)));
+      totalInterest+=i;totalDays+=d;
+    });
+    // Add open segment: current principal from startDate to effectiveToStr
+    if(startDate&&startDate<effectiveToStr){
+      const i=_calcSegmentInterest(principal,annualRatePct,compoundType,startDate,effectiveToStr);
+      const d=Math.max(0,Math.round((new Date(effectiveToStr)-new Date(startDate))/(1000*60*60*24)));
+      totalInterest+=i;totalDays+=d;
+    }
   } else {
-    // daily_accrual: simple interest on principal
-    interest=principal*(r/365)*daysAccrued;
+    // No ledger — single segment from startDate
+    const from=startDate||todayStr;
+    totalInterest=_calcSegmentInterest(principal,annualRatePct,compoundType,from,effectiveToStr);
+    totalDays=Math.max(0,Math.round((effectiveTo-new Date(from))/(1000*60*60*24)));
   }
-  return {interest:Math.round(interest),projectedBalance:Math.round(principal+interest),daysAccrued,isMatured};
+
+  return {
+    interest:Math.round(totalInterest),
+    projectedBalance:Math.round(principal+totalInterest),
+    daysAccrued:totalDays,
+    isMatured,
+  };
 }
 
 // FX rates by month (USD/NGN and GBP/NGN averages)
@@ -3452,7 +3484,7 @@ function _renderInvInto(suffix){
     let intInfo='',accrualSub='';
     if(meta.assetClass==='fixed_income'&&meta.interestRate){
       intInfo=`<span class="int-badge">${meta.interestRate}% p.a.</span>`;
-      const {interest,projectedBalance,daysAccrued,isMatured}=calcInterestAccrual(val,meta.interestRate,meta.compoundType||'daily_accrual',meta.startDate||meta.principalEntryDate,meta.maturityDate||null);
+      const {interest,projectedBalance,daysAccrued,isMatured}=calcInterestAccrual(val,meta.interestRate,meta.compoundType||'daily_accrual',meta.startDate||meta.principalEntryDate,meta.maturityDate||null,meta.ledger||null);
       const matLabel=meta.maturityDate?` · matures ${meta.maturityDate}`:'';
       const statusLabel=isMatured?'<span style="color:var(--red);font-size:0.58rem"> · Matured</span>':'';
       if(interest>0) accrualSub=`<div style="font-size:0.6rem;color:var(--gold);margin-top:2px">+${fN(interest)} accrued over ${daysAccrued}d → ${fmtPlatformVal(projectedBalance,p.key,cur,m,y)}${matLabel}${statusLabel}</div>`;
@@ -3645,8 +3677,10 @@ async function saveInvFromEdit(){
       const ct=ctEl?ctEl.value:'daily_accrual';
       const mat=matEl?matEl.value:'';
       const startDate=startEl&&startEl.value?startEl.value:today;
+      const prevMeta=getInvPlatformMeta(p.key);
       if(!isNaN(rate)&&rate>0){
-        const {projectedBalance}=calcInterestAccrual(principalNGN,rate,ct,startDate,mat||null);
+        const ledger=prevMeta.ledger||[];
+        const {projectedBalance}=calcInterestAccrual(principalNGN,rate,ct,startDate,mat||null,ledger);
         data[p.key]=projectedBalance;
       } else {
         data[p.key]=principalNGN;
@@ -3680,7 +3714,23 @@ async function saveInvFromEdit(){
       if(!isNaN(rate)&&rate>0) meta.interestRate=rate;
       if(ctEl) meta.compoundType=ctEl.value;
       if(matEl&&matEl.value) meta.maturityDate=matEl.value;
-      meta.startDate=startEl&&startEl.value?startEl.value:today;
+      const newStart=startEl&&startEl.value?startEl.value:today;
+      const prevMeta=getInvPlatformMeta(p.key);
+      const prevStart=prevMeta.startDate;
+      // Close the previous open segment into the ledger (if we had a start date and a previous principal)
+      const ledger=[...(prevMeta.ledger||[])];
+      if(prevStart&&prevStart<today){
+        // The segment ran from prevStart up to yesterday (today is the new save point)
+        // Only append if it isn't already closed (avoid duplicates on same-day saves)
+        const alreadyClosed=ledger.some(s=>s.from===prevStart&&s.to===today);
+        if(!alreadyClosed){
+          const prevPrincipal=prevMeta.lastSavedPrincipal||principalNGN;
+          ledger.push({principal:prevPrincipal,from:prevStart,to:today});
+        }
+      }
+      meta.ledger=ledger;
+      meta.startDate=today; // new open segment starts today
+      meta.lastSavedPrincipal=principalNGN; // store the clean principal (before interest) for ledger use
     }
     saveInvPlatformMeta(p.key,meta);
   });
@@ -4082,10 +4132,19 @@ async function _doRecordPmt(id,amt,paid,rate){
     const log=[...((d&&d.pmtLog)||[]),entry];
     await db.collection('debtors').doc(id).update({paid:np,balance:bal,ngnBalance:bal*rate,pmtLog:log});
     if(bankAcct){
-      const pmtNGN=(d?.currency==='NGN'||!d?.currency)?pmt:pmt*rate;
+      const isUSDAcct=isUSDCashAccount(bankAcct);
+      // For USD Cash accounts: store the raw foreign-currency amount (USD).
+      // For NGN accounts: convert to NGN using the debt's exchange rate.
+      let cashDelta;
+      if(isUSDAcct){
+        // pmt is in the debt's currency; if debt is USD add raw, otherwise convert to USD
+        cashDelta=(d?.currency==='USD')?pmt:pmt/rate;
+      } else {
+        cashDelta=(d?.currency==='NGN'||!d?.currency)?pmt:pmt*rate;
+      }
       const txD=new Date(pmtDate);const dm=txD.getMonth()+1,dy=txD.getFullYear();
       const cashData={...(cGet(CK.cash(dm,dy))||S.cash)};
-      cashData[bankAcct]=(cashData[bankAcct]||0)+pmtNGN;
+      cashData[bankAcct]=(cashData[bankAcct]||0)+cashDelta;
       if(dm===S.expMonth&&dy===S.expYear)S.cash=cashData;
       cSet(CK.cash(dm,dy),cashData);
       if(db)db.collection('cashBalances').doc(sid(dm,dy)).set({...cashData,month:dm,year:dy},{merge:true}).catch(()=>{});
@@ -4922,7 +4981,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.28</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.30</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -5434,7 +5493,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.28';
+const APP_VERSION='v3.14.30';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
