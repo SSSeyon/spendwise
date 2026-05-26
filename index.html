@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.30</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.31</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -583,22 +583,32 @@ datalist option{background:var(--bg2);color:var(--text)}
 <div class="pg" id="pg-expenses">
   <div class="pg-sticky">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-    <div class="pg-title" style="margin-bottom:0">Expenses</div>
-    <select class="period-sel" id="exp-currency" onchange="S.dashCurrency=this.value;cSet('sw3_currency',this.value);renderExpenses();renderDashboard()" style="font-size:0.68rem;padding:4px 8px">
+    <div class="pg-title" style="margin-bottom:0" id="exp-page-title">Expenses</div>
+    <select class="period-sel" id="exp-currency" onchange="S.dashCurrency=this.value;cSet('sw3_currency',this.value);renderExpenses();renderIncome();renderDashboard()" style="font-size:0.68rem;padding:4px 8px">
       <option value="NGN">₦ NGN</option><option value="USD">$ USD</option><option value="GBP">£ GBP</option><option value="NATIVE">◈ Effective</option>
     </select>
   </div>
+  <div class="tabs" style="margin-bottom:8px">
+    <button class="tab active" id="exp-tab-btn" onclick="switchExpTab('expenses',this)">Expenses</button>
+    <button class="tab" id="inc-tab-btn" onclick="switchExpTab('income',this)">Income</button>
+  </div>
   <div class="mrow" id="exp-months" style="margin-bottom:8px"></div>
   </div>
-  <div class="card" id="exp-summary"></div>
-  <div style="display:flex;gap:8px;margin-bottom:10px">
-    <div class="search-bar" style="flex:1">
-      <span class="search-icon">🔍</span>
-      <input type="text" id="exp-search" placeholder="Search payee or notes…" oninput="renderExpenses()">
+  <div id="exp-pane">
+    <div class="card" id="exp-summary"></div>
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <div class="search-bar" style="flex:1">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="exp-search" placeholder="Search payee or notes…" oninput="renderExpenses()">
+      </div>
+      <button class="btn btn-g btn-sm" onclick="openFilterDrawer()" style="flex-shrink:0;padding:8px 12px">Filter ↑</button>
     </div>
-    <button class="btn btn-g btn-sm" onclick="openFilterDrawer()" style="flex-shrink:0;padding:8px 12px">Filter ↑</button>
+    <div id="exp-list"></div>
   </div>
-  <div id="exp-list"></div>
+  <div id="inc-pane" style="display:none">
+    <div class="card" id="inc-summary"></div>
+    <div id="inc-list"></div>
+  </div>
 </div>
 
 <!-- FILTER DRAWER -->
@@ -880,13 +890,13 @@ datalist option{background:var(--bg2);color:var(--text)}
 <!-- INCOME MODAL -->
 <div class="mbackdrop" id="inc-modal">
   <div class="modal" onclick="event.stopPropagation()">
-    <div class="mhdr"><div class="mtitle">Record Income</div><button class="mclose" onclick="closeMod('inc-modal')">×</button></div>
+    <div class="mhdr"><div class="mtitle" id="inc-modal-title">Record Income</div><button class="mclose" onclick="closeMod('inc-modal')">×</button></div>
     <div class="ig"><label class="ilabel" id="i-amt-label">Amount (₦)</label><input class="ifield" type="text" id="i-amt" placeholder="0" style="font-size:1.2rem"></div>
     <div class="gform">
       <div class="ig"><label class="ilabel">Category</label>
         <select class="sfield" id="i-cat">
           <option>Salary</option><option>Allowance</option><option>Bonus / Dividend</option>
-          <option>Interest Income</option><option>From Itunu</option><option>Other</option>
+          <option>Interest Income</option><option>Other</option>
         </select>
       </div>
       <div class="ig"><label class="ilabel">Bank Received Into</label>
@@ -897,6 +907,7 @@ datalist option{background:var(--bg2);color:var(--text)}
       <div class="ig"><label class="ilabel">Date</label><input class="ifield" type="date" id="i-date"></div>
       <div class="ig"><label class="ilabel">Notes</label><input class="ifield" type="text" id="i-notes" placeholder="Optional"></div>
     </div>
+    <input type="hidden" id="i-edit-id" value="">
     <button class="btn btn-inc btn-full" id="i-save" onclick="saveIncome()">Record Income</button>
   </div>
 </div>
@@ -1862,6 +1873,7 @@ function reloadMonth(m,y){
   S.investments=cGet(CK.inv(m,y))||{};
   S.budgets=cGet(CK.budgets(m,y))||{...DEF_BUDGETS};
   renderExpenses();renderDashboard();
+  if(document.getElementById('inc-pane')?.style.display!=='none') renderIncome();
   if(db&&navigator.onLine){
     setSyncStatus('syncing');
     Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadBudgets(m,y)])
@@ -1872,6 +1884,7 @@ function reloadMonth(m,y){
           S.investments=cGet(CK.inv(m,y))||S.investments;
           S.budgets=cGet(CK.budgets(m,y))||S.budgets;
           setSyncStatus('synced');renderExpenses();renderDashboard();renderInvestments();
+          if(document.getElementById('inc-pane')?.style.display!=='none') renderIncome();
         }
       }).catch(()=>setSyncStatus('error'));
   }
@@ -2954,6 +2967,92 @@ function renderCatChart(catSpend,cur,m,y){
 // ══════════════════════════════════════════════════════════════════════════
 // EXPENSES
 // ══════════════════════════════════════════════════════════════════════════
+function switchExpTab(tab, btn){
+  document.getElementById('exp-pane').style.display=tab==='expenses'?'block':'none';
+  document.getElementById('inc-pane').style.display=tab==='income'?'block':'none';
+  document.getElementById('exp-page-title').textContent=tab==='expenses'?'Expenses':'Income';
+  document.querySelectorAll('#exp-tab-btn,#inc-tab-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  if(tab==='income') renderIncome();
+  else renderExpenses();
+}
+
+function renderIncome(){
+  const m=S.expMonth,y=S.expYear,cur=S.dashCurrency;
+  const inc=[...S.income].sort((a,b)=>a.date>b.date?-1:1);
+  const totalNGN=inc.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
+  const summEl=document.getElementById('inc-summary');
+  const listEl=document.getElementById('inc-list');
+  if(!summEl||!listEl) return;
+  summEl.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center">
+    <div><div class="clabel">Total Income — ${MONTHS[m-1]} ${y}</div><div class="cval" style="color:var(--accent)">${fmtCur(totalNGN,cur,m,y)}</div></div>
+    <div style="text-align:right"><div class="clabel">Count</div><div class="cval">${inc.length}</div></div>
+  </div>`;
+  if(!inc.length){listEl.innerHTML=`<div class="empty"><div class="empty-i">↑</div>No income recorded for ${MONTHS[m-1]}</div>`;return;}
+  listEl.innerHTML='<div class="txlist">'+inc.map(i=>{
+    const dispAmt=fmtCur(i.amtNGN||i.amount||0,cur,m,y);
+    const isUSD=i.currency==='USD';
+    const rawAmt=isUSD?`$${(i.amount||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`:'';
+    return`<div class="txi" id="txi-inc-${i.id}">
+      <div style="flex:1;min-width:0">
+        <div class="txi-cat" style="font-size:0.76rem">${i.category||'Income'}${i.notes?` · ${i.notes}`:''}</div>
+        <div class="txi-meta">${i.date||''}${i.bank?' · '+i.bank:''}${rawAmt?' · '+rawAmt:''}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+        <div class="txi-amt" style="color:var(--accent)">${dispAmt}</div>
+        <button class="txi-edit" onclick="event.stopPropagation();openEditInc('${i.id}')">✎</button>
+        <button class="txi-del" onclick="event.stopPropagation();delIncome('${i.id}')">×</button>
+      </div>
+    </div>`;
+  }).join('')+'</div>';
+}
+
+function openEditInc(id){
+  const inc=S.income.find(i=>i.id===id);
+  if(!inc){toast('Income record not found');return;}
+  const titleEl=document.getElementById('inc-modal-title');
+  const editIdEl=document.getElementById('i-edit-id');
+  const amtEl=document.getElementById('i-amt');
+  const catEl=document.getElementById('i-cat');
+  const bankEl=document.getElementById('i-bank');
+  const dateEl=document.getElementById('i-date');
+  const notesEl=document.getElementById('i-notes');
+  const saveBtn=document.getElementById('i-save');
+  if(titleEl) titleEl.textContent='Edit Income';
+  if(editIdEl) editIdEl.value=id;
+  if(amtEl) amtEl.value=inc.amount||'';
+  if(catEl){
+    // Add category if not in list
+    const opts=[...catEl.options].map(o=>o.value);
+    if(inc.category&&!opts.includes(inc.category)){const o=document.createElement('option');o.value=inc.category;o.textContent=inc.category;catEl.appendChild(o);}
+    catEl.value=inc.category||'Other';
+  }
+  if(bankEl) bankEl.value=inc.bank||bankEl.options[0]?.value||'';
+  if(dateEl) dateEl.value=inc.date||'';
+  if(notesEl) notesEl.value=inc.notes||'';
+  if(saveBtn) saveBtn.textContent='Update Income';
+  updateIncAmtLabel();
+  openMod('inc-modal');
+}
+
+async function delIncome(id){
+  if(!confirm('Delete this income record?')) return;
+  try{
+    await db.collection('income').doc(id).delete();
+    S.income=S.income.filter(i=>i.id!==id);
+    cSet(CK.inc(S.expMonth,S.expYear),S.income);
+    // Adjust historical summary
+    const hist=cGet('sw3_history')||[];
+    const hIdx=hist.findIndex(h=>h.year===S.expYear&&h.month===S.expMonth);
+    if(hIdx>=0){
+      const inc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
+      hist[hIdx].income=inc;cSet('sw3_history',hist);
+    }
+    renderIncome();renderDashboard();
+    toast('Income deleted');
+  }catch(e){toast('Error deleting income');}
+}
+
 function renderExpenses(){
   const m=S.expMonth,y=S.expYear;
   const months=[];for(let i=curM();i>=1;i--) months.push(i);
@@ -3395,9 +3494,9 @@ function updateExpAmtLabel(){
   if(lbl) lbl.textContent=isUSDCashAccount(bank)?'Amount ($)':'Amount (₦)';
 }
 function openIncModal(){
+  _resetIncModal();
   document.getElementById('i-date').value=todayStr();
   ['i-amt','i-notes'].forEach(id=>document.getElementById(id).value='');
-  // Populate bank select dynamically
   const bankSel=document.getElementById('i-bank');
   if(bankSel){bankSel.innerHTML=getCashAccounts().map(a=>`<option>${a}</option>`).join('');updateIncAmtLabel();}
   openMod('inc-modal');
@@ -3412,26 +3511,51 @@ async function saveIncome(){
   const isUSD=isUSDCashAccount(bank);
   const fxRates=getFxRates(S.expMonth,S.expYear);
   const amtNGN=isUSD?Math.round(amt*fxRates.USD):amt;
-  const data={amount:amt,amtNGN,currency:isUSD?'USD':'NGN',category:document.getElementById('i-cat').value,bank,notes:document.getElementById('i-notes').value,date:document.getElementById('i-date').value,month:S.expMonth,year:S.expYear,createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+  const editId=document.getElementById('i-edit-id')?.value||'';
+  const data={amount:amt,amtNGN,currency:isUSD?'USD':'NGN',category:document.getElementById('i-cat').value,bank,notes:document.getElementById('i-notes').value,date:document.getElementById('i-date').value,month:S.expMonth,year:S.expYear};
   try{
-    await db.collection('income').add(data);
-    // Credit bank balance — store in native currency of the account
-    const cashDoc=await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).get();
-    const cashData=cashDoc.exists?{...cashDoc.data()}:{month:S.expMonth,year:S.expYear};
-    cashData[bank]=(cashData[bank]||0)+amt; // USD accounts store USD value
-    await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).set(cashData,{merge:true});
-    S.cash=cashData;cSet(CK.cash(S.expMonth,S.expYear),cashData);
-    closeMod('inc-modal');toast(`Income recorded · ${bank} updated`);haptic([8,40,8]);setSyncStatus('synced');
-    await loadIncome(S.expMonth,S.expYear);
-    // Update historical summary using NGN-equivalent amount
+    if(editId){
+      // Update existing
+      await db.collection('income').doc(editId).update(data);
+      const idx=S.income.findIndex(i=>i.id===editId);
+      if(idx>=0) S.income[idx]={...S.income[idx],...data};
+      else S.income.unshift({...data,id:editId});
+      cSet(CK.inc(S.expMonth,S.expYear),S.income);
+      toast('Income updated');
+    } else {
+      // New record
+      const ref=await db.collection('income').add({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+      S.income.unshift({...data,id:ref.id});
+      cSet(CK.inc(S.expMonth,S.expYear),S.income);
+      // Credit bank balance
+      const cashDoc=await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).get();
+      const cashData=cashDoc.exists?{...cashDoc.data()}:{month:S.expMonth,year:S.expYear};
+      cashData[bank]=(cashData[bank]||0)+amt;
+      await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).set(cashData,{merge:true});
+      S.cash=cashData;cSet(CK.cash(S.expMonth,S.expYear),cashData);
+      toast(`Income recorded · ${bank} updated`);
+    }
+    // Update historical summary
     const hist=cGet('sw3_history')||[];
     const hIdx=hist.findIndex(h=>h.year===S.expYear&&h.month===S.expMonth);
-    if(hIdx>=0){hist[hIdx].income=(hist[hIdx].income||0)+amtNGN;}
-    else{const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];hist.push({year:S.expYear,month:S.expMonth,label:MS2[S.expMonth-1]+" '"+String(S.expYear).slice(2),income:amtNGN,expenses:S.txns.reduce((s,t)=>s+(t.amount||0),0)});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
+    const totalInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
+    if(hIdx>=0){hist[hIdx].income=totalInc;}
+    else{const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];hist.push({year:S.expYear,month:S.expMonth,label:MS2[S.expMonth-1]+" '"+String(S.expYear).slice(2),income:totalInc,expenses:S.txns.reduce((s,t)=>s+(t.amount||0),0)});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
     cSet('sw3_history',hist);
-    renderDashboard();renderCashPage();
+    haptic([8,40,8]);setSyncStatus('synced');
+    closeMod('inc-modal');
+    _resetIncModal();
+    renderIncome();renderDashboard();renderCashPage();
   }catch(e){toast('Error saving income');setSyncStatus('error');}
-  finally{S.saving=false;btn.textContent='Record Income';btn.disabled=false;}
+  finally{S.saving=false;btn.textContent=document.getElementById('i-edit-id')?.value?'Update Income':'Record Income';btn.disabled=false;}
+}
+function _resetIncModal(){
+  const editIdEl=document.getElementById('i-edit-id');
+  const titleEl=document.getElementById('inc-modal-title');
+  const saveBtn=document.getElementById('i-save');
+  if(editIdEl) editIdEl.value='';
+  if(titleEl) titleEl.textContent='Record Income';
+  if(saveBtn) saveBtn.textContent='Record Income';
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -4981,7 +5105,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.30</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.31</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -5493,7 +5617,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.30';
+const APP_VERSION='v3.14.31';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
