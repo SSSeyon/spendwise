@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.33</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.34</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1713,20 +1713,19 @@ async function loadCashData(m,y){
       cSet('sw3_usd_cash_pending_migration',null);
     }catch(e){}
   }
-  // Always fetch from Firestore; preserve USD Cash if Firestore doc lacks it
   try{
     const localCash=cGet(CK.cash(m,y))||{};
     const doc=await db.collection('cashBalances').doc(sid(m,y)).get();
     if(doc.exists&&doc.data()){
-      const merged={...doc.data()};
-      if(!merged['USD Cash']&&localCash['USD Cash']) merged['USD Cash']=localCash['USD Cash'];
-      S.cash=merged;cSet(CK.cash(m,y),S.cash);return;
+      // Local always wins: Firestore may be behind in-flight writes from _adjustCash
+      const merged={...doc.data(),...localCash};
+      S.cash=merged;cSet(CK.cash(m,y),merged);return;
     }
+    if(Object.keys(localCash).length){S.cash=localCash;return;}
     const snap=await db.collection('cashBalances').orderBy('year','desc').orderBy('month','desc').limit(1).get();
     if(!snap.empty){
-      const merged={...snap.docs[0].data()};
-      if(!merged['USD Cash']&&localCash['USD Cash']) merged['USD Cash']=localCash['USD Cash'];
-      S.cash=merged;cSet(CK.cash(m,y),S.cash);
+      const merged={...snap.docs[0].data(),...localCash};
+      S.cash=merged;cSet(CK.cash(m,y),merged);
     }
   }catch(e){}
 }
@@ -5102,7 +5101,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.33</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.34</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -5614,7 +5613,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.33';
+const APP_VERSION='v3.14.34';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
