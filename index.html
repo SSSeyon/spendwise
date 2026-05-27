@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.31</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.32</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1773,7 +1773,7 @@ async function loadHistoricalSummary(){
       allMonthKeys.forEach(k=>{
         const [ys,ms]=k.split('-');const y=parseInt(ys),m=parseInt(ms);
         const expenses=(txByMonth[k]||[]).reduce((s,t)=>s+(t.amount||0),0);
-        const income=(incByMonth[k]||[]).reduce((s,t)=>s+(t.amount||0),0);
+        const income=(incByMonth[k]||[]).reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
         if(!expenses&&!income) return;
         const existIdx=hist.findIndex(h=>h.year===y&&h.month===m);
         if(existIdx>=0){
@@ -1795,7 +1795,7 @@ async function loadHistoricalSummary(){
           const inc=cGet(CK.inc(m,y));
           if(!txns&&!inc) continue;
           const expenses=(txns||[]).reduce((s,t)=>s+(t.amount||0),0);
-          const income=(inc||[]).reduce((s,i)=>s+(i.amount||0),0);
+          const income=(inc||[]).reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
           if(!expenses&&!income) continue;
           hist.push({year:y,month:m,label:MS2[m-1]+" '"+String(y).slice(2),income,expenses});
           histKeys.add(key);
@@ -1808,7 +1808,7 @@ async function loadHistoricalSummary(){
     // so the history summary row is never stale for the active month
     const cm=S.expMonth,cy=S.expYear;
     const liveExp=S.txns.reduce((s,t)=>s+(t.amount||0),0);
-    const liveInc=S.income.reduce((s,i)=>s+(i.amount||0),0);
+    const liveInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
     const ci=hist.findIndex(h=>h.year===cy&&h.month===cm);
     if(ci>=0){hist[ci].expenses=liveExp;hist[ci].income=liveInc;}
     else if(liveExp||liveInc){const MS2b=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];hist.push({year:cy,month:cm,label:MS2b[cm-1]+" '"+String(cy).slice(2),income:liveInc,expenses:liveExp});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
@@ -1842,7 +1842,7 @@ function _buildHistoryFromCache(){
       const inc=cGet(CK.inc(m,y));
       if(!txns&&!inc) continue;
       const expenses=(txns||[]).reduce((s,t)=>s+(t.amount||0),0);
-      const income=(inc||[]).reduce((s,i)=>s+(i.amount||0),0);
+      const income=(inc||[]).reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
       if(!expenses&&!income) continue;
       hist.push({year:y,month:m,label:MS2[m-1]+" '"+String(y).slice(2),income,expenses});
     }
@@ -1851,7 +1851,7 @@ function _buildHistoryFromCache(){
     // Override current month with live totals
     const cm=S.expMonth,cy=S.expYear;
     const liveExp=S.txns.reduce((s,t)=>s+(t.amount||0),0);
-    const liveInc=S.income.reduce((s,i)=>s+(i.amount||0),0);
+    const liveInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
     const ci=hist.findIndex(h=>h.year===cy&&h.month===cm);
     if(ci>=0&&(liveExp||liveInc)){hist[ci].expenses=liveExp;hist[ci].income=liveInc;}
     cSet('sw3_history',hist);
@@ -2020,7 +2020,7 @@ function renderDashboard(){
   }
 
   const spent=txns.reduce((s,t)=>s+(t.amount||0),0);
-  const incTotal=incList.reduce((s,t)=>s+(t.amount||0),0);
+  const incTotal=incList.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
   // Keep sw3_history current month entry in sync with live data
   (()=>{
     const hist=cGet('sw3_history')||[];
@@ -2753,7 +2753,7 @@ function renderDashAlerts(){
   if(isCurrentMonth){
     const targetPct=getSavingsTarget();
     if(targetPct>0){
-      const incTotal=S.income.reduce((s,i)=>s+(i.amount||0),0);
+      const incTotal=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
       if(incTotal>0){
         const spent2=S.txns.reduce((s,t)=>s+(t.amount||0),0);
         const savedAmt=incTotal-spent2;
@@ -3527,12 +3527,8 @@ async function saveIncome(){
       const ref=await db.collection('income').add({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
       S.income.unshift({...data,id:ref.id});
       cSet(CK.inc(S.expMonth,S.expYear),S.income);
-      // Credit bank balance
-      const cashDoc=await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).get();
-      const cashData=cashDoc.exists?{...cashDoc.data()}:{month:S.expMonth,year:S.expYear};
-      cashData[bank]=(cashData[bank]||0)+amt;
-      await db.collection('cashBalances').doc(sid(S.expMonth,S.expYear)).set(cashData,{merge:true});
-      S.cash=cashData;cSet(CK.cash(S.expMonth,S.expYear),cashData);
+      // Credit bank balance using the canonical helper — updates S.cash, cache and Firestore atomically
+      _adjustCash(bank, amt, S.expMonth, S.expYear);
       toast(`Income recorded · ${bank} updated`);
     }
     // Update historical summary
@@ -4658,9 +4654,9 @@ function _renderHistDetail(el,txns,inc,invData,cashData,m,y,sid_){
   const cur=S.dashCurrency==='NATIVE'?'NATIVE':S.dashCurrency||'NGN';
   const USD_PLATS=['Risevest','Trove','Bamboo'];
   const totalExp=txns.reduce((s,t)=>s+(t.amount||0),0);
-  const totalInc=inc.reduce((s,i)=>s+(i.amount||0),0);
+  const totalInc=inc.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
   const cats={};txns.forEach(t=>{cats[t.category]=(cats[t.category]||0)+(t.amount||0);});
-  const incCats={};inc.forEach(i=>{incCats[i.category]=(incCats[i.category]||0)+(i.amount||0);});
+  const incCats={};inc.forEach(i=>{incCats[i.category]=(incCats[i.category]||0)+(i.amtNGN||i.amount||0);});
   const expRows=Object.entries(cats).sort((a,b)=>b[1]-a[1]).map(([c,v])=>`
     <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
       <span style="font-size:0.7rem;color:var(--text2)">${CAT_ICONS[c]||''} ${c}</span>
@@ -5105,7 +5101,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.31</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.32</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -5326,7 +5322,7 @@ function drillDown(type){
   }
   else if(type==='savings'){
     title=`Net Savings — ${MONTHS[m-1]} ${y}`;
-    const totalInc=S.income.reduce((s,i)=>s+(i.amount||0),0);
+    const totalInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
     const totalExp=S.txns.reduce((s,t)=>s+(t.amount||0),0);
     const net=totalInc-totalExp;
     body=fmtRow('Total Income',fmtCur(totalInc,cur,m,y),'var(--accent)')+
@@ -5617,7 +5613,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.31';
+const APP_VERSION='v3.14.32';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
