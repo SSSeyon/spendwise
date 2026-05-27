@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.34</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.35</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1317,14 +1317,36 @@ async function postRecurring(idx){
   const list=getRecurring();const r=list[idx];if(!r)return;
   if(!confirm(`Post "${r.payee}" — ${fN(r.amount)} as ${r.type==='income'?'income':'expense'}?`))return;
   if(r.type==='income'){
-    const data={amount:r.amount,category:r.incCat||'Other',bank:r.bank||getCashAccounts()[0],notes:r.notes||'',date:todayStr(),month:S.expMonth,year:S.expYear,type:'income',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
-    try{const ref=await db.collection('income').add(data);S.income.unshift({...data,id:ref.id});cSet(CK.inc(S.expMonth,S.expYear),S.income);toast(`${r.payee} posted as income`);}catch(e){toast('Error posting');}
+    const bank=r.bank||getCashAccounts()[0];
+    const isUSD=isUSDCashAccount(bank);
+    const fxRates=getFxRates(S.expMonth,S.expYear);
+    const amtNGN=isUSD?Math.round(r.amount*fxRates.USD):r.amount;
+    const data={amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.incCat||'Other',bank,notes:r.notes||'',date:todayStr(),month:S.expMonth,year:S.expYear,type:'income',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+    try{
+      const ref=await db.collection('income').add(data);
+      S.income.unshift({...data,id:ref.id});
+      cSet(CK.inc(S.expMonth,S.expYear),S.income);
+      // Credit the bank balance
+      _adjustCash(bank, r.amount, S.expMonth, S.expYear);
+      toast(`${r.payee} posted as income · ${bank} updated`);
+    }catch(e){toast('Error posting');}
   }else{
-    const data={amount:r.amount,category:r.category,bank:r.bank||getCashAccounts()[0],payee:r.payee,notes:r.notes||'',date:todayStr(),month:S.expMonth,year:S.expYear,type:'expense',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
-    try{const ref=await db.collection('transactions').add(data);S.txns.unshift({...data,id:ref.id});cSet(CK.txns(S.expMonth,S.expYear),S.txns);toast(`${r.payee} posted`);}catch(e){toast('Error posting');}
+    const bank=r.bank||getCashAccounts()[0];
+    const isUSD=isUSDCashAccount(bank);
+    const fxRates=getFxRates(S.expMonth,S.expYear);
+    const amtNGN=isUSD?Math.round(r.amount*fxRates.USD):r.amount;
+    const data={amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.category,bank,payee:r.payee,notes:r.notes||'',date:todayStr(),month:S.expMonth,year:S.expYear,type:'expense',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+    try{
+      const ref=await db.collection('transactions').add(data);
+      S.txns.unshift({...data,id:ref.id});
+      cSet(CK.txns(S.expMonth,S.expYear),S.txns);
+      // Deduct from the bank balance
+      _adjustCash(bank, -r.amount, S.expMonth, S.expYear);
+      toast(`${r.payee} posted · ${bank} updated`);
+    }catch(e){toast('Error posting');}
   }
   list[idx].lastPosted=todayStr();list[idx].nextRun=nextRunDate(r.frequency,todayStr());
-  saveRecurring(list);renderDashboard();renderExpenses();renderRecurringCard();
+  saveRecurring(list);renderDashboard();renderExpenses();renderRecurringCard();renderCashPage();
 }
 function renderRecurringCard(){
   const due=getRecurring().filter(r=>isDueThisMonth(r.nextRun));
@@ -3037,18 +3059,22 @@ function openEditInc(id){
 async function delIncome(id){
   if(!confirm('Delete this income record?')) return;
   try{
+    // Capture the record before deletion so we can reverse the cash credit
+    const inc=S.income.find(i=>i.id===id);
     await db.collection('income').doc(id).delete();
     S.income=S.income.filter(i=>i.id!==id);
     cSet(CK.inc(S.expMonth,S.expYear),S.income);
+    // Reverse the bank credit (raw amount in account's native currency)
+    if(inc&&inc.bank&&inc.amount) _adjustCash(inc.bank, -inc.amount, inc.year||S.expYear, inc.month||S.expMonth);
     // Adjust historical summary
     const hist=cGet('sw3_history')||[];
     const hIdx=hist.findIndex(h=>h.year===S.expYear&&h.month===S.expMonth);
     if(hIdx>=0){
-      const inc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-      hist[hIdx].income=inc;cSet('sw3_history',hist);
+      const incTotal=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
+      hist[hIdx].income=incTotal;cSet('sw3_history',hist);
     }
-    renderIncome();renderDashboard();
-    toast('Income deleted');
+    renderIncome();renderDashboard();renderCashPage();
+    toast(inc&&inc.bank?`Income deleted · ${inc.bank} adjusted`:'Income deleted');
   }catch(e){toast('Error deleting income');}
 }
 
@@ -3395,11 +3421,29 @@ async function saveExpense(){
   // ── Income ──
   if(type==='income'){
     S.saving=true;const btn=document.getElementById('e-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
-    const data={amount:amt,category:document.getElementById('i-cat2')?.value||'Other',bank:document.getElementById('i-bank2')?.value||getCashAccounts()[0],notes:document.getElementById('e-notes').value,date:document.getElementById('e-date').value,month:S.expMonth,year:S.expYear,type:'income',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+    const incBank=document.getElementById('i-bank2')?.value||getCashAccounts()[0];
+    const incIsUSD=isUSDCashAccount(incBank);
+    const incFxRates=getFxRates(S.expMonth,S.expYear);
+    const incAmtNGN=incIsUSD?Math.round(amt*incFxRates.USD):amt;
+    const data={amount:amt,amtNGN:incAmtNGN,currency:incIsUSD?'USD':'NGN',category:document.getElementById('i-cat2')?.value||'Other',bank:incBank,notes:document.getElementById('e-notes').value,date:document.getElementById('e-date').value,month:S.expMonth,year:S.expYear,type:'income',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
     // Save as recurring if set
     const freq=document.getElementById('e-recur')?.value;
     if(freq){const rl=getRecurring();rl.push({payee:data.category,amount:amt,incCat:data.category,bank:data.bank,notes:data.notes,frequency:freq,type:'income',nextRun:nextRunDate(freq,data.date),lastPosted:data.date});saveRecurring(rl);}
-    try{const ref=await db.collection('income').add(data);S.income.unshift({...data,id:ref.id});cSet(CK.inc(S.expMonth,S.expYear),S.income);closeMod('exp-modal');toast('Income recorded');haptic([8,40,8]);setSyncStatus('synced');renderDashboard();renderCashPage();}
+    try{
+      const ref=await db.collection('income').add(data);
+      S.income.unshift({...data,id:ref.id});
+      cSet(CK.inc(S.expMonth,S.expYear),S.income);
+      // Credit the bank balance — raw amount for USD Cash (stored in USD), NGN otherwise
+      _adjustCash(incBank, amt, S.expMonth, S.expYear);
+      // Update historical summary income total
+      const hist=cGet('sw3_history')||[];
+      const hIdx=hist.findIndex(h=>h.year===S.expYear&&h.month===S.expMonth);
+      const totalInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
+      if(hIdx>=0){hist[hIdx].income=totalInc;}
+      else{const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];hist.push({year:S.expYear,month:S.expMonth,label:MS2[S.expMonth-1]+" '"+String(S.expYear).slice(2),income:totalInc,expenses:S.txns.reduce((s,t)=>s+(t.amount||0),0)});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
+      cSet('sw3_history',hist);
+      closeMod('exp-modal');toast(`Income recorded · ${incBank} updated`);haptic([8,40,8]);setSyncStatus('synced');renderDashboard();renderCashPage();renderIncome();
+    }
     catch(e){toast('Error saving income');setSyncStatus('error');}
     finally{S.saving=false;btn.textContent='Record Income';btn.disabled=false;}
     return;
@@ -3515,13 +3559,19 @@ async function saveIncome(){
   const data={amount:amt,amtNGN,currency:isUSD?'USD':'NGN',category:document.getElementById('i-cat').value,bank,notes:document.getElementById('i-notes').value,date:document.getElementById('i-date').value,month:S.expMonth,year:S.expYear};
   try{
     if(editId){
-      // Update existing
+      // Capture old record before update to reverse its cash credit
+      const oldInc=S.income.find(i=>i.id===editId);
+      // Reverse old bank credit (raw amount in account's native currency)
+      if(oldInc&&oldInc.bank&&oldInc.amount) _adjustCash(oldInc.bank, -oldInc.amount, oldInc.year||S.expYear, oldInc.month||S.expMonth);
+      // Update record
       await db.collection('income').doc(editId).update(data);
       const idx=S.income.findIndex(i=>i.id===editId);
       if(idx>=0) S.income[idx]={...S.income[idx],...data};
       else S.income.unshift({...data,id:editId});
       cSet(CK.inc(S.expMonth,S.expYear),S.income);
-      toast('Income updated');
+      // Apply new bank credit
+      _adjustCash(bank, amt, S.expMonth, S.expYear);
+      toast(`Income updated · ${bank} adjusted`);
     } else {
       // New record
       const ref=await db.collection('income').add({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
@@ -5101,7 +5151,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.34</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.35</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -5613,7 +5663,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.34';
+const APP_VERSION='v3.14.35';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
