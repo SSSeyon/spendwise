@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.36</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.37</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -697,7 +697,7 @@ datalist option{background:var(--bg2);color:var(--text)}
       <div class="card">
         <div class="clabel" style="margin-bottom:10px">Update Balances — <span id="inv-edit-label-2"></span></div>
         <div id="inv-edit-fields-2"></div>
-        <button class="btn btn-p btn-full" onclick="saveInvFromEdit()">Save Balances</button>
+        <button class="btn btn-p btn-full" style="margin-top:16px;font-weight:700" onclick="saveInvFromEdit()">Save Balances</button>
       </div>
     </div>
   </div>
@@ -1354,13 +1354,13 @@ function renderRecurringCard(){
   if(!due.length){card.style.display='none';return;}
   card.style.display='block';
   const all=getRecurring();
-  list.innerHTML=due.map(r=>{const idx=all.indexOf(r);return`<div class="txi" style="cursor:pointer" onclick="postRecurring(${idx})"><div><div class="txi-cat">${r.payee}</div><div class="txi-meta">${r.type==='income'?'Income':'Expense'} · ${r.frequency} · Due ${r.nextRun||'now'}</div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge ${r.type==='income'?'bg':'br'}">${r.type==='income'?'+':'-'}${fN(r.amount)}</span><span style="font-size:0.7rem;color:var(--accent)">Post →</span></div></div>`;}).join('');
+  list.innerHTML=due.map(r=>{const idx=all.indexOf(r);return`<div class="txi" style="cursor:pointer" onclick="postRecurring(${idx})"><div><div class="txi-cat">${r.payee}</div><div class="txi-meta">${r.type==='income'?'Income':'Expense'} · ${r.frequency} · Due ${fmtDate(r.nextRun)||'now'}</div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge ${r.type==='income'?'bg':'br'}">${r.type==='income'?'+':'-'}${fN(r.amount)}</span><span style="font-size:0.7rem;color:var(--accent)">Post →</span></div></div>`;}).join('');
 }
 function openRecurModal(){
   const list=getRecurring();
   document.getElementById('recur-list').innerHTML=list.length?list.map((r,i)=>`
     <div class="dc" style="margin-bottom:8px">
-      <div class="dc-top"><div><div class="dc-name">${r.payee}</div><div class="dc-sub">${r.frequency} · ${r.category||r.incCat||''} · Next: ${r.nextRun||'—'}</div></div>
+      <div class="dc-top"><div><div class="dc-name">${r.payee}</div><div class="dc-sub">${r.frequency} · ${r.category||r.incCat||''} · Next: ${fmtDate(r.nextRun)||'—'}</div></div>
         <button class="txi-del" onclick="deleteRecurring(${i})">×</button>
       </div>
       <div style="display:flex;gap:8px;margin-top:6px">
@@ -1545,6 +1545,8 @@ function fmtChartMoney(v){return fmtChartNGN(v);}
 const fNum=n=>n==null||isNaN(n)?'—':Number(n).toLocaleString('en-NG',{maximumFractionDigits:0});
 const ck=c=>c.replace(/[^a-zA-Z]/g,'');
 const todayStr=()=>new Date().toISOString().slice(0,10);
+const MONTHS_SHORT=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function fmtDate(iso){if(!iso)return'—';const p=iso.slice(0,10).split('-');if(p.length<3)return iso;return`${parseInt(p[2],10)}-${MONTHS_SHORT[parseInt(p[1],10)-1]}-${p[0]}`;}
 const curM=()=>new Date().getMonth()+1;
 const curY=()=>new Date().getFullYear();
 const bSt=(s,b)=>!b?'ok':s/b>=1?'over':s/b>=0.8?'warn':'ok';
@@ -2177,7 +2179,7 @@ function renderDashboard(){
   const recEl=document.getElementById('dash-recent');
   const combined=[...txns.map(t=>({...t,type:'exp'})),...incList.map(t=>({...t,type:'inc'}))].sort((a,b)=>a.date>b.date?-1:1).slice(0,5);
   if(!combined.length){recEl.innerHTML='<div class="empty"><div class="empty-i">↕</div>No transactions yet</div>';}
-  else{recEl.innerHTML='<div class="txlist">'+combined.map(tx=>`<div class="txi"><div><div class="txi-cat">${tx.category?(CAT_ICONS[tx.category]||'')+' '+tx.category:tx.payee||'—'}</div><div class="txi-meta">${tx.payee||tx.notes||'—'} · ${tx.date}</div></div><div class="${tx.type==='inc'?'txi-amt txi-inc':'txi-amt txi-exp'}">${tx.type==='inc'?'+':''}${fmtCur(tx.amount,cur,m,y)}</div></div>`).join('')+'</div>';}
+  else{recEl.innerHTML='<div class="txlist">'+combined.map(tx=>`<div class="txi"><div><div class="txi-cat">${tx.category?(CAT_ICONS[tx.category]||'')+' '+tx.category:tx.payee||'—'}</div><div class="txi-meta">${tx.payee||tx.notes||'—'} · ${fmtDate(tx.date)}</div></div><div class="${tx.type==='inc'?'txi-amt txi-inc':'txi-amt txi-exp'}">${tx.type==='inc'?'+':''}${fmtCur(tx.amount,cur,m,y)}</div></div>`).join('')+'</div>';}
 
   // Calendar
   renderDashCalendar(m, y, [...S.txns, ...S.income.map(i=>({...i,type:'inc'}))]);
@@ -3015,7 +3017,7 @@ function renderIncome(){
     return`<div class="txi" id="txi-inc-${i.id}">
       <div style="flex:1;min-width:0">
         <div class="txi-cat" style="font-size:0.76rem">${i.category||'Income'}${i.notes?` · ${i.notes}`:''}</div>
-        <div class="txi-meta">${i.date||''}${i.bank?' · '+i.bank:''}${rawAmt?' · '+rawAmt:''}</div>
+        <div class="txi-meta">${fmtDate(i.date)}${i.bank?' · '+i.bank:''}${rawAmt?' · '+rawAmt:''}</div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
         <div class="txi-amt" style="color:var(--accent)">${dispAmt}</div>
@@ -3113,7 +3115,7 @@ function renderExpenses(){
            ontouchend="swipeEnd(event,'${tx.id}')">
         <div style="flex:1;min-width:0">
           <div class="txi-cat" style="font-size:0.76rem">${tx.payee||'—'}</div>
-          <div class="txi-meta">${tx.date} · ${tx.bank||''}</div>
+          <div class="txi-meta">${fmtDate(tx.date)} · ${tx.bank||''}</div>
         </div>
         <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
           <div class="txi-amt txi-exp">${fN(tx.amount)}</div>
@@ -3676,13 +3678,17 @@ ${val?dispVal:'—'}${returnBadge}</div></div>`;
     const fxRates=getFxRates(m,y);
     elEditFields.innerHTML=PLATFORMS.map(p=>{
       const storedNGN=inv[p.key]||0;
+      const meta=getInvPlatformMeta(p.key);
+      const isFI=meta.assetClass==='fixed_income';
       const isUSD=p.currency==='USD';
-      const dispVal=isUSD&&storedNGN?(storedNGN/fxRates.USD).toFixed(2):(storedNGN||'');
+      // For fixed income, show the clean principal (before interest) so the user
+      // edits principal only — interest is recomputed and added on save.
+      // For equity, show the stored balance as-is.
+      const principalNGN=isFI&&meta.lastSavedPrincipal!=null?meta.lastSavedPrincipal:storedNGN;
+      const dispVal=isUSD&&principalNGN?(principalNGN/fxRates.USD).toFixed(2):(principalNGN||'');
       const lbl=isUSD?`$ USD (rate: ₦${fxRates.USD}/$ — stored as ₦)`:'₦ NGN';
       const costStored=cGet('sw3_inv_cost_'+p.key)||'';
       const costDisp=isUSD&&costStored?(costStored/fxRates.USD).toFixed(2):costStored;
-      const meta=getInvPlatformMeta(p.key);
-      const isFI=meta.assetClass==='fixed_income';
       const intRate=meta.interestRate||'';
       const cType=meta.compoundType||'daily_accrual';
       const matDate=meta.maturityDate||'';
@@ -3734,7 +3740,7 @@ ${val?dispVal:'—'}${returnBadge}</div></div>`;
           </select></div>
           <div class="ig" style="margin-bottom:0"><label class="ilabel">Colour</label><input type="color" id="new-plat-col${s}" value="#c8f542" style="width:100%;height:36px;border:none;border-radius:var(--rsm);background:none;cursor:pointer;padding:0"></div>
         </div>
-        <button class="btn btn-p btn-full" onclick="addPlatform(document.getElementById('new-plat-name${s}').value,document.getElementById('new-plat-cur${s}').value,document.getElementById('new-plat-col${s}').value)">+ Add Platform</button>
+        <button class="btn btn-inc btn-full" onclick="addPlatform(document.getElementById('new-plat-name${s}').value,document.getElementById('new-plat-cur${s}').value,document.getElementById('new-plat-col${s}').value)">+ Add Platform</button>
       </div>`;
     setTimeout(()=>initNumInputs(elEditFields),0);
   }
@@ -4162,7 +4168,7 @@ function renderDebtors(){
     const owedDisp=fmtCur(d.ngnBalance||0,cur,m,y);
     return`<div class="dc" style="${settled&&expectRepay?'opacity:0.4':''}">
       <div class="dc-top">
-        <div><div class="dc-name">${d.name}</div><div class="dc-sub">${d.category} · ${d.currency} ${fNum(d.amount)}${d.date?' · '+d.date:''}</div></div>
+        <div><div class="dc-name">${d.name}</div><div class="dc-sub">${d.category} · ${d.currency} ${fNum(d.amount)}${d.date?' · '+fmtDate(d.date):''}</div></div>
         <div class="badge ${!expectRepay?'bgold':settled?'bg':'br'}">${!expectRepay?'Write-off':settled?'Settled':owedDisp+' due'}</div>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
@@ -4181,7 +4187,7 @@ function renderDebtors(){
       </div>
       ${(d.pmtLog&&d.pmtLog.length)?`<div id="pmt-log-${d.id||idx}" style="display:none;margin-top:8px;background:var(--bg2);border-radius:6px;padding:8px 10px">
         <div style="font-size:0.6rem;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">Payment Log</div>
-        ${[...d.pmtLog].reverse().map(p=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:0.68rem"><span style="color:var(--text2)">${p.date}</span><span style="font-family:var(--mono);color:var(--accent)">+${fN(p.amount)}</span></div>`).join('')}
+        ${[...d.pmtLog].reverse().map(p=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:0.68rem"><span style="color:var(--text2)">${fmtDate(p.date)}</span><span style="font-family:var(--mono);color:var(--accent)">+${fN(p.amount)}</span></div>`).join('')}
       </div>`:''}
     </div>`;
   }).join('');
@@ -5147,7 +5153,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.36</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.37</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -5493,7 +5499,7 @@ function _renderCatPopup(cur, m, y){
         <div class="txi" onclick="openEditExpense('${tx.id}');closeMod('drill-modal')">
           <div style="flex:1;min-width:0">
             <div class="txi-cat" style="font-size:0.76rem">${tx.payee||'—'}</div>
-            <div class="txi-meta">${tx.date}${tx.bank?' · '+tx.bank:''}${tx.notes?' · '+tx.notes:''}</div>
+            <div class="txi-meta">${fmtDate(tx.date)}${tx.bank?' · '+tx.bank:''}${tx.notes?' · '+tx.notes:''}</div>
           </div>
           <div class="txi-amt txi-exp">${fmtCur(tx.amount,cur,m,y)}</div>
         </div>`).join('')}
@@ -5659,7 +5665,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.36';
+const APP_VERSION='v3.14.37';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
