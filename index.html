@@ -1326,7 +1326,6 @@ async function postRecurring(idx){
       const ref=await db.collection('income').add(data);
       S.income.unshift({...data,id:ref.id});
       cSet(CK.inc(S.expMonth,S.expYear),S.income);
-      // Credit the bank balance
       _adjustCash(bank, r.amount, S.expMonth, S.expYear);
       toast(`${r.payee} posted as income · ${bank} updated`);
     }catch(e){toast('Error posting');}
@@ -1340,7 +1339,6 @@ async function postRecurring(idx){
       const ref=await db.collection('transactions').add(data);
       S.txns.unshift({...data,id:ref.id});
       cSet(CK.txns(S.expMonth,S.expYear),S.txns);
-      // Deduct from the bank balance
       _adjustCash(bank, -r.amount, S.expMonth, S.expYear);
       toast(`${r.payee} posted · ${bank} updated`);
     }catch(e){toast('Error posting');}
@@ -3059,14 +3057,11 @@ function openEditInc(id){
 async function delIncome(id){
   if(!confirm('Delete this income record?')) return;
   try{
-    // Capture the record before deletion so we can reverse the cash credit
     const inc=S.income.find(i=>i.id===id);
     await db.collection('income').doc(id).delete();
     S.income=S.income.filter(i=>i.id!==id);
     cSet(CK.inc(S.expMonth,S.expYear),S.income);
-    // Reverse the bank credit (raw amount in account's native currency)
     if(inc&&inc.bank&&inc.amount) _adjustCash(inc.bank, -inc.amount, inc.year||S.expYear, inc.month||S.expMonth);
-    // Adjust historical summary
     const hist=cGet('sw3_history')||[];
     const hIdx=hist.findIndex(h=>h.year===S.expYear&&h.month===S.expMonth);
     if(hIdx>=0){
@@ -3433,9 +3428,7 @@ async function saveExpense(){
       const ref=await db.collection('income').add(data);
       S.income.unshift({...data,id:ref.id});
       cSet(CK.inc(S.expMonth,S.expYear),S.income);
-      // Credit the bank balance — raw amount for USD Cash (stored in USD), NGN otherwise
       _adjustCash(incBank, amt, S.expMonth, S.expYear);
-      // Update historical summary income total
       const hist=cGet('sw3_history')||[];
       const hIdx=hist.findIndex(h=>h.year===S.expYear&&h.month===S.expMonth);
       const totalInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
@@ -3559,29 +3552,22 @@ async function saveIncome(){
   const data={amount:amt,amtNGN,currency:isUSD?'USD':'NGN',category:document.getElementById('i-cat').value,bank,notes:document.getElementById('i-notes').value,date:document.getElementById('i-date').value,month:S.expMonth,year:S.expYear};
   try{
     if(editId){
-      // Capture old record before update to reverse its cash credit
       const oldInc=S.income.find(i=>i.id===editId);
-      // Reverse old bank credit (raw amount in account's native currency)
       if(oldInc&&oldInc.bank&&oldInc.amount) _adjustCash(oldInc.bank, -oldInc.amount, oldInc.year||S.expYear, oldInc.month||S.expMonth);
-      // Update record
       await db.collection('income').doc(editId).update(data);
       const idx=S.income.findIndex(i=>i.id===editId);
       if(idx>=0) S.income[idx]={...S.income[idx],...data};
       else S.income.unshift({...data,id:editId});
       cSet(CK.inc(S.expMonth,S.expYear),S.income);
-      // Apply new bank credit
       _adjustCash(bank, amt, S.expMonth, S.expYear);
       toast(`Income updated · ${bank} adjusted`);
     } else {
-      // New record
       const ref=await db.collection('income').add({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
       S.income.unshift({...data,id:ref.id});
       cSet(CK.inc(S.expMonth,S.expYear),S.income);
-      // Credit bank balance using the canonical helper — updates S.cash, cache and Firestore atomically
       _adjustCash(bank, amt, S.expMonth, S.expYear);
       toast(`Income recorded · ${bank} updated`);
     }
-    // Update historical summary
     const hist=cGet('sw3_history')||[];
     const hIdx=hist.findIndex(h=>h.year===S.expYear&&h.month===S.expMonth);
     const totalInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
@@ -3827,86 +3813,91 @@ async function renderInvTrend(suffix){
 }
 async function saveInvFromEdit(){
   if(S.saving) return;S.saving=true;setSyncStatus('syncing');
-  PLATFORMS=getPlatforms();
-  const data={month:S.expMonth,year:S.expYear};
-  const fxRates=getFxRates(S.expMonth,S.expYear);
-  const today=new Date().toISOString().slice(0,10);
-  PLATFORMS.forEach(p=>{
-    const el=document.getElementById('inv-edit-'+p.key+'-2')||document.getElementById('inv-edit-'+p.key);
-    const v=el?parseFloat(el.value):NaN;
-    if(isNaN(v)){data[p.key]=0;return;}
-    const principalNGN=p.currency==='USD'?Math.round(v*fxRates.USD):p.currency==='GBP'?Math.round(v*(fxRates.GBP||2050)):v;
-    const acEl=document.getElementById('inv-ac-'+p.key+'-2')||document.getElementById('inv-ac-'+p.key);
-    const ac=acEl?acEl.value:'equity';
-    if(ac==='fixed_income'){
+  try{
+    PLATFORMS=getPlatforms();
+    const data={month:S.expMonth,year:S.expYear};
+    const fxRates=getFxRates(S.expMonth,S.expYear);
+    const today=new Date().toISOString().slice(0,10);
+    // ── Pass 1: compute balances (with interest) ──────────────────────────
+    PLATFORMS.forEach(p=>{
+      const el=document.getElementById('inv-edit-'+p.key+'-2')||document.getElementById('inv-edit-'+p.key);
+      const v=el?parseFloat(el.value):NaN;
+      if(isNaN(v)){data[p.key]=0;return;}
+      const principalNGN=p.currency==='USD'?Math.round(v*fxRates.USD):p.currency==='GBP'?Math.round(v*(fxRates.GBP||2050)):v;
+      const acEl=document.getElementById('inv-ac-'+p.key+'-2')||document.getElementById('inv-ac-'+p.key);
+      const ac=acEl?acEl.value:'equity';
+      if(ac==='fixed_income'){
+        const rateEl=document.getElementById('inv-rate-'+p.key+'-2')||document.getElementById('inv-rate-'+p.key);
+        const ctEl=document.getElementById('inv-ct-'+p.key+'-2')||document.getElementById('inv-ct-'+p.key);
+        const matEl=document.getElementById('inv-mat-'+p.key+'-2')||document.getElementById('inv-mat-'+p.key);
+        const startEl=document.getElementById('inv-start-'+p.key+'-2')||document.getElementById('inv-start-'+p.key);
+        const rate=rateEl?parseFloat(rateEl.value):NaN;
+        const ct=ctEl?ctEl.value:'daily_accrual';
+        const mat=matEl?matEl.value:'';
+        const startDate=startEl&&startEl.value?startEl.value:today;
+        const prevMeta=getInvPlatformMeta(p.key);
+        if(!isNaN(rate)&&rate>0){
+          const ledger=prevMeta.ledger||[];
+          const {projectedBalance}=calcInterestAccrual(principalNGN,rate,ct,startDate,mat||null,ledger);
+          data[p.key]=projectedBalance;
+        } else {
+          data[p.key]=principalNGN;
+        }
+      } else {
+        data[p.key]=principalNGN;
+      }
+    });
+    S.investments=data;cSet(CK.inv(S.expMonth,S.expYear),data);
+    // ── Pass 2: cost basis ────────────────────────────────────────────────
+    PLATFORMS.forEach(p=>{
+      const costEl=document.getElementById('inv-cost-'+p.key+'-2')||document.getElementById('inv-cost-'+p.key);
+      if(!costEl||costEl.value==='') return;
+      const cv=parseFloat(costEl.value);
+      if(!isNaN(cv)&&cv>0){
+        const costNGN=p.currency==='USD'?Math.round(cv*fxRates.USD):p.currency==='GBP'?Math.round(cv*(fxRates.GBP||2050)):cv;
+        cSet('sw3_inv_cost_'+p.key,costNGN);
+      }
+    });
+    // ── Pass 3: meta + interest ledger ────────────────────────────────────
+    PLATFORMS.forEach(p=>{
+      const el=document.getElementById('inv-edit-'+p.key+'-2')||document.getElementById('inv-edit-'+p.key);
+      const acEl=document.getElementById('inv-ac-'+p.key+'-2')||document.getElementById('inv-ac-'+p.key);
       const rateEl=document.getElementById('inv-rate-'+p.key+'-2')||document.getElementById('inv-rate-'+p.key);
       const ctEl=document.getElementById('inv-ct-'+p.key+'-2')||document.getElementById('inv-ct-'+p.key);
       const matEl=document.getElementById('inv-mat-'+p.key+'-2')||document.getElementById('inv-mat-'+p.key);
       const startEl=document.getElementById('inv-start-'+p.key+'-2')||document.getElementById('inv-start-'+p.key);
-      const rate=rateEl?parseFloat(rateEl.value):NaN;
-      const ct=ctEl?ctEl.value:'daily_accrual';
-      const mat=matEl?matEl.value:'';
-      const startDate=startEl&&startEl.value?startEl.value:today;
-      const prevMeta=getInvPlatformMeta(p.key);
-      if(!isNaN(rate)&&rate>0){
-        const ledger=prevMeta.ledger||[];
-        const {projectedBalance}=calcInterestAccrual(principalNGN,rate,ct,startDate,mat||null,ledger);
-        data[p.key]=projectedBalance;
-      } else {
-        data[p.key]=principalNGN;
-      }
-    } else {
-      data[p.key]=principalNGN;
-    }
-  });
-  S.investments=data;cSet(CK.inv(S.expMonth,S.expYear),data);
-  PLATFORMS.forEach(p=>{
-    const costEl=document.getElementById('inv-cost-'+p.key+'-2')||document.getElementById('inv-cost-'+p.key);
-    if(!costEl||costEl.value==='') return;
-    const cv=parseFloat(costEl.value);
-    if(!isNaN(cv)&&cv>0){
-      const fxRates2=getFxRates(S.expMonth,S.expYear);
-      const costNGN=p.currency==='USD'?Math.round(cv*fxRates2.USD):p.currency==='GBP'?Math.round(cv*(fxRates2.GBP||2050)):cv;
-      cSet('sw3_inv_cost_'+p.key,costNGN);
-    }
-  });
-  PLATFORMS.forEach(p=>{
-    const acEl=document.getElementById('inv-ac-'+p.key+'-2')||document.getElementById('inv-ac-'+p.key);
-    const rateEl=document.getElementById('inv-rate-'+p.key+'-2')||document.getElementById('inv-rate-'+p.key);
-    const ctEl=document.getElementById('inv-ct-'+p.key+'-2')||document.getElementById('inv-ct-'+p.key);
-    const matEl=document.getElementById('inv-mat-'+p.key+'-2')||document.getElementById('inv-mat-'+p.key);
-    const startEl=document.getElementById('inv-start-'+p.key+'-2')||document.getElementById('inv-start-'+p.key);
-    if(!acEl) return;
-    const ac=acEl.value;
-    const meta={assetClass:ac};
-    if(ac==='fixed_income'&&rateEl){
-      const rate=parseFloat(rateEl.value);
-      if(!isNaN(rate)&&rate>0) meta.interestRate=rate;
-      if(ctEl) meta.compoundType=ctEl.value;
-      if(matEl&&matEl.value) meta.maturityDate=matEl.value;
-      const newStart=startEl&&startEl.value?startEl.value:today;
-      const prevMeta=getInvPlatformMeta(p.key);
-      const prevStart=prevMeta.startDate;
-      // Close the previous open segment into the ledger (if we had a start date and a previous principal)
-      const ledger=[...(prevMeta.ledger||[])];
-      if(prevStart&&prevStart<today){
-        // The segment ran from prevStart up to yesterday (today is the new save point)
-        // Only append if it isn't already closed (avoid duplicates on same-day saves)
-        const alreadyClosed=ledger.some(s=>s.from===prevStart&&s.to===today);
-        if(!alreadyClosed){
-          const prevPrincipal=prevMeta.lastSavedPrincipal||principalNGN;
-          ledger.push({principal:prevPrincipal,from:prevStart,to:today});
+      if(!acEl) return;
+      const ac=acEl.value;
+      const meta={assetClass:ac};
+      if(ac==='fixed_income'&&rateEl){
+        // Recompute principalNGN locally — avoids cross-loop scope dependency
+        const v=el?parseFloat(el.value):NaN;
+        const principalNGN=isNaN(v)?0:p.currency==='USD'?Math.round(v*fxRates.USD):p.currency==='GBP'?Math.round(v*(fxRates.GBP||2050)):v;
+        const rate=parseFloat(rateEl.value);
+        if(!isNaN(rate)&&rate>0) meta.interestRate=rate;
+        if(ctEl) meta.compoundType=ctEl.value;
+        if(matEl&&matEl.value) meta.maturityDate=matEl.value;
+        const prevMeta=getInvPlatformMeta(p.key);
+        const prevStart=prevMeta.startDate;
+        // Close the previous open segment into the ledger
+        const ledger=[...(prevMeta.ledger||[])];
+        if(prevStart&&prevStart<today){
+          const alreadyClosed=ledger.some(s=>s.from===prevStart&&s.to===today);
+          if(!alreadyClosed){
+            const prevPrincipal=prevMeta.lastSavedPrincipal||principalNGN;
+            ledger.push({principal:prevPrincipal,from:prevStart,to:today});
+          }
         }
+        meta.ledger=ledger;
+        meta.startDate=today;
+        meta.lastSavedPrincipal=principalNGN;
       }
-      meta.ledger=ledger;
-      meta.startDate=today; // new open segment starts today
-      meta.lastSavedPrincipal=principalNGN; // store the clean principal (before interest) for ledger use
-    }
-    saveInvPlatformMeta(p.key,meta);
-  });
-  renderInvestments();renderDashboard();
-  try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});toast('Balances saved (interest applied)');haptic([8,40,8]);setSyncStatus('synced');}
-  catch(e){oqAdd('investments',sid(S.expMonth,S.expYear),data,true);toast('Saved offline — will sync when connected');}
+      saveInvPlatformMeta(p.key,meta);
+    });
+    renderInvestments();renderDashboard();
+    try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});toast('Balances saved');haptic([8,40,8]);setSyncStatus('synced');}
+    catch(e){oqAdd('investments',sid(S.expMonth,S.expYear),data,true);toast('Saved offline — will sync when connected');}
+  }catch(e){console.error('saveInvFromEdit error',e);toast('Error saving — please try again');setSyncStatus('error');}
   finally{S.saving=false;}
 }
 
