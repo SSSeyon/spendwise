@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.38</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.41</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -679,7 +679,6 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="tabs" style="margin-top:0">
       <button class="tab active" onclick="invTab('current',this)">Current</button>
       <button class="tab" onclick="invTab('trend',this)">Trend</button>
-      <button class="tab" onclick="invTab('edit',this)">Edit</button>
     </div>
     <div id="inv-current-2">
       <div class="card" id="inv-total-2"></div>
@@ -689,16 +688,13 @@ datalist option{background:var(--bg2);color:var(--text)}
         <div class="abar" id="inv-abar-2"></div>
         <div style="display:flex;flex-wrap:wrap;gap:7px;margin-top:8px" id="inv-legend-2"></div>
       </div>
+      <div id="inv-edit-fields-2"></div>
+      <div id="inv-save-btn-2" style="display:none;padding:0 0 8px">
+        <button class="btn btn-p btn-full" style="font-weight:700" onclick="saveInvFromEdit()">Save Balances</button>
+      </div>
     </div>
     <div id="inv-trend-2" style="display:none">
       <div class="card"><div class="clabel" style="margin-bottom:12px">Portfolio Growth</div><canvas id="inv-chart-2" style="max-height:200px"></canvas></div>
-    </div>
-    <div id="inv-edit-2" style="display:none">
-      <div class="card">
-        <div class="clabel" style="margin-bottom:10px">Update Balances — <span id="inv-edit-label-2"></span></div>
-        <div id="inv-edit-fields-2"></div>
-        <button class="btn btn-p btn-full" style="margin-top:16px;font-weight:700" onclick="saveInvFromEdit()">Save Balances</button>
-      </div>
     </div>
   </div>
 
@@ -3612,6 +3608,7 @@ function _renderInvInto(suffix){
   const s=suffix;
   const inv=_getInvData(),total=PLATFORMS.reduce((acc,p)=>acc+(inv[p.key]||0),0);
   const cur=S.dashCurrency,m=S.expMonth,y=S.expYear;
+  const fxRates=getFxRates(m,y);
   const elTotal=document.getElementById('inv-total'+s);
   const elPlatforms=document.getElementById('inv-platforms'+s);
   const elAlloc=document.getElementById('inv-alloc'+s);
@@ -3633,36 +3630,83 @@ function _renderInvInto(suffix){
 
   function _renderPlatRow(p){
     const val=inv[p.key]||0;const pct=total>0?((val/total)*100).toFixed(1):'0.0';
-    const dispVal=fmtPlatformVal(val,p.key,cur,m,y);
     const badge=`<span style="font-size:0.56rem;padding:1px 4px;border-radius:3px;background:var(--bg3);color:var(--text3);margin-left:4px">${p.currency}</span>`;
     const costNGN=cGet('sw3_inv_cost_'+p.key)||0;
     const returnPct=(costNGN>0&&val>0)?((val-costNGN)/costNGN*100):null;
     const returnBadge=returnPct!==null?`<span style="font-size:0.6rem;font-family:var(--mono);margin-left:5px;color:${returnPct>=0?'var(--accent)':'var(--red)'}">${returnPct>=0?'+':''}${returnPct.toFixed(1)}%</span>`:'';
     const meta=getInvPlatformMeta(p.key);
-    let intInfo='',accrualSub='',balanceBreakdown='';
+    let intInfo='',balanceBreakdown='',maturityLine='';
+    let mainVal=val?fmtPlatformVal(val,p.key,cur,m,y):'—';
     if(meta.assetClass==='fixed_income'&&meta.interestRate){
       intInfo=`<span class="int-badge">${meta.interestRate}% p.a.</span>`;
       const {interest,projectedBalance,daysAccrued,isMatured}=calcInterestAccrual(val,meta.interestRate,meta.compoundType||'daily_accrual',meta.startDate||meta.principalEntryDate,meta.maturityDate||null,meta.ledger||null);
-      const matLabel=meta.maturityDate?` · matures ${meta.maturityDate}`:'';
-      const statusLabel=isMatured?'<span style="color:var(--red);font-size:0.58rem"> · Matured</span>':'';
-      if(isMatured&&!interest) accrualSub=`<div style="font-size:0.6rem;color:var(--red);margin-top:2px">Matured ${meta.maturityDate}</div>`;
-      if(val&&interest>0){
-        // Right-side breakdown: principal + (interest earned)
-        const dispPrincipal=fmtPlatformVal(val,p.key,cur,m,y);
-        const dispInterest=fmtPlatformVal(interest,p.key,cur,m,y);
-        const dispProjected=fmtPlatformVal(projectedBalance,p.key,cur,m,y);
-        balanceBreakdown=`<div style="font-size:0.6rem;font-family:var(--mono);color:var(--text2);text-align:right;margin-top:2px;line-height:1.5">(${dispPrincipal} + <span style="color:var(--gold)">${dispInterest}</span>)${matLabel}${statusLabel}</div>`;
+      if(val){
+        mainVal=fmtPlatformVal(projectedBalance,p.key,cur,m,y);
+        if(interest>0){
+          const dispPrincipal=fmtPlatformVal(val,p.key,cur,m,y);
+          const dispInterest=fmtPlatformVal(interest,p.key,cur,m,y);
+          balanceBreakdown=`<div style="font-size:0.6rem;font-family:var(--mono);color:var(--text2);text-align:right;margin-top:2px">(${dispPrincipal} + <span style="color:var(--gold)">${dispInterest}</span>)</div>`;
+        }
+      }
+      if(meta.maturityDate){
+        const isMaturedLabel=isMatured?`<span style="color:var(--red);margin-left:4px">· Matured</span>`:'';
+        maturityLine=`<div style="font-size:0.6rem;color:var(--text2);margin-top:3px">Matures ${fmtDate(meta.maturityDate)}${isMaturedLabel}</div>`;
       }
     }
-    // Main displayed value: for FI show projected (principal+interest), for equity show principal
-    const displayedVal=()=>{
-      if(meta.assetClass==='fixed_income'&&meta.interestRate&&val){
-        const {projectedBalance}=calcInterestAccrual(val,meta.interestRate,meta.compoundType||'daily_accrual',meta.startDate||meta.principalEntryDate,meta.maturityDate||null,meta.ledger||null);
-        return fmtPlatformVal(projectedBalance,p.key,cur,m,y);
-      }
-      return dispVal;
-    };
-    return`<div class="prow" style="display:flex;align-items:center;gap:10px"><div style="flex-shrink:0">${platformLogoEl(p.key,p.color,26)}</div><div style="flex:1;min-width:0"><div class="pname">${p.label}${badge}${intInfo}</div><div class="ppct">${pct}%</div>${accrualSub}</div><div style="text-align:right;flex-shrink:0"><div class="pval" style="color:${val?p.color:'var(--text3)'}">${val?displayedVal():'—'}${returnBadge}</div>${balanceBreakdown}</div></div>`;
+    // Inline edit panel
+    const isUSD=p.currency==='USD';
+    const isFI2=meta.assetClass==='fixed_income';
+    const principalNGN=isFI2&&meta.lastSavedPrincipal!=null?meta.lastSavedPrincipal:val;
+    const dispVal=isUSD&&principalNGN?(principalNGN/fxRates.USD).toFixed(2):(principalNGN||'');
+    const costStored=cGet('sw3_inv_cost_'+p.key)||'';
+    const costDisp=isUSD&&costStored?(costStored/fxRates.USD).toFixed(2):costStored;
+    const intRate=meta.interestRate||'';
+    const cType=meta.compoundType||'daily_accrual';
+    const investStart=meta.investmentStartDate||meta.startDate||meta.principalEntryDate||'';
+    const lbl=isUSD?`$ USD (rate: ₦${fxRates.USD}/$ — stored as ₦)`:'₦ NGN';
+    const editPanel=`<div id="inv-edit-panel-${p.key}${s}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <span style="font-size:0.7rem;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.05em">Edit ${p.label}</span>
+          <span style="font-size:0.68rem;color:var(--text3)">${lbl}</span>
+        </div>
+        <div class="ig" style="margin-bottom:6px"><label class="ilabel">Principal Balance</label><input class="ifield" type="text" id="inv-edit-${p.key}${s}" placeholder="0" value="${dispVal}" data-currency="${p.currency}"></div>
+        <div class="ig" style="margin-bottom:6px"><label class="ilabel" style="font-size:0.6rem;color:var(--text3)">Cost basis ${isUSD?'(USD)':'(₦)'} — optional</label><input class="ifield" style="font-size:0.72rem;padding:4px 8px" type="text" id="inv-cost-${p.key}${s}" placeholder="0" value="${costDisp}"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <select class="sfield" id="inv-ac-${p.key}${s}" style="width:auto;font-size:0.72rem;padding:5px 10px" onchange="toggleInvFIFields('${p.key}','${s}')">
+            <option value="equity"${!isFI2?' selected':''}>Equity</option>
+            <option value="fixed_income"${isFI2?' selected':''}>Fixed Income</option>
+          </select>
+          <button class="txi-del" onclick="removePlatform('${p.key}')" title="Remove platform" style="margin-left:8px">×</button>
+        </div>
+        <div id="inv-fi-fields-${p.key}${s}" style="${isFI2?'':'display:none'}">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
+            <div class="ig" style="margin-bottom:0"><label class="ilabel">Annual Rate (%)</label><input class="ifield" type="text" id="inv-rate-${p.key}${s}" placeholder="e.g. 18" value="${intRate}" style="font-size:0.8rem;padding:6px 10px"></div>
+            <div class="ig" style="margin-bottom:0"><label class="ilabel">Accrual Type</label><select class="sfield" id="inv-ct-${p.key}${s}" style="font-size:0.75rem;padding:6px 10px" onchange="toggleInvFIFields('${p.key}','${s}')">
+              <option value="daily_accrual"${cType==='daily_accrual'?' selected':''}>Daily Accrual</option>
+              <option value="daily_compound"${cType==='daily_compound'?' selected':''}>Daily Compound</option>
+            </select></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div class="ig" style="margin-bottom:0"><label class="ilabel">Start Date</label><input class="ifield" type="date" id="inv-start-${p.key}${s}" value="${investStart}" style="font-size:0.78rem;padding:5px 8px"></div>
+            <div id="inv-mat-row-${p.key}${s}" class="ig" style="margin-bottom:0;${isFI2&&cType==='daily_accrual'?'':'display:none'}"><label class="ilabel">Maturity Date</label><input class="ifield" type="date" id="inv-mat-${p.key}${s}" value="${meta.maturityDate||''}" style="font-size:0.78rem;padding:5px 8px"></div>
+          </div>
+        </div>
+      </div>`;
+    return`<div class="card" style="margin-bottom:8px;cursor:pointer" onclick="toggleInvEdit('${p.key}','${s}')">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="flex-shrink:0">${platformLogoEl(p.key,p.color,26)}</div>
+        <div style="flex:1;min-width:0">
+          <div class="pname">${p.label}${badge}${intInfo}</div>
+          <div class="ppct">${pct}%</div>
+          ${maturityLine}
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div class="pval" style="color:${val?p.color:'var(--text3)'}">${mainVal}${returnBadge}</div>
+          ${balanceBreakdown}
+        </div>
+      </div>
+      ${editPanel}
+    </div>`;
   }
 
   if(elPlatforms){
@@ -3688,61 +3732,9 @@ function _renderInvInto(suffix){
   }
   if(elEditLabel) elEditLabel.textContent=`${MONTHS[m-1]} ${y}`;
   if(elEditFields){
-    const fxRates=getFxRates(m,y);
-    elEditFields.innerHTML=PLATFORMS.map(p=>{
-      const storedNGN=inv[p.key]||0;
-      const meta=getInvPlatformMeta(p.key);
-      const isFI=meta.assetClass==='fixed_income';
-      const isUSD=p.currency==='USD';
-      // For fixed income, show the clean principal (before interest) so the user
-      // edits principal only — interest is recomputed and added on save.
-      // For equity, show the stored balance as-is.
-      const principalNGN=isFI&&meta.lastSavedPrincipal!=null?meta.lastSavedPrincipal:storedNGN;
-      const dispVal=isUSD&&principalNGN?(principalNGN/fxRates.USD).toFixed(2):(principalNGN||'');
-      const lbl=isUSD?`$ USD (rate: ₦${fxRates.USD}/$ — stored as ₦)`:'₦ NGN';
-      const costStored=cGet('sw3_inv_cost_'+p.key)||'';
-      const costDisp=isUSD&&costStored?(costStored/fxRates.USD).toFixed(2):costStored;
-      const intRate=meta.interestRate||'';
-      const cType=meta.compoundType||'daily_accrual';
-      const matDate=meta.maturityDate||'';
-      const entryDate=meta.startDate||meta.principalEntryDate||'';
-      const entryLabel=entryDate?`since ${entryDate}`:'from today (on save)';
-      return`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px 12px;margin-bottom:8px">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
-          ${platformLogoEl(p.key,p.color,16)}
-          <span style="font-size:0.8rem;font-weight:700">${p.label}</span>
-          <span style="font-size:0.68rem;color:var(--text3)">(${lbl})</span>
-          <select class="sfield" id="inv-ac-${p.key}${s}" style="margin-left:auto;width:auto;font-size:0.68rem;padding:3px 7px" onchange="toggleInvFIFields('${p.key}','${s}')">
-            <option value="equity"${!isFI?' selected':''}>Equity</option>
-            <option value="fixed_income"${isFI?' selected':''}>Fixed Income</option>
-          </select>
-          <button class="txi-del" onclick="removePlatform('${p.key}')" title="Remove platform" style="margin-left:4px">×</button>
-        </div>
-        <div class="ig" style="margin-bottom:6px"><label class="ilabel">Principal Balance <span style="font-size:0.6rem;color:var(--text3);font-weight:400">${isFI?'— interest accrues '+entryLabel:''}</span></label><input class="ifield" type="text" id="inv-edit-${p.key}${s}" placeholder="0" value="${dispVal}" data-currency="${p.currency}"></div>
-        <div class="ig" style="margin-bottom:6px"><label class="ilabel" style="font-size:0.6rem;color:var(--text3)">Cost basis ${isUSD?'(USD)':'(₦)'} — optional</label><input class="ifield" style="font-size:0.72rem;padding:4px 8px" type="text" id="inv-cost-${p.key}${s}" placeholder="0" value="${costDisp}"></div>
-        <div id="inv-fi-fields-${p.key}${s}" style="${isFI?'':'display:none'}">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
-            <div class="ig" style="margin-bottom:0"><label class="ilabel">Annual Rate (%)</label><input class="ifield" type="text" id="inv-rate-${p.key}${s}" placeholder="e.g. 18" value="${intRate}" style="font-size:0.8rem;padding:6px 10px"></div>
-            <div class="ig" style="margin-bottom:0"><label class="ilabel">Accrual Type</label><select class="sfield" id="inv-ct-${p.key}${s}" style="font-size:0.75rem;padding:6px 10px" onchange="toggleInvFIFields('${p.key}','${s}')">
-              <option value="daily_accrual"${cType==='daily_accrual'?' selected':''}>Daily Accrual</option>
-              <option value="daily_compound"${cType==='daily_compound'?' selected':''}>Daily Compound</option>
-            </select></div>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
-            <div class="ig" style="margin-bottom:0"><label class="ilabel">Start Date</label><input class="ifield" type="date" id="inv-start-${p.key}${s}" value="${entryDate}" style="font-size:0.78rem;padding:5px 8px" title="Interest accrues from this date"></div>
-            <div id="inv-mat-row-${p.key}${s}" class="ig" style="margin-bottom:0;${isFI&&cType==='daily_accrual'?'':'display:none'}"><label class="ilabel">Maturity Date</label><input class="ifield" type="date" id="inv-mat-${p.key}${s}" value="${meta.maturityDate||''}" style="font-size:0.78rem;padding:5px 8px"></div>
-          </div>
-          <div style="font-size:0.6rem;color:var(--text3);margin-top:4px;line-height:1.5">
-            <strong>Daily Accrual:</strong> simple interest on principal; set a maturity date to cap accrual.<br>
-            <strong>Daily Compound:</strong> interest compounds into principal each day.<br>
-            Interest is computed from the start date and added to the stored balance on save.
-          </div>
-        </div>
-      </div>`;
-    }).join('');
-    // Add Platform section
-    elEditFields.innerHTML+=`
-      <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
+    // Add Platform section only — per-platform edit is now inline in each row
+    elEditFields.innerHTML=`
+      <div class="card" style="margin-top:4px">
         <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.06em">Add Investment Platform</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
           <div class="ig" style="margin-bottom:0;grid-column:1/-1"><label class="ilabel">Platform Name</label><input class="ifield" id="new-plat-name${s}" placeholder="e.g. Stanbic" style="font-size:0.8rem;padding:6px 10px"></div>
@@ -3755,8 +3747,20 @@ function _renderInvInto(suffix){
         </div>
         <button class="btn btn-inc btn-full" onclick="addPlatform(document.getElementById('new-plat-name${s}').value,document.getElementById('new-plat-cur${s}').value,document.getElementById('new-plat-col${s}').value)">+ Add Platform</button>
       </div>`;
-    setTimeout(()=>initNumInputs(elEditFields),0);
   }
+}
+function toggleInvEdit(pKey, suffix){
+  const s=suffix||'';
+  const panel=document.getElementById('inv-edit-panel-'+pKey+s);
+  if(!panel) return;
+  const isOpen=panel.style.display!=='none';
+  panel.style.display=isOpen?'none':'block';
+  const saveBtn=document.getElementById('inv-save-btn'+s);
+  if(saveBtn){
+    const anyOpen=[...document.querySelectorAll('[id^="inv-edit-panel-"]')].filter(el=>el.id.endsWith(s));
+    saveBtn.style.display=anyOpen.some(el=>el.style.display!=='none')?'block':'none';
+  }
+  if(panel.style.display!=='none') setTimeout(()=>initNumInputs(panel),0);
 }
 function toggleInvFIFields(pKey, suffix){
   const sel=document.getElementById('inv-ac-'+pKey+suffix);
@@ -3766,20 +3770,19 @@ function toggleInvFIFields(pKey, suffix){
   if(!sel||!fiDiv) return;
   const isFI=sel.value==='fixed_income';
   fiDiv.style.display=isFI?'block':'none';
-  if(matRow) matRow.style.display=(isFI&&ctSel&&ctSel.value==='daily_accrual')?'':'none';
+  if(matRow) matRow.style.display=(isFI&&ctSel&&ctSel.value==='daily_accrual')?'block':'none';
 }
 function renderInvestments(){
   _renderInvInto('');    // pg-investments page (legacy, may not be visible)
   _renderInvInto('-2');  // acct-invest tab inside pg-accounts (the live one)
 }
 function invTab(tab,btn){
-  const tabs=['current','trend','edit'];
+  const tabs=['current','trend'];
   const inAccounts=btn.closest('#acct-invest')!=null;
   const s=inAccounts?'-2':'';
   tabs.forEach(t=>{const el=document.getElementById('inv-'+t+s);if(el)el.style.display=t===tab?'block':'none';});
   btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');
   if(tab==='trend'){renderInvTrend(s);setTimeout(()=>renderInvAllocChart(s),200);}
-  if(tab==='edit') renderInvestments();
 }
 async function renderInvTrend(suffix){
   const s=suffix||'';
@@ -3837,8 +3840,15 @@ async function saveInvFromEdit(){
     const data={month:S.expMonth,year:S.expYear};
     const fxRates=getFxRates(S.expMonth,S.expYear);
     const today=new Date().toISOString().slice(0,10);
-    // ── Pass 1: store principal only (interest is computed live in the display layer) ──
+    // ── Pass 1: store principal only — only for platforms with open edit panels ──
     PLATFORMS.forEach(p=>{
+      const panel=document.getElementById('inv-edit-panel-'+p.key+'-2')||document.getElementById('inv-edit-panel-'+p.key);
+      if(!panel||panel.style.display==='none'){
+        // Edit panel not opened — carry forward the existing stored value unchanged
+        const existing=cGet(CK.inv(S.expMonth,S.expYear));
+        if(existing&&existing[p.key]!=null) data[p.key]=existing[p.key];
+        return;
+      }
       const el=document.getElementById('inv-edit-'+p.key+'-2')||document.getElementById('inv-edit-'+p.key);
       const v=el?parseFloat(el.value):NaN;
       if(isNaN(v)){data[p.key]=0;return;}
@@ -3846,8 +3856,10 @@ async function saveInvFromEdit(){
       data[p.key]=principalNGN;
     });
     S.investments=data;cSet(CK.inv(S.expMonth,S.expYear),data);
-    // ── Pass 2: cost basis — allow clearing to 0 ─────────────────────────
+    // ── Pass 2: cost basis — only for open edit panels ───────────────────
     PLATFORMS.forEach(p=>{
+      const panel=document.getElementById('inv-edit-panel-'+p.key+'-2')||document.getElementById('inv-edit-panel-'+p.key);
+      if(!panel||panel.style.display==='none') return;
       const costEl=document.getElementById('inv-cost-'+p.key+'-2')||document.getElementById('inv-cost-'+p.key);
       if(!costEl) return;
       const raw=costEl.value.trim();
@@ -3863,7 +3875,11 @@ async function saveInvFromEdit(){
       }
     });
     // ── Pass 3: meta + interest ledger ────────────────────────────────────
+    // Only process platforms whose edit panel is open — hidden panels were not
+    // interacted with and must not overwrite their existing stored meta.
     PLATFORMS.forEach(p=>{
+      const panel=document.getElementById('inv-edit-panel-'+p.key+'-2')||document.getElementById('inv-edit-panel-'+p.key);
+      if(!panel||panel.style.display==='none') return; // not opened — leave meta untouched
       const el=document.getElementById('inv-edit-'+p.key+'-2')||document.getElementById('inv-edit-'+p.key);
       const acEl=document.getElementById('inv-ac-'+p.key+'-2')||document.getElementById('inv-ac-'+p.key);
       const rateEl=document.getElementById('inv-rate-'+p.key+'-2')||document.getElementById('inv-rate-'+p.key);
@@ -3885,21 +3901,29 @@ async function saveInvFromEdit(){
         const newStart=startEl&&startEl.value?startEl.value:today;
         const prevMeta=getInvPlatformMeta(p.key);
         const prevStart=prevMeta.startDate;
-        // Close the previous open segment into the ledger only when the start
-        // date is unchanged (i.e. the user is continuing an existing segment).
-        // If the user has changed the start date, they are opening a fresh
-        // segment — don't close the old one into the ledger.
         const ledger=[...(prevMeta.ledger||[])];
+        // Close the previous open segment into the ledger only when the start
+        // date is unchanged (the user is continuing the same investment period).
+        // After closing, advance startDate to today so the next open segment
+        // starts here — preventing the closed segment and open segment from
+        // covering the same date range (which would double-count interest).
+        let openSegmentStart=newStart;
         if(prevStart&&prevStart<today&&newStart===prevStart){
           const alreadyClosed=ledger.some(s=>s.from===prevStart&&s.to===today);
           if(!alreadyClosed){
             const prevPrincipal=prevMeta.lastSavedPrincipal||principalNGN;
             ledger.push({principal:prevPrincipal,from:prevStart,to:today});
           }
+          // Open segment now starts from today, not the original start date
+          openSegmentStart=today;
         }
         meta.ledger=ledger;
-        meta.startDate=newStart;
+        meta.startDate=openSegmentStart;
         meta.lastSavedPrincipal=principalNGN;
+        // investmentStartDate records the original start of this investment.
+        // Preserve it across saves unless the user explicitly changed the start date.
+        const prevInvStart=prevMeta.investmentStartDate||prevStart;
+        meta.investmentStartDate=(newStart===prevStart)?prevInvStart:newStart;
       }
       saveInvPlatformMeta(p.key,meta);
     });
@@ -5151,7 +5175,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.38</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.41</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -5663,7 +5687,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.38';
+const APP_VERSION='v3.14.41';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
