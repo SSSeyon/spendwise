@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.46</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.47</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1230,8 +1230,8 @@ function calcInterestAccrual(principal, annualRatePct, compoundType, startDate, 
   const compound=compoundType==='daily_compound';
 
   // Build movement list within (startDate, effectiveTo], sorted ascending by date.
-  const startStr=start.toISOString().slice(0,10);
-  const endStr=effectiveTo.toISOString().slice(0,10);
+  const startStr=toLocalISO(start);
+  const endStr=toLocalISO(effectiveTo);
   const mv=(movements||[])
     .filter(x=>x&&x.date&&x.delta&&x.date>startStr&&x.date<=endStr)
     .map(x=>({date:x.date,delta:x.delta}))
@@ -1326,7 +1326,7 @@ function nextRunDate(freq,from){
   else if(freq==='monthly'){d.setMonth(d.getMonth()+1);}
   else if(freq==='quarterly'){d.setMonth(d.getMonth()+3);}
   else if(freq==='annually'){d.setFullYear(d.getFullYear()+1);}
-  return d.toISOString().slice(0,10);
+  return toLocalISO(d);
 }
 function isDueThisMonth(nextRun){
   if(!nextRun)return false;
@@ -1336,34 +1336,38 @@ function isDueThisMonth(nextRun){
 async function postRecurring(idx){
   const list=getRecurring();const r=list[idx];if(!r)return;
   if(!confirm(`Post "${r.payee}" — ${fN(r.amount)} as ${r.type==='income'?'income':'expense'}?`))return;
+  // Stamp with the due date (nextRun) when present so the entry lands in the
+  // correct month; derive the month/year bucket from that same date.
+  const postDate=(r.nextRun||todayStr()).slice(0,10);
+  const _pdp=postDate.split('-');const pM=parseInt(_pdp[1]),pY=parseInt(_pdp[0]);
   if(r.type==='income'){
     const bank=r.bank||getCashAccounts()[0];
     const isUSD=isUSDCashAccount(bank);
-    const fxRates=getFxRates(S.expMonth,S.expYear);
+    const fxRates=getFxRates(pM,pY);
     const amtNGN=isUSD?Math.round(r.amount*fxRates.USD):r.amount;
-    const data={amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.incCat||'Other',bank,notes:r.notes||'',date:todayStr(),month:S.expMonth,year:S.expYear,type:'income',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+    const data={amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.incCat||'Other',bank,notes:r.notes||'',date:postDate,month:pM,year:pY,type:'income',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
     try{
       const ref=await db.collection('income').add(data);
-      S.income.unshift({...data,id:ref.id});
-      cSet(CK.inc(S.expMonth,S.expYear),S.income);
-      _adjustCash(bank, r.amount, S.expMonth, S.expYear);
+      if(pM===S.expMonth&&pY===S.expYear) S.income.unshift({...data,id:ref.id});
+      const incCache=cGet(CK.inc(pM,pY))||[];incCache.unshift({...data,id:ref.id});cSet(CK.inc(pM,pY),incCache);
+      _adjustCash(bank, r.amount, pM, pY);
       toast(`${r.payee} posted as income · ${bank} updated`);
     }catch(e){toast('Error posting');}
   }else{
     const bank=r.bank||getCashAccounts()[0];
     const isUSD=isUSDCashAccount(bank);
-    const fxRates=getFxRates(S.expMonth,S.expYear);
+    const fxRates=getFxRates(pM,pY);
     const amtNGN=isUSD?Math.round(r.amount*fxRates.USD):r.amount;
-    const data={amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.category,bank,payee:r.payee,notes:r.notes||'',date:todayStr(),month:S.expMonth,year:S.expYear,type:'expense',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+    const data={amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.category,bank,payee:r.payee,notes:r.notes||'',date:postDate,month:pM,year:pY,type:'expense',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
     try{
       const ref=await db.collection('transactions').add(data);
-      S.txns.unshift({...data,id:ref.id});
-      cSet(CK.txns(S.expMonth,S.expYear),S.txns);
-      _adjustCash(bank, -r.amount, S.expMonth, S.expYear);
+      if(pM===S.expMonth&&pY===S.expYear) S.txns.unshift({...data,id:ref.id});
+      const txCache=cGet(CK.txns(pM,pY))||[];txCache.unshift({...data,id:ref.id});cSet(CK.txns(pM,pY),txCache);
+      _adjustCash(bank, -r.amount, pM, pY);
       toast(`${r.payee} posted · ${bank} updated`);
     }catch(e){toast('Error posting');}
   }
-  list[idx].lastPosted=todayStr();list[idx].nextRun=nextRunDate(r.frequency,todayStr());
+  list[idx].lastPosted=postDate;list[idx].nextRun=nextRunDate(r.frequency,postDate);
   saveRecurring(list);renderDashboard();renderExpenses();renderRecurringCard();renderCashPage();
 }
 function renderRecurringCard(){
@@ -1374,13 +1378,13 @@ function renderRecurringCard(){
   if(!due.length){card.style.display='none';return;}
   card.style.display='block';
   const all=getRecurring();
-  list.innerHTML=due.map(r=>{const idx=all.indexOf(r);return`<div class="txi" style="cursor:pointer" onclick="postRecurring(${idx})"><div><div class="txi-cat">${r.payee}</div><div class="txi-meta">${r.type==='income'?'Income':'Expense'} · ${r.frequency} · Due ${fmtDate(r.nextRun)||'now'}</div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge ${r.type==='income'?'bg':'br'}">${r.type==='income'?'+':'-'}${fN(r.amount)}</span><span style="font-size:0.7rem;color:var(--accent)">Post →</span></div></div>`;}).join('');
+  list.innerHTML=due.map(r=>{const idx=all.indexOf(r);return`<div class="txi" style="cursor:pointer" onclick="postRecurring(${idx})"><div><div class="txi-cat">${esc(r.payee)}</div><div class="txi-meta">${r.type==='income'?'Income':'Expense'} · ${r.frequency} · Due ${fmtDate(r.nextRun)||'now'}</div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge ${r.type==='income'?'bg':'br'}">${r.type==='income'?'+':'-'}${fN(r.amount)}</span><span style="font-size:0.7rem;color:var(--accent)">Post →</span></div></div>`;}).join('');
 }
 function openRecurModal(){
   const list=getRecurring();
   document.getElementById('recur-list').innerHTML=list.length?list.map((r,i)=>`
     <div class="dc" style="margin-bottom:8px">
-      <div class="dc-top"><div><div class="dc-name">${r.payee}</div><div class="dc-sub">${r.frequency} · ${r.category||r.incCat||''} · Next: ${fmtDate(r.nextRun)||'—'}</div></div>
+      <div class="dc-top"><div><div class="dc-name">${esc(r.payee)}</div><div class="dc-sub">${r.frequency} · ${esc(r.category||r.incCat||'')} · Next: ${fmtDate(r.nextRun)||'—'}</div></div>
         <button class="txi-del" onclick="deleteRecurring(${i})">×</button>
       </div>
       <div style="display:flex;gap:8px;margin-top:6px">
@@ -1584,7 +1588,9 @@ function fmtChartNGN(v){if(Math.abs(v)>=1e6)return'₦'+(v/1e6).toFixed(2)+'M';i
 function fmtChartMoney(v){return fmtChartNGN(v);}
 const fNum=n=>n==null||isNaN(n)?'—':Number(n).toLocaleString('en-NG',{maximumFractionDigits:0});
 const ck=c=>c.replace(/[^a-zA-Z]/g,'');
-const todayStr=()=>new Date().toISOString().slice(0,10);
+const todayStr=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
+const toLocalISO=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 const MONTHS_SHORT=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function fmtDate(iso){if(!iso)return'—';const p=iso.slice(0,10).split('-');if(p.length<3)return iso;return`${parseInt(p[2],10)}-${MONTHS_SHORT[parseInt(p[1],10)-1]}-${p[0]}`;}
 const curM=()=>new Date().getMonth()+1;
@@ -2219,7 +2225,7 @@ function renderDashboard(){
   const recEl=document.getElementById('dash-recent');
   const combined=[...txns.map(t=>({...t,type:'exp'})),...incList.map(t=>({...t,type:'inc'}))].sort((a,b)=>a.date>b.date?-1:1).slice(0,5);
   if(!combined.length){recEl.innerHTML='<div class="empty"><div class="empty-i">↕</div>No transactions yet</div>';}
-  else{recEl.innerHTML='<div class="txlist">'+combined.map(tx=>`<div class="txi"><div><div class="txi-cat">${tx.category?(CAT_ICONS[tx.category]||'')+' '+tx.category:tx.payee||'—'}</div><div class="txi-meta">${tx.payee||tx.notes||'—'} · ${fmtDate(tx.date)}</div></div><div class="${tx.type==='inc'?'txi-amt txi-inc':'txi-amt txi-exp'}">${tx.type==='inc'?'+':''}${fmtCur(tx.amount,cur,m,y)}</div></div>`).join('')+'</div>';}
+  else{recEl.innerHTML='<div class="txlist">'+combined.map(tx=>`<div class="txi"><div><div class="txi-cat">${tx.category?(CAT_ICONS[tx.category]||'')+' '+tx.category:esc(tx.payee)||'—'}</div><div class="txi-meta">${esc(tx.payee||tx.notes)||'—'} · ${fmtDate(tx.date)}</div></div><div class="${tx.type==='inc'?'txi-amt txi-inc':'txi-amt txi-exp'}">${tx.type==='inc'?'+':''}${fmtCur(tx.amount,cur,m,y)}</div></div>`).join('')+'</div>';}
 
   // Calendar
   renderDashCalendar(m, y, [...S.txns, ...S.income.map(i=>({...i,type:'inc'}))]);
@@ -2251,7 +2257,7 @@ function renderDashCalendar(m, y, txns){
   // Calendar grid
   const firstDay=new Date(y, m-1, 1).getDay(); // 0=Sun
   const daysInMonth=new Date(y, m, 0).getDate();
-  const todayStr=new Date().toISOString().slice(0,10);
+  const todayStr=(()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');})();
 
   let cells='';
   // Header
@@ -2304,7 +2310,7 @@ function showDayTxns(dateStr, evt){
   document.getElementById('dcal-popup-title').textContent=label;
   document.getElementById('dcal-popup-body').innerHTML='<div class="txlist">'+dayTxns.map(tx=>{
     const isInc=tx.type==='inc';
-    return`<div class="txi"><div><div class="txi-cat">${tx.category?(CAT_ICONS[tx.category]||'')+'\u00a0'+tx.category:tx.payee||'—'}</div><div class="txi-meta">${tx.payee||tx.notes||'—'}</div></div><div class="${isInc?'txi-amt txi-inc':'txi-amt txi-exp'}">${isInc?'+':'−'}${fmtCur(tx.amount,cur,m,y)}</div></div>`;
+    return`<div class="txi"><div><div class="txi-cat">${tx.category?(CAT_ICONS[tx.category]||'')+'\u00a0'+tx.category:esc(tx.payee)||'—'}</div><div class="txi-meta">${esc(tx.payee||tx.notes)||'—'}</div></div><div class="${isInc?'txi-amt txi-inc':'txi-amt txi-exp'}">${isInc?'+':'−'}${fmtCur(tx.amount,cur,m,y)}</div></div>`;
   }).join('')+'</div>';
   pop.style.display='flex';
 }
@@ -3056,7 +3062,7 @@ function renderIncome(){
     const rawAmt=isUSD?`$${(i.amount||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`:'';
     return`<div class="txi" id="txi-inc-${i.id}">
       <div style="flex:1;min-width:0">
-        <div class="txi-cat" style="font-size:0.76rem">${i.category||'Income'}${i.notes?` · ${i.notes}`:''}</div>
+        <div class="txi-cat" style="font-size:0.76rem">${esc(i.category||'Income')}${i.notes?` · ${esc(i.notes)}`:''}</div>
         <div class="txi-meta">${fmtDate(i.date)}${i.bank?' · '+i.bank:''}${rawAmt?' · '+rawAmt:''}</div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
@@ -3154,8 +3160,8 @@ function renderExpenses(){
            ontouchmove="swipeMove(event,'${tx.id}')"
            ontouchend="swipeEnd(event,'${tx.id}')">
         <div style="flex:1;min-width:0">
-          <div class="txi-cat" style="font-size:0.76rem">${tx.payee||'—'}</div>
-          <div class="txi-meta">${fmtDate(tx.date)} · ${tx.bank||''}</div>
+          <div class="txi-cat" style="font-size:0.76rem">${esc(tx.payee)||'—'}</div>
+          <div class="txi-meta">${fmtDate(tx.date)} · ${esc(tx.bank||'')}</div>
         </div>
         <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
           <div class="txi-amt txi-exp">${fN(tx.amount)}</div>
@@ -3893,7 +3899,7 @@ async function saveInvFromEdit(){
     PLATFORMS=getPlatforms();
     const data={month:S.expMonth,year:S.expYear};
     const fxRates=getFxRates(S.expMonth,S.expYear);
-    const today=new Date().toISOString().slice(0,10);
+    const today=todayStr();
     // ── Pass 1: store principal only — only for platforms with open edit panels ──
     PLATFORMS.forEach(p=>{
       const panel=document.getElementById('inv-edit-panel-'+p.key+'-2')||document.getElementById('inv-edit-panel-'+p.key);
@@ -4231,7 +4237,7 @@ function renderDebtors(){
     const owedDisp=fmtCur(d.ngnBalance||0,cur,m,y);
     return`<div class="dc" style="${settled&&expectRepay?'opacity:0.4':''}">
       <div class="dc-top">
-        <div><div class="dc-name">${d.name}</div><div class="dc-sub">${d.category} · ${d.currency} ${fNum(d.amount)}${d.date?' · '+fmtDate(d.date):''}</div></div>
+        <div><div class="dc-name">${esc(d.name)}</div><div class="dc-sub">${esc(d.category)} · ${d.currency} ${fNum(d.amount)}${d.date?' · '+fmtDate(d.date):''}</div></div>
         <div class="badge ${!expectRepay?'bgold':settled?'bg':'br'}">${!expectRepay?'Write-off':settled?'Settled':owedDisp+' due'}</div>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
@@ -4241,7 +4247,7 @@ function renderDebtors(){
         </div>
       </div>
       ${expectRepay&&!settled?`<div class="prog" style="margin-top:8px"><div class="pf ok" style="width:${Math.min(pct,100)}%"></div></div>`:''}
-      ${d.notes?`<div style="font-size:0.65rem;color:var(--text2);margin-top:5px">${d.notes}</div>`:''}
+      ${d.notes?`<div style="font-size:0.65rem;color:var(--text2);margin-top:5px">${esc(d.notes)}</div>`:''}
       <div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">
         ${expectRepay&&!settled?`<button class="btn btn-g btn-sm" onclick="recordPmt('${d.id||idx}',${d.amount},${d.paid||0},${d.rate||DEF_RATES[d.currency]||1})">Record Payment</button>`:''}
         ${(d.pmtLog&&d.pmtLog.length)?`<button class="btn btn-g btn-sm" onclick="togglePmtLog('${d.id||idx}')">Payment History (${d.pmtLog.length})</button>`:''}
@@ -5216,7 +5222,7 @@ function renderSettData(){
       <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
       <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.46</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.47</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -5561,8 +5567,8 @@ function _renderCatPopup(cur, m, y){
       ${sorted.map(tx=>`
         <div class="txi" onclick="openEditExpense('${tx.id}');closeMod('drill-modal')">
           <div style="flex:1;min-width:0">
-            <div class="txi-cat" style="font-size:0.76rem">${tx.payee||'—'}</div>
-            <div class="txi-meta">${fmtDate(tx.date)}${tx.bank?' · '+tx.bank:''}${tx.notes?' · '+tx.notes:''}</div>
+            <div class="txi-cat" style="font-size:0.76rem">${esc(tx.payee)||'—'}</div>
+            <div class="txi-meta">${fmtDate(tx.date)}${tx.bank?' · '+esc(tx.bank):''}${tx.notes?' · '+esc(tx.notes):''}</div>
           </div>
           <div class="txi-amt txi-exp">${fmtCur(tx.amount,cur,m,y)}</div>
         </div>`).join('')}
@@ -5728,7 +5734,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.46';
+const APP_VERSION='v3.14.47';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
