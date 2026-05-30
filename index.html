@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.56</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.57</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -924,8 +924,12 @@ datalist option{background:var(--bg2);color:var(--text)}
         <input class="ifield" type="text" id="liq-amount" placeholder="0">
         <div style="font-size:0.6rem;color:var(--text3);margin-top:3px" id="liq-amount-hint"></div>
       </div>
-      <div class="ig" style="margin-bottom:10px">
-        <label class="ilabel">Deposit to account</label>
+      <div class="ig" style="margin-bottom:8px">
+        <label class="ilabel">Deposit to</label>
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <button id="liq-dest-cash-btn" class="btn btn-sm btn-p" style="flex:1;font-size:0.72rem" onclick="setLiqDest('cash')">Cash account</button>
+          <button id="liq-dest-inv-btn" class="btn btn-sm btn-g" style="flex:1;font-size:0.72rem" onclick="setLiqDest('investment')">Investment</button>
+        </div>
         <select class="sfield" id="liq-bank"></select>
       </div>
       <div class="ig" style="margin-bottom:14px">
@@ -3805,18 +3809,21 @@ function _renderInvInto(suffix){
       totalPrincipalNGN+=pNGN;
       let interest=0,projBal=pNGN,isMatured=false;
       if(sub.assetClass==='fixed_income'&&sub.rate){
-        const r=calcInterestAccrual(pNGN,Number(sub.rate),sub.compoundType||'daily_accrual',sub.startDate||null,sub.maturityDate||null,getMovementsForPlatform(p.key).filter(mv=>!mv.subId||mv.subId===sub.id));
+        // Pass empty movements — sub principals are tracked directly; platform-level
+        // movements (no subId) would incorrectly reconstruct a doubled historical principal
+        const r=calcInterestAccrual(pNGN,Number(sub.rate),sub.compoundType||'daily_accrual',sub.startDate||null,sub.maturityDate||null,[]);
         interest=r.interest; projBal=r.projectedBalance; isMatured=r.isMatured;
       }
       totalInterestNGN+=interest;
       if(isMatured) anyMatured=true;
 
-      const dispPrincipal=isUSD?(pNGN/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(pNGN);
-      const dispTotal=isUSD?((projBal/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})):fN(Math.round(projBal));
+      // Use fNum (no ₦ prefix) since dispCcy is prepended separately
+      const dispPrincipal=isUSD?(pNGN/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fNum(pNGN);
+      const dispTotal=isUSD?((projBal/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})):fNum(Math.round(projBal));
       const dispCcy=isUSD?'$':isGBP?'£':'₦';
       const rateTag=sub.assetClass==='fixed_income'&&sub.rate?`<span class="int-badge">${sub.rate}%</span>`:'';
       const matTag=sub.maturityDate?`<span style="font-size:0.58rem;color:${isMatured?'var(--red)':'var(--text3)'}"> · ${isMatured?'Matured':'Matures'} ${fmtDate(sub.maturityDate)}</span>`:'';
-      const intLine=interest>0?`<span style="font-size:0.6rem;color:var(--gold);font-family:var(--mono);margin-left:4px">(+${dispCcy}${isUSD?(interest/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(Math.round(interest))})</span>`:'';
+      const intLine=interest>0?`<span style="font-size:0.6rem;color:var(--gold);font-family:var(--mono);margin-left:4px">(+${dispCcy}${isUSD?(interest/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fNum(Math.round(interest))})</span>`:'';
 
       const liqBtn=sub.assetClass==='fixed_income'&&pNGN>0
         ?`<div style="margin-top:5px;text-align:right"><button onclick="event.stopPropagation();openLiqModal('${p.key}','${sub.id}')" style="font-size:0.6rem;padding:2px 8px;border-radius:3px;background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.3);color:var(--red);cursor:pointer">Liquidate</button></div>`
@@ -4005,9 +4012,31 @@ function removeInvSub(pKey, subId, suffix){
 }
 
 // ── Liquidation ───────────────────────────────────────────────────────────
-let _liqPKey=null, _liqSubId=null;
+let _liqPKey=null, _liqSubId=null, _liqDest='cash';
+
+function setLiqDest(dest){
+  _liqDest=dest;
+  const cashBtn=document.getElementById('liq-dest-cash-btn');
+  const invBtn=document.getElementById('liq-dest-inv-btn');
+  if(cashBtn) cashBtn.className=`btn btn-sm ${dest==='cash'?'btn-p':'btn-g'}`;
+  if(invBtn) invBtn.className=`btn btn-sm ${dest==='investment'?'btn-p':'btn-g'}`;
+  const bankSel=document.getElementById('liq-bank');
+  if(!bankSel) return;
+  if(dest==='cash'){
+    bankSel.innerHTML=getCashAccounts().map(a=>`<option value="${a}">${a}</option>`).join('');
+  } else {
+    // All platforms except the one being liquidated; filter to allow sub selection
+    const opts=PLATFORMS.filter(pl=>pl.key!==_liqPKey).map(pl=>{
+      const subs=getSubsForPlatform(pl.key);
+      if(subs.length<=1) return`<option value="${pl.key}|0">${pl.label} — ${subs[0]?subs[0].label:'Investment 1'}</option>`;
+      return subs.map((sb,i)=>`<option value="${pl.key}|${i}">${pl.label} — ${sb.label}</option>`).join('');
+    }).join('');
+    bankSel.innerHTML=opts||'<option value="">No other platforms</option>';
+  }
+}
+
 function openLiqModal(pKey, subId){
-  _liqPKey=pKey; _liqSubId=subId;
+  _liqPKey=pKey; _liqSubId=subId; _liqDest='cash';
   const subs=getSubsForPlatform(pKey);
   const sub=subs.find(s=>s.id===subId);
   if(!sub) return;
@@ -4020,24 +4049,22 @@ function openLiqModal(pKey, subId){
   const pNGN=Number(sub.principal)||0;
   let projBalNGN=pNGN;
   if(sub.assetClass==='fixed_income'&&sub.rate){
-    const r=calcInterestAccrual(pNGN,Number(sub.rate),sub.compoundType||'daily_accrual',sub.startDate||null,sub.maturityDate||null,getMovementsForPlatform(pKey).filter(mv=>!mv.subId||mv.subId===subId));
+    const r=calcInterestAccrual(pNGN,Number(sub.rate),sub.compoundType||'daily_accrual',sub.startDate||null,sub.maturityDate||null,[]);
     projBalNGN=r.projectedBalance;
   }
   const dispCcy=isUSD?'$':isGBP?'£':'₦';
-  const dispPrin=isUSD?'$'+(pNGN/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'₦'+fN(pNGN);
-  const dispTotal=isUSD?'$'+(projBalNGN/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'₦'+fN(Math.round(projBalNGN));
-  // Title and description
+  const dispPrin=isUSD?'$'+(pNGN/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'₦'+fNum(pNGN);
+  const dispTotal=isUSD?'$'+(projBalNGN/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'₦'+fNum(Math.round(projBalNGN));
   document.getElementById('liq-title').textContent=`Liquidate — ${sub.label}`;
   document.getElementById('liq-sub-desc').innerHTML=`<strong>${p?p.label:'Platform'}</strong> · ${dispPrin} principal${projBalNGN>pNGN?' + interest = '+dispTotal:''}`;
-  // Pre-fill amount in NGN (cash accounts always store NGN)
   const amtEl=document.getElementById('liq-amount');
   amtEl.value=Math.round(projBalNGN).toLocaleString();
   document.getElementById('liq-amount-hint').textContent=isUSD?`Converted at ₦${fxRate}/$. Edit if needed.`:'Edit to liquidate a partial amount.';
-  // Date
   document.getElementById('liq-date').value=todayStr();
-  // Populate cash accounts
-  const bankSel=document.getElementById('liq-bank');
-  bankSel.innerHTML=getCashAccounts().map(a=>`<option value="${a}">${a}</option>`).join('');
+  // Reset to cash dest and populate
+  document.getElementById('liq-dest-cash-btn').className='btn btn-sm btn-p';
+  document.getElementById('liq-dest-inv-btn').className='btn btn-sm btn-g';
+  setLiqDest('cash');
   openMod('liq-modal');
   setTimeout(()=>initNumInputs(document.getElementById('liq-modal')),50);
 }
@@ -4047,25 +4074,21 @@ async function confirmLiquidation(){
   const rawAmt=document.getElementById('liq-amount').value.replace(/,/g,'');
   const amtNGN=Math.round(parseFloat(rawAmt));
   if(!amtNGN||amtNGN<=0){toast('Enter a valid amount');return;}
-  const bank=document.getElementById('liq-bank').value;
+  const destVal=document.getElementById('liq-bank').value;
   const date=document.getElementById('liq-date').value||todayStr();
   const dp=date.split('-');const liqM=parseInt(dp[1]),liqY=parseInt(dp[0]);
-  if(!bank){toast('Select an account');return;}
+  if(!destVal){toast('Select a destination');return;}
 
   const subs=getSubsForPlatform(_liqPKey);
   const subIdx=subs.findIndex(s=>s.id===_liqSubId);
   if(subIdx<0){toast('Investment not found');return;}
   const sub=subs[subIdx];
 
-  // Record in withdrawal log for audit trail
-  addInvWithdrawal(_liqPKey,amtNGN,date,`Liquidation of ${sub.label}`);
-  addInvMovement(_liqPKey,-amtNGN,date,`Liquidation of ${sub.label}`);
-
-  // Zero out the sub principal (keep the record but mark as liquidated)
-  subs[subIdx]={...sub,principal:0,maturityDate:sub.maturityDate||date};
+  // Zero out the sub principal
+  subs[subIdx]={...sub,principal:0};
   saveSubsForPlatform(_liqPKey,subs);
 
-  // Recompute platform total and persist to Firestore
+  // Recompute and persist platform total
   const m=S.expMonth,y=S.expYear;
   const newPlatTotal=subs.reduce((sum,s)=>sum+(Number(s.principal)||0),0);
   const invData={...(cGet(CK.inv(m,y))||S.investments),month:m,year:y};
@@ -4074,11 +4097,32 @@ async function confirmLiquidation(){
   cSet(CK.inv(m,y),invData);
   if(db) db.collection('investments').doc(sid(m,y)).set(invData,{merge:true}).catch(()=>{});
 
-  // Move funds to cash account
-  _adjustCash(bank,amtNGN,liqM,liqY);
+  if(_liqDest==='investment'){
+    // Liquidate into another investment sub
+    const [destPKey,destSubIdxStr]=destVal.split('|');
+    const destSubIdx=parseInt(destSubIdxStr)||0;
+    const destSubs=migrateToSubs(destPKey);
+    if(destSubs[destSubIdx]){
+      destSubs[destSubIdx].principal=(Number(destSubs[destSubIdx].principal)||0)+amtNGN;
+    } else {
+      destSubs.push({id:destPKey+'_sub_'+(Date.now()),label:'Investment '+(destSubs.length+1),
+        principal:amtNGN,assetClass:'equity',rate:'',compoundType:'daily_accrual',startDate:date,maturityDate:''});
+    }
+    saveSubsForPlatform(destPKey,destSubs);
+    const destTotal=destSubs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
+    invData[destPKey]=destTotal;
+    S.investments=invData;
+    cSet(CK.inv(m,y),invData);
+    if(db) db.collection('investments').doc(sid(m,y)).set(invData,{merge:true}).catch(()=>{});
+    const destPlat=PLATFORMS.find(pl=>pl.key===destPKey);
+    toast(`₦${fNum(amtNGN)} → ${destPlat?destPlat.label:destPKey}`);
+  } else {
+    // Liquidate to cash account
+    _adjustCash(destVal,amtNGN,liqM,liqY);
+    toast(`₦${fNum(amtNGN)} liquidated → ${destVal}`);
+  }
 
   closeMod('liq-modal');
-  toast(`₦${fN(amtNGN)} liquidated → ${bank}`);
   haptic([8,40,8]);
   renderInvestments();renderDashboard();
 }
@@ -5434,7 +5478,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.56</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.56: Sort inside categories by date or actual expense; flat Excel export restored; settings cards cleaned up</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.57</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.57: Sort inside categories by date or actual expense; flat Excel export restored; settings cards cleaned up</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -5977,7 +6021,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.56';
+const APP_VERSION='v3.14.57';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
