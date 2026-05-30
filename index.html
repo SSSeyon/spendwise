@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.61</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.63</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -520,6 +520,7 @@ datalist option{background:var(--bg2);color:var(--text)}
           <button class="tab active" onclick="dashChartTab('breakdown',this)">Breakdown</button>
           <button class="tab" onclick="dashChartTab('trend',this)">6-Month</button>
           <button class="tab" onclick="dashChartTab('networth',this)">Net Worth</button>
+          <button class="tab" onclick="dashChartTab('cashflow',this)">Cash Flow</button>
         </div>
         <div id="dash-tab-breakdown">
           <div class="chart-btns" id="chart-btns">
@@ -540,6 +541,10 @@ datalist option{background:var(--bg2);color:var(--text)}
         </div>
         <div id="dash-tab-networth" style="display:none">
           <canvas id="nw-trend-chart" style="max-height:160px"></canvas>
+        </div>
+        <div id="dash-tab-cashflow" style="display:none">
+          <div id="cashflow-diagram" style="width:100%;min-height:240px"></div>
+          <div id="cashflow-legend" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center"></div>
         </div>
       </div>
     </div>
@@ -4843,9 +4848,133 @@ function toggleCashEdit(){
 // DASHBOARD CHART TABS
 // ══════════════════════════════════════════════════════════════════════════
 function dashChartTab(tab, btn){
-  ['breakdown','trend','networth'].forEach(t=>{const el=document.getElementById('dash-tab-'+t);if(el)el.style.display=t===tab?'block':'none';});
+  ['breakdown','trend','networth','cashflow'].forEach(t=>{const el=document.getElementById('dash-tab-'+t);if(el)el.style.display=t===tab?'block':'none';});
   btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active');
+  if(tab==='cashflow') renderCashFlowChart();
+}
+
+function renderCashFlowChart(){
+  const m=S.dashMonth,y=S.dashYear,cur=S.dashCurrency;
+  const container=document.getElementById('cashflow-diagram');
+  if(!container) return;
+
+  const incTotal=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
+  const catSpend={};
+  S.txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+(t.amount||0);});
+
+  // Top 8 categories; merge the rest into Other
+  let cats=Object.entries(catSpend).sort((a,b)=>b[1]-a[1]);
+  if(cats.length>8){
+    const other=cats.slice(8).reduce((s,[,v])=>s+v,0);
+    cats=[...cats.slice(0,8),['Other',other]];
+  }
+  const totalExp=cats.reduce((s,[,v])=>s+v,0);
+  const savings=incTotal-totalExp;
+
+  if(!incTotal&&!totalExp){
+    container.innerHTML='<div style="text-align:center;color:var(--text3);font-size:0.72rem;padding:50px 0">No data for this month</div>';
+    return;
+  }
+
+  const W=container.clientWidth||310;
+  const H=252;
+  const nodeW=13;
+  const lx=8;            // left node left edge
+  const labelW=86;       // reserved for right-side labels
+  const rx=W-labelW-nodeW; // right node left edge
+  const padT=8, padB=8;
+  const drawH=H-padT-padB;
+  const nodeGap=4;       // gap between right nodes
+
+  // Right-side items: expense categories + savings/deficit
+  const rightItems=[...cats];
+  if(savings>0)  rightItems.push(['Savings', savings]);
+  else if(savings<0) rightItems.push(['Deficit', Math.abs(savings)]);
+
+  // Scale proportionally to the larger side
+  const totalFlow=Math.max(incTotal||1, totalExp+(savings>0?savings:0)||1);
+  const scaleH=(drawH-nodeGap*(rightItems.length-1))/totalFlow;
+
+  // Position right nodes
+  let curY=padT;
+  const rNodes=rightItems.map(([name,val])=>{
+    const h=Math.max(val*scaleH, 3);
+    const node={name,val,y:curY,h};
+    curY+=h+nodeGap;
+    return node;
+  });
+
+  // Map left-side flow offsets continuously (no gaps on income side)
+  const lScale=drawH/totalFlow;
+  let lY=padT;
+  const flows=rNodes.map(rn=>{
+    const fh=Math.max(rn.val*lScale, 3);
+    const f={...rn, ly1:lY, ly2:lY+fh, ry1:rn.y, ry2:rn.y+rn.h};
+    lY+=fh;
+    return f;
+  });
+
+  const mx=lx+nodeW+(rx-lx-nodeW)*0.42; // bezier control point x (slightly left of centre)
+
+  // Colour palette
+  const expPal=[
+    'rgba(255,80,80','rgba(255,120,50','rgba(230,70,130',
+    'rgba(180,80,220','rgba(255,170,40','rgba(80,160,255',
+    'rgba(255,90,140','rgba(200,100,60',
+  ];
+  const getClr=(name,idx,a)=>{
+    if(name==='Savings') return`rgba(96,200,120,${a})`;
+    if(name==='Deficit') return`rgba(255,140,60,${a})`;
+    return expPal[idx%expPal.length]+`,${a})`;
+  };
+
+  // Build SVG
+  const flowPaths=flows.map((f,i)=>{
+    const fill=getClr(f.name,i,0.28);
+    const stroke=getClr(f.name,i,0.55);
+    // Top edge: left-top → right-top; bottom: right-bottom → left-bottom
+    const d=`M${lx+nodeW},${f.ly1} C${mx},${f.ly1} ${mx},${f.ry1} ${rx},${f.ry1}`+
+             ` L${rx},${f.ry2} C${mx},${f.ry2} ${mx},${f.ly2} ${lx+nodeW},${f.ly2} Z`;
+    return`<path d="${d}" fill="${fill}" stroke="${stroke}" stroke-width="0.5"/>`;
+  }).join('');
+
+  // Left income node
+  const incNodeH=drawH;
+  const leftNode=`<rect x="${lx}" y="${padT}" width="${nodeW}" height="${incNodeH}" rx="3" fill="rgba(96,200,120,0.82)"/>`;
+  const incLbl=`<text x="${lx+nodeW/2}" y="${padT+incNodeH/2}" fill="rgba(255,255,255,0.9)" font-size="7.5" font-family="DM Mono,monospace" text-anchor="middle" dominant-baseline="middle" transform="rotate(-90,${lx+nodeW/2},${padT+incNodeH/2})">Income</text>`;
+
+  // Right nodes + labels
+  const rightEls=flows.map((f,i)=>{
+    const fill=getClr(f.name,i,0.82);
+    const midY=f.ry1+f.h/2;
+    const raw=f.name==='Savings'?savings:f.name==='Deficit'?Math.abs(savings):catSpend[f.name]||f.val;
+    const pct=totalFlow>0?Math.round(raw/totalFlow*100):0;
+    // Truncate label to fit
+    const maxChars=Math.max(6,Math.floor((labelW-8)/5.2));
+    const lbl=f.name.length>maxChars?f.name.slice(0,maxChars-1)+'…':f.name;
+    const showLbl=f.h>=9;
+    return`<rect x="${rx}" y="${f.ry1}" width="${nodeW}" height="${f.h}" rx="3" fill="${fill}"/>
+      ${showLbl?`<text x="${rx+nodeW+4}" y="${midY}" fill="rgba(160,160,200,0.9)" font-size="8" font-family="DM Mono,monospace" dominant-baseline="middle">${lbl}</text>`:''}
+      ${f.h>=14?`<text x="${W-4}" y="${midY}" fill="rgba(120,120,160,0.8)" font-size="7" font-family="DM Mono,monospace" text-anchor="end" dominant-baseline="middle">${pct}%</text>`:''}`;
+  }).join('');
+
+  container.innerHTML=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+    ${flowPaths}${leftNode}${incLbl}${rightEls}
+  </svg>`;
+
+  // Legend
+  const legEl=document.getElementById('cashflow-legend');
+  if(legEl){
+    const items=[
+      {color:'rgba(96,200,120,0.85)',label:`Income ${fmtCur(incTotal,cur,m,y)}`},
+      {color:'rgba(255,80,80,0.75)',label:`Expenses ${fmtCur(totalExp,cur,m,y)}`},
+      savings>=0
+        ?{color:'rgba(96,200,120,0.5)',label:`Savings ${fmtCur(savings,cur,m,y)}`}
+        :{color:'rgba(255,140,60,0.85)',label:`Deficit ${fmtCur(Math.abs(savings),cur,m,y)}`},
+    ];
+    legEl.innerHTML=items.map(it=>`<span style="display:flex;align-items:center;gap:3px;font-size:0.58rem;color:var(--text3)"><span style="display:inline-block;width:7px;height:7px;border-radius:1px;background:${it.color}"></span>${it.label}</span>`).join('');
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -5554,7 +5683,7 @@ async function saveBudget(){
 function renderSettExport(){
   document.getElementById('sett-export').innerHTML=`
     <div class="exp-card"><div class="exp-card-title">Full Data Backup (JSON)</div><div class="exp-card-sub">Export everything — transactions, income, cash, investments, debtors, history — as a JSON file you can re-import later.</div><button class="btn btn-p btn-sm" onclick="exportFullBackup()">↓ Download Backup JSON</button></div>
-    <div class="exp-card"><div class="exp-card-title">Export All Transactions</div><div class="exp-card-sub">Every transaction — Date, Category, Actual Expense, Bank, Amount — with category totals.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-exp btn-sm" onclick="exportAll('csv')">↓ CSV</button><button class="btn btn-exp btn-sm" onclick="exportAll('xlsx')">↓ Excel</button></div></div>
+    <div class="exp-card"><div class="exp-card-title">Export All Data</div><div class="exp-card-sub">All transactions (expenses + income), investment balances, and cash balances — 3 sheets, daily transaction detail.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-exp btn-sm" onclick="exportAll('csv')">↓ CSV</button><button class="btn btn-exp btn-sm" onclick="exportAll('xlsx')">↓ Excel</button></div></div>
     <div class="exp-card"><div class="exp-card-title">Export by Month</div><div class="exp-card-sub">Select a month and export just that month.</div>
     <div class="gform" style="margin-bottom:10px">
       <div class="ig"><label class="ilabel">Month</label><select class="sfield" id="exp-mo-sel">${Array.from({length:12},(_,i)=>i+1).reverse().map(m=>`<option value="${m}">${MONTHS[m-1]}</option>`).join('')}</select></div>
@@ -5596,21 +5725,160 @@ async function exportFullBackup(){
   URL.revokeObjectURL(url);
   toast(`Backup downloaded (${totalDocs} records)`);haptic([8]);
 }
-function buildRows(txns,month,year){
-  const sorted=[...txns].sort((a,b)=>a.date>b.date?1:-1);
-  const rows=[[`SpendWise Export — ${month?MONTHS[month-1]+' '+year:'All Transactions'}`],[],
-    ['Date','Category','Actual Expense','Bank','Notes','Amount (₦)']];
-  sorted.forEach(t=>rows.push([t.date||'',t.category||'',t.payee||'',t.bank||'',t.notes||'',t.amount||0]));
-  rows.push([]);
-  rows.push(['SUMMARY']);
-  rows.push(['Total transactions','','','','',sorted.length]);
-  rows.push(['Total amount','','','','',sorted.reduce((s,t)=>s+(t.amount||0),0)]);
-  const catT={};sorted.forEach(t=>{catT[t.category]=(catT[t.category]||0)+(t.amount||0);});
-  Object.entries(catT).sort((a,b)=>b[1]-a[1]).forEach(([c,a])=>rows.push([c,'','','','',a]));
+// ── Multi-sheet Excel export ───────────────────────────────────────────────
+function _buildTxnSheet(txns,incomeRecs,label){
+  // Combined daily transactions: expenses + income, sorted by date asc
+  const expRows=txns.map(t=>([t.date||'','Expense',t.category||'',t.payee||'',t.bank||'',t.notes||'',-(t.amount||0),0]));
+  const incRows=(incomeRecs||[]).map(i=>([i.date||'','Income',i.category||'Income','',i.bank||'',i.notes||'',0,i.amtNGN||i.amount||0]));
+  const all=[...expRows,...incRows].sort((a,b)=>a[0]>b[0]?1:a[0]<b[0]?-1:0);
+  const header=[`${label} — Transactions`];
+  const cols=['Date','Type','Category','Actual Expense','Bank','Notes','Expense (₦)','Income (₦)'];
+  const rows=[header,[],cols,...all];
+  // Summary
+  const totExp=txns.reduce((s,t)=>s+(t.amount||0),0);
+  const totInc=(incomeRecs||[]).reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
+  rows.push([],[`Total expenses`,'','','','','',totExp,'']);
+  rows.push([`Total income`,'','','','','','',totInc]);
+  rows.push([`Net`,'','','','','','',totInc-totExp]);
   return rows;
 }
-async function exportAll(fmt){toast('Fetching all transactions…');try{const snap=await db.collection('transactions').orderBy('date','desc').get();const txns=snap.docs.map(d=>({id:d.id,...d.data()}));if(!txns.length){toast('No transactions found');return;}doExport(buildRows(txns,null,null),'SpendWise_All_Transactions',fmt);}catch(e){toast('Error fetching transactions');}}
-async function exportMonth(fmt){const m=parseInt(document.getElementById('exp-mo-sel').value),y=parseInt(document.getElementById('exp-yr-sel').value);toast(`Fetching ${MONTHS[m-1]} ${y}…`);try{let snap;try{snap=await db.collection('transactions').where('year','==',y).where('month','==',m).orderBy('date','desc').get();}catch{snap=await db.collection('transactions').where('year','==',y).where('month','==',m).get();}const txns=snap.docs.map(d=>({id:d.id,...d.data()}));if(!txns.length){toast('No transactions for that month');return;}doExport(buildRows(txns,m,y),`SpendWise_${MONTHS[m-1]}_${y}`,fmt);}catch(e){toast('Error fetching');}}
+
+function _buildInvSheet(invSnap){
+  // invSnap: [{month, year, label, platforms:[{name,value}]}]
+  const rows=[['Investments — Monthly Balances'],[]];
+  if(!invSnap||!invSnap.length){rows.push(['No investment data']);return rows;}
+  // Header: Month | Platform1 | Platform2 …
+  const platNames=[...new Set(invSnap.flatMap(s=>s.platforms.map(p=>p.name)))];
+  rows.push(['Month',...platNames,'Total']);
+  invSnap.forEach(s=>{
+    const vals=platNames.map(n=>{const p=s.platforms.find(x=>x.name===n);return p?p.value:0;});
+    rows.push([s.label,...vals,vals.reduce((a,b)=>a+b,0)]);
+  });
+  return rows;
+}
+
+function _buildCashSheet(cashSnap){
+  // cashSnap: [{month, year, label, accounts:[{name,value}]}]
+  const rows=[['Cash — Monthly Balances'],[]];
+  if(!cashSnap||!cashSnap.length){rows.push(['No cash data']);return rows;}
+  const acctNames=[...new Set(cashSnap.flatMap(s=>s.accounts.map(a=>a.name)))];
+  rows.push(['Month',...acctNames,'Total']);
+  cashSnap.forEach(s=>{
+    const vals=acctNames.map(n=>{const a=s.accounts.find(x=>x.name===n);return a?a.value:0;});
+    rows.push([s.label,...vals,vals.reduce((a,b)=>a+b,0)]);
+  });
+  return rows;
+}
+
+function _exportMultiSheet(txnRows,invRows,cashRows,filename){
+  if(typeof XLSX==='undefined'){toast('Excel library not loaded');return;}
+  const wb=XLSX.utils.book_new();
+  const wsTxn=XLSX.utils.aoa_to_sheet(txnRows);
+  wsTxn['!cols']=[{wch:12},{wch:10},{wch:18},{wch:24},{wch:12},{wch:24},{wch:14},{wch:14}];
+  XLSX.utils.book_append_sheet(wb,wsTxn,'Transactions');
+  const wsInv=XLSX.utils.aoa_to_sheet(invRows);
+  wsInv['!cols']=[{wch:14},...(invRows[2]||[]).slice(1).map(()=>({wch:16}))];
+  XLSX.utils.book_append_sheet(wb,wsInv,'Investments');
+  const wsCash=XLSX.utils.aoa_to_sheet(cashRows);
+  wsCash['!cols']=[{wch:14},...(cashRows[2]||[]).slice(1).map(()=>({wch:16}))];
+  XLSX.utils.book_append_sheet(wb,wsCash,'Cash');
+  XLSX.writeFile(wb,filename+'.xlsx');
+  toast('Excel downloaded — 3 sheets: Transactions, Investments, Cash');
+}
+
+async function _fetchInvAndCashSnaps(m,y){
+  // Fetch historical investment and cash docs for the selected period
+  const invSnap=[],cashSnap=[];
+  const months=m?[[m,y]]:(() => {
+    // All months from Nov 2023 to current
+    const res=[];const now=new Date();
+    for(let yr=2023;yr<=now.getFullYear();yr++){
+      const s=yr===2023?11:1,e=yr===now.getFullYear()?now.getMonth()+1:12;
+      for(let mo=s;mo<=e;mo++) res.push([mo,yr]);
+    }
+    return res;
+  })();
+  await Promise.all(months.map(async([mo,yr])=>{
+    const [invDoc,cashDoc]=await Promise.all([
+      db.collection('investments').doc(sid(mo,yr)).get().catch(()=>null),
+      db.collection('cashBalances').doc(sid(mo,yr)).get().catch(()=>null),
+    ]);
+    const label=`${MONTHS[mo-1]}-${String(yr).slice(2)}`;
+    if(invDoc&&invDoc.exists){
+      const d=invDoc.data();
+      const platforms=PLATFORMS.map(p=>({name:p.label,value:d[p.key]||0})).filter(p=>p.value>0);
+      if(platforms.length) invSnap.push({month:mo,year:yr,label,platforms});
+    }
+    if(cashDoc&&cashDoc.exists){
+      const d=cashDoc.data();
+      const accounts=getCashAccounts().map(a=>({name:a,value:d[a]||0})).filter(a=>a.value>0);
+      if(accounts.length) cashSnap.push({month:mo,year:yr,label,accounts});
+    }
+  }));
+  invSnap.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);
+  cashSnap.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);
+  return{invSnap,cashSnap};
+}
+
+async function exportAll(fmt){
+  toast('Fetching all data…');
+  try{
+    const [txnSnap,incSnap]=await Promise.all([
+      db.collection('transactions').orderBy('date','asc').get(),
+      db.collection('income').orderBy('date','asc').get(),
+    ]);
+    const txns=txnSnap.docs.map(d=>({id:d.id,...d.data()}));
+    const incRecs=incSnap.docs.map(d=>({id:d.id,...d.data()}));
+    if(fmt==='csv'){
+      // CSV: combined flat file
+      const rows=_buildTxnSheet(txns,incRecs,'All Time');
+      const csv=rows.map(r=>r.map(c=>typeof c==='string'&&c.includes(',')?`"${c}"`:String(c)).join(',')).join('\n');
+      const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+      const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='SpendWise_All.csv';a.click();URL.revokeObjectURL(url);
+      toast('CSV downloaded');return;
+    }
+    const{invSnap,cashSnap}=await _fetchInvAndCashSnaps(null,null);
+    _exportMultiSheet(_buildTxnSheet(txns,incRecs,'All Time'),_buildInvSheet(invSnap),_buildCashSheet(cashSnap),'SpendWise_All');
+  }catch(e){console.error(e);toast('Error exporting — check console');}
+}
+
+async function exportMonth(fmt){
+  const m=parseInt(document.getElementById('exp-mo-sel').value);
+  const y=parseInt(document.getElementById('exp-yr-sel').value);
+  toast(`Fetching ${MONTHS[m-1]} ${y}…`);
+  try{
+    let txnSnap,incSnap;
+    try{
+      [txnSnap,incSnap]=await Promise.all([
+        db.collection('transactions').where('year','==',y).where('month','==',m).orderBy('date','asc').get(),
+        db.collection('income').where('year','==',y).where('month','==',m).orderBy('date','asc').get(),
+      ]);
+    }catch{
+      [txnSnap,incSnap]=await Promise.all([
+        db.collection('transactions').where('year','==',y).where('month','==',m).get(),
+        db.collection('income').where('year','==',y).where('month','==',m).get(),
+      ]);
+    }
+    const txns=txnSnap.docs.map(d=>({id:d.id,...d.data()}));
+    const incRecs=incSnap.docs.map(d=>({id:d.id,...d.data()}));
+    const label=`${MONTHS[m-1]} ${y}`;
+    if(fmt==='csv'){
+      const rows=_buildTxnSheet(txns,incRecs,label);
+      const csv=rows.map(r=>r.map(c=>typeof c==='string'&&c.includes(',')?`"${c}"`:String(c)).join(',')).join('\n');
+      const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+      const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`SpendWise_${MONTHS[m-1]}_${y}.csv`;a.click();URL.revokeObjectURL(url);
+      toast('CSV downloaded');return;
+    }
+    const{invSnap,cashSnap}=await _fetchInvAndCashSnaps(m,y);
+    _exportMultiSheet(_buildTxnSheet(txns,incRecs,label),_buildInvSheet(invSnap),_buildCashSheet(cashSnap),`SpendWise_${MONTHS[m-1]}_${y}`);
+  }catch(e){console.error(e);toast('Error exporting');}
+}
+
+function doExport(rows,filename,fmt){
+  // Legacy fallback — single sheet
+  if(fmt==='csv'){const csv=rows.map(r=>r.map(c=>typeof c==='string'&&c.includes(',')?`"${c}"`:String(c)).join(',')).join('\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename+'.csv';a.click();URL.revokeObjectURL(url);toast('CSV downloaded');}
+  else{if(typeof XLSX==='undefined'){toast('Excel library not loaded');return;}const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=[{wch:12},{wch:18},{wch:28},{wch:12},{wch:28},{wch:14}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Transactions');XLSX.writeFile(wb,filename+'.xlsx');toast('Excel file downloaded');}
+}
 function doExport(rows,filename,fmt){
   if(fmt==='csv'){const csv=rows.map(r=>r.map(c=>typeof c==='string'&&c.includes(',')?`"${c}"`:String(c)).join(',')).join('\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename+'.csv';a.click();URL.revokeObjectURL(url);toast('CSV downloaded');}
   else{if(typeof XLSX==='undefined'){toast('Excel library not loaded');return;}const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=[{wch:12},{wch:18},{wch:28},{wch:12},{wch:28},{wch:14}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Transactions');XLSX.writeFile(wb,filename+'.xlsx');toast('Excel file downloaded');}
@@ -5622,7 +5890,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.61</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.61: Gain/Loss combined; investment config (platforms, rates, subs) now syncs across devices via Firestore</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.63</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.63: Gain/Loss combined; investment config (platforms, rates, subs) now syncs across devices via Firestore</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -6195,7 +6463,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.61';
+const APP_VERSION='v3.14.63';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
