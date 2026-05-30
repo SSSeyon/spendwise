@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.52</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.53</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1172,6 +1172,25 @@ function getInvMeta(){return cGet(INV_META_KEY)||{};}
 function saveInvMeta(meta){cSet(INV_META_KEY,meta);}
 function getInvPlatformMeta(key){return(getInvMeta()[key])||{assetClass:'equity'};}
 function saveInvPlatformMeta(key,data){const m=getInvMeta();m[key]={...(m[key]||{}),...data};saveInvMeta(m);}
+
+// ── Sub-investments ──────────────────────────────────────────────────────
+const INV_SUBS_KEY='sw3_inv_subs';
+function getInvSubs(){return cGet(INV_SUBS_KEY)||{};}
+function saveInvSubs(subs){cSet(INV_SUBS_KEY,subs);}
+function getSubsForPlatform(pKey){return(getInvSubs()[pKey])||[];}
+function saveSubsForPlatform(pKey,arr){const s=getInvSubs();s[pKey]=arr;saveInvSubs(s);}
+function migrateToSubs(pKey){
+  const existing=getSubsForPlatform(pKey);
+  if(existing.length) return existing;
+  const meta=getInvPlatformMeta(pKey);
+  const principal=S.investments?.[pKey]||0;
+  const sub={id:pKey+'_sub_1',label:'Investment 1',principal,
+    assetClass:meta.assetClass||'equity',rate:meta.interestRate||'',
+    compoundType:meta.compoundType||'daily_accrual',
+    startDate:meta.startDate||'',maturityDate:meta.maturityDate||''};
+  saveSubsForPlatform(pKey,[sub]);
+  return [sub];
+}
 
 function addPlatform(label,currency,color){
   label=label.trim();if(!label) return toast('Enter a platform name');
@@ -3737,87 +3756,110 @@ function _renderInvInto(suffix){
   }
 
   function _renderPlatRow(p){
-    const val=inv[p.key]||0;const pct=total>0?((val/total)*100).toFixed(1):'0.0';
-    const badge=`<span style="font-size:0.56rem;padding:1px 4px;border-radius:3px;background:var(--bg3);color:var(--text3);margin-left:4px">${p.currency}</span>`;
-    const costNGN=cGet('sw3_inv_cost_'+p.key)||0;
-    const returnPct=(costNGN>0&&val>0)?((val-costNGN)/costNGN*100):null;
-    const returnBadge=returnPct!==null?`<span style="font-size:0.6rem;font-family:var(--mono);margin-left:5px;color:${returnPct>=0?'var(--accent)':'var(--red)'}">${returnPct>=0?'+':''}${returnPct.toFixed(1)}%</span>`:'';
-    const meta=getInvPlatformMeta(p.key);
-    let intInfo='',balanceBreakdown='',maturityLine='';
-    let mainVal=val?fmtPlatformVal(val,p.key,cur,m,y):'—';
-    if(meta.assetClass==='fixed_income'&&meta.interestRate){
-      intInfo=`<span class="int-badge">${meta.interestRate}% p.a.</span>`;
-      const {interest,projectedBalance,daysAccrued,isMatured}=calcInterestAccrual(val,meta.interestRate,meta.compoundType||'daily_accrual',meta.startDate,meta.maturityDate||null,getMovementsForPlatform(p.key));
-      if(val){
-        mainVal=fmtPlatformVal(projectedBalance,p.key,cur,m,y);
-        if(interest>0){
-          const dispPrincipal=fmtPlatformVal(val,p.key,cur,m,y);
-          const dispInterest=fmtPlatformVal(interest,p.key,cur,m,y);
-          balanceBreakdown=`<div style="font-size:0.6rem;font-family:var(--mono);color:var(--text2);text-align:right;margin-top:2px">(${dispPrincipal} + <span style="color:var(--gold)">${dispInterest}</span>)</div>`;
-        }
-      }
-      if(meta.maturityDate){
-        const isMaturedLabel=isMatured?`<span style="color:var(--red);margin-left:4px">· Matured</span>`:'';
-        maturityLine=`<div style="font-size:0.6rem;color:var(--text2);margin-top:3px">Matures ${fmtDate(meta.maturityDate)}${isMaturedLabel}</div>`;
-      }
-      const moveCount=getMovementsForPlatform(p.key).length;
-      if(moveCount){
-        maturityLine+=`<div style="font-size:0.58rem;color:var(--text3);margin-top:2px">Interest accounts for ${moveCount} balance change${moveCount>1?'s':''}</div>`;
-      }
-    }
-    // Inline edit panel — principal shown is exactly the stored value (no interest baked in)
+    const subs=migrateToSubs(p.key);
+    const fxRates=getFxRates(m,y);
     const isUSD=p.currency==='USD';
-    const isFI2=meta.assetClass==='fixed_income';
-    const principalNGN=val;
-    const dispVal=isUSD&&principalNGN?(principalNGN/fxRates.USD).toFixed(2):(principalNGN||'');
-    const costStored=cGet('sw3_inv_cost_'+p.key)||'';
-    const costDisp=isUSD&&costStored?(costStored/fxRates.USD).toFixed(2):costStored;
-    const intRate=meta.interestRate||'';
-    const cType=meta.compoundType||'daily_accrual';
-    const investStart=meta.startDate||'';
-    const lbl=isUSD?`$ USD (rate: ₦${fxRates.USD}/$ — stored as ₦)`:'₦ NGN';
-    const editPanel=`<div id="inv-edit-panel-${p.key}${s}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <span style="font-size:0.7rem;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.05em">Edit ${p.label}</span>
-          <span style="font-size:0.68rem;color:var(--text3)">${lbl}</span>
+    const isGBP=p.currency==='GBP';
+    const fxRate=isUSD?(fxRates.USD||1600):isGBP?(fxRates.GBP||2050):1;
+
+    // ── Compute platform total (principal + accrued interest across all subs) ──
+    let totalPrincipalNGN=0, totalInterestNGN=0, anyMatured=false;
+    const subRows=subs.map(sub=>{
+      const pNGN=Number(sub.principal)||0;
+      totalPrincipalNGN+=pNGN;
+      let interest=0,projBal=pNGN,isMatured=false;
+      if(sub.assetClass==='fixed_income'&&sub.rate){
+        const r=calcInterestAccrual(pNGN,Number(sub.rate),sub.compoundType||'daily_accrual',sub.startDate||null,sub.maturityDate||null,getMovementsForPlatform(p.key).filter(mv=>!mv.subId||mv.subId===sub.id));
+        interest=r.interest; projBal=r.projectedBalance; isMatured=r.isMatured;
+      }
+      totalInterestNGN+=interest;
+      if(isMatured) anyMatured=true;
+
+      const dispPrincipal=isUSD?(pNGN/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(pNGN);
+      const dispTotal=isUSD?((projBal/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})):fN(Math.round(projBal));
+      const dispCcy=isUSD?'$':isGBP?'£':'₦';
+      const rateTag=sub.assetClass==='fixed_income'&&sub.rate?`<span class="int-badge">${sub.rate}%</span>`:'';
+      const matTag=sub.maturityDate?`<span style="font-size:0.58rem;color:${isMatured?'var(--red)':'var(--text3)'}"> · ${isMatured?'Matured':'Matures'} ${fmtDate(sub.maturityDate)}</span>`:'';
+      const intLine=interest>0?`<span style="font-size:0.6rem;color:var(--gold);font-family:var(--mono);margin-left:4px">(+${dispCcy}${isUSD?(interest/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(Math.round(interest))})</span>`:'';
+
+      return{sub,pNGN,projBal,interest,isMatured,html:`
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:7px 12px;border-top:1px solid var(--border)">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:0.74rem;font-weight:600;color:var(--text)">${esc(sub.label)}${rateTag}</div>
+            <div style="font-size:0.6rem;color:var(--text3);margin-top:1px">${sub.startDate?'Since '+fmtDate(sub.startDate):''}${matTag}</div>
+          </div>
+          <div style="text-align:right;flex-shrink:0;margin-left:10px">
+            <div style="font-size:0.78rem;font-family:var(--mono);color:${p.color}">${dispCcy}${dispTotal}${intLine}</div>
+            ${interest>0?`<div style="font-size:0.58rem;color:var(--text3)">${dispCcy}${dispPrincipal} principal</div>`:''}
+          </div>
+        </div>`};
+    });
+
+    const platformNGN=totalPrincipalNGN+totalInterestNGN;
+    const pct=inv[p.key]&&(PLATFORMS.reduce((a,pp)=>a+(inv[pp.key]||0),0)>0)?((inv[p.key]/(PLATFORMS.reduce((a,pp)=>a+(inv[pp.key]||0),0)))*100).toFixed(1):'0.0';
+    const badge=`<span style="font-size:0.56rem;padding:1px 4px;border-radius:3px;background:var(--bg3);color:var(--text3);margin-left:4px">${p.currency}</span>`;
+    const fiCount=subs.filter(s=>s.assetClass==='fixed_income'&&s.rate).length;
+    const intBadge=fiCount?`<span class="int-badge">Interest-bearing</span>`:'';
+    const maturedBadge=anyMatured?`<span style="font-size:0.58rem;padding:1px 4px;border-radius:3px;background:rgba(255,80,80,0.15);color:var(--red);margin-left:4px">Matured</span>`:'';
+    const subCount=subs.length>1?`<span style="font-size:0.6rem;color:var(--text3);margin-left:6px">${subs.length} investments</span>`:'';
+    const dispMainVal=isUSD?'$'+((platformNGN/fxRate)).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(Math.round(platformNGN));
+
+    // ── Per-sub edit forms ──
+    const editPanels=subs.map((sub,idx)=>{
+      const dispP=isUSD&&sub.principal?((Number(sub.principal)/fxRate)).toFixed(2):(sub.principal||'');
+      const lbl=isUSD?`$ USD`:'₦ NGN';
+      return`<div id="inv-sub-panel-${p.key}-${sub.id}${s}" style="border:1px solid var(--border);border-radius:var(--rsm);padding:10px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <input class="ifield" id="inv-sub-label-${p.key}-${sub.id}${s}" value="${esc(sub.label)}" placeholder="Label" style="font-size:0.74rem;padding:4px 8px;flex:1;margin-right:8px">
+          ${subs.length>1?`<button class="txi-del" onclick="removeInvSub('${p.key}','${sub.id}','${s}')" title="Remove this investment">×</button>`:''}
         </div>
-        <div class="ig" style="margin-bottom:6px"><label class="ilabel">Principal Balance</label><input class="ifield" type="text" id="inv-edit-${p.key}${s}" placeholder="0" value="${dispVal}" data-currency="${p.currency}"></div>
-        <div class="ig" style="margin-bottom:6px"><label class="ilabel" style="font-size:0.6rem;color:var(--text3)">Cost basis ${isUSD?'(USD)':'(₦)'} — optional</label><input class="ifield" style="font-size:0.72rem;padding:4px 8px" type="text" id="inv-cost-${p.key}${s}" placeholder="0" value="${costDisp}"></div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-          <select class="sfield" id="inv-ac-${p.key}${s}" style="width:auto;font-size:0.72rem;padding:5px 10px" onchange="toggleInvFIFields('${p.key}','${s}')">
-            <option value="equity"${!isFI2?' selected':''}>Equity</option>
-            <option value="fixed_income"${isFI2?' selected':''}>Fixed Income</option>
+        <div class="ig" style="margin-bottom:6px"><label class="ilabel">Principal (${lbl})</label><input class="ifield" type="text" id="inv-sub-prin-${p.key}-${sub.id}${s}" placeholder="0" value="${dispP}" data-currency="${p.currency}"></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <select class="sfield" id="inv-sub-ac-${p.key}-${sub.id}${s}" style="flex:1;font-size:0.72rem;padding:5px 8px" onchange="toggleSubFIFields('${p.key}','${sub.id}','${s}')">
+            <option value="equity"${sub.assetClass!=='fixed_income'?' selected':''}>Equity</option>
+            <option value="fixed_income"${sub.assetClass==='fixed_income'?' selected':''}>Fixed Income</option>
           </select>
-          <button class="txi-del" onclick="removePlatform('${p.key}')" title="Remove platform" style="margin-left:8px">×</button>
         </div>
-        <div id="inv-fi-fields-${p.key}${s}" style="${isFI2?'':'display:none'}">
+        <div id="inv-sub-fi-${p.key}-${sub.id}${s}" style="${sub.assetClass==='fixed_income'?'':'display:none'}">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
-            <div class="ig" style="margin-bottom:0"><label class="ilabel">Annual Rate (%)</label><input class="ifield" type="text" id="inv-rate-${p.key}${s}" placeholder="e.g. 18" value="${intRate}" style="font-size:0.8rem;padding:6px 10px"></div>
-            <div class="ig" style="margin-bottom:0"><label class="ilabel">Accrual Type</label><select class="sfield" id="inv-ct-${p.key}${s}" style="font-size:0.75rem;padding:6px 10px" onchange="toggleInvFIFields('${p.key}','${s}')">
-              <option value="daily_accrual"${cType==='daily_accrual'?' selected':''}>Daily Accrual</option>
-              <option value="daily_compound"${cType==='daily_compound'?' selected':''}>Daily Compound</option>
+            <div class="ig" style="margin-bottom:0"><label class="ilabel">Annual Rate (%)</label><input class="ifield" type="text" id="inv-sub-rate-${p.key}-${sub.id}${s}" placeholder="e.g. 18" value="${sub.rate||''}" style="font-size:0.8rem;padding:6px 10px"></div>
+            <div class="ig" style="margin-bottom:0"><label class="ilabel">Accrual</label><select class="sfield" id="inv-sub-ct-${p.key}-${sub.id}${s}" style="font-size:0.75rem;padding:6px 8px" onchange="toggleSubFIFields('${p.key}','${sub.id}','${s}')">
+              <option value="daily_accrual"${(sub.compoundType||'daily_accrual')==='daily_accrual'?' selected':''}>Daily Accrual</option>
+              <option value="daily_compound"${sub.compoundType==='daily_compound'?' selected':''}>Daily Compound</option>
             </select></div>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-            <div class="ig" style="margin-bottom:0"><label class="ilabel">Start Date</label><input class="ifield" type="date" id="inv-start-${p.key}${s}" value="${investStart}" style="font-size:0.78rem;padding:5px 8px"></div>
-            <div id="inv-mat-row-${p.key}${s}" class="ig" style="margin-bottom:0;${isFI2&&cType==='daily_accrual'?'':'display:none'}"><label class="ilabel">Maturity Date</label><input class="ifield" type="date" id="inv-mat-${p.key}${s}" value="${meta.maturityDate||''}" style="font-size:0.78rem;padding:5px 8px"></div>
+            <div class="ig" style="margin-bottom:0"><label class="ilabel">Start Date</label><input class="ifield" type="date" id="inv-sub-start-${p.key}-${sub.id}${s}" value="${sub.startDate||''}" style="font-size:0.78rem;padding:5px 8px"></div>
+            <div id="inv-sub-mat-row-${p.key}-${sub.id}${s}" class="ig" style="margin-bottom:0;${sub.assetClass==='fixed_income'&&(sub.compoundType||'daily_accrual')==='daily_accrual'?'':'display:none'}"><label class="ilabel">Maturity</label><input class="ifield" type="date" id="inv-sub-mat-${p.key}-${sub.id}${s}" value="${sub.maturityDate||''}" style="font-size:0.78rem;padding:5px 8px"></div>
           </div>
         </div>
       </div>`;
+    }).join('');
+
+    const canAddSub=subs.length<5;
+    const addSubBtn=canAddSub?`<button class="btn btn-g btn-full" style="font-size:0.72rem;padding:5px" onclick="addInvSub('${p.key}','${s}')">+ Add Investment</button>`:`<div style="font-size:0.62rem;color:var(--text3);text-align:center;padding:4px">Maximum 5 investments per platform</div>`;
+
+    const editSection=`<div id="inv-edit-panel-${p.key}${s}" onclick="event.stopPropagation()" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+      <div style="font-size:0.68rem;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px">Edit ${esc(p.label)}</div>
+      <div id="inv-sub-list-${p.key}${s}">${editPanels}</div>
+      ${addSubBtn}
+      <button class="txi-del" onclick="removePlatform('${p.key}')" style="margin-top:10px;width:100%;text-align:center;padding:4px;font-size:0.65rem;color:var(--text3)">Remove platform</button>
+    </div>`;
+
     return`<div class="card" style="margin-bottom:8px;cursor:pointer" onclick="toggleInvEdit('${p.key}','${s}')">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="flex-shrink:0">${platformLogoEl(p.key,p.color,26)}</div>
         <div style="flex:1;min-width:0">
-          <div class="pname">${p.label}${badge}${intInfo}</div>
+          <div class="pname">${p.label}${badge}${intBadge}${maturedBadge}${subCount}</div>
           <div class="ppct">${pct}%</div>
-          ${maturityLine}
         </div>
         <div style="text-align:right;flex-shrink:0">
-          <div class="pval" style="color:${val?p.color:'var(--text3)'}">${mainVal}${returnBadge}</div>
-          ${balanceBreakdown}
+          <div class="pval" style="color:${platformNGN?p.color:'var(--text3)'}">${platformNGN?dispMainVal:'—'}</div>
+          ${totalInterestNGN>0?`<div style="font-size:0.58rem;color:var(--gold);font-family:var(--mono)">+${isUSD?'$'+((totalInterestNGN/fxRate)).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(Math.round(totalInterestNGN))} interest</div>`:''}
         </div>
       </div>
-      ${editPanel.replace('<div id="inv-edit-panel-','<div onclick="event.stopPropagation()" id="inv-edit-panel-')}
+      ${subs.length>0?`<div id="inv-sub-display-${p.key}${s}" style="display:none;margin-top:4px">${subRows.map(r=>r.html).join('')}</div>`:''}
+      ${editSection}
     </div>`;
   }
 
@@ -3864,9 +3906,11 @@ function _renderInvInto(suffix){
 function toggleInvEdit(pKey, suffix){
   const s=suffix||'';
   const panel=document.getElementById('inv-edit-panel-'+pKey+s);
+  const subDisplay=document.getElementById('inv-sub-display-'+pKey+s);
   if(!panel) return;
   const isOpen=panel.style.display!=='none';
   panel.style.display=isOpen?'none':'block';
+  if(subDisplay) subDisplay.style.display=isOpen?'none':'block';
   const saveBtn=document.getElementById('inv-save-btn'+s);
   if(saveBtn){
     const anyOpen=[...document.querySelectorAll('[id^="inv-edit-panel-"]')].filter(el=>el.id.endsWith(s));
@@ -3874,15 +3918,117 @@ function toggleInvEdit(pKey, suffix){
   }
   if(panel.style.display!=='none') setTimeout(()=>initNumInputs(panel),0);
 }
-function toggleInvFIFields(pKey, suffix){
-  const sel=document.getElementById('inv-ac-'+pKey+suffix);
-  const ctSel=document.getElementById('inv-ct-'+pKey+suffix);
-  const fiDiv=document.getElementById('inv-fi-fields-'+pKey+suffix);
-  const matRow=document.getElementById('inv-mat-row-'+pKey+suffix);
-  if(!sel||!fiDiv) return;
-  const isFI=sel.value==='fixed_income';
+
+function toggleSubFIFields(pKey, subId, suffix){
+  const s=suffix||'';
+  const acEl=document.getElementById(`inv-sub-ac-${pKey}-${subId}${s}`);
+  const ctEl=document.getElementById(`inv-sub-ct-${pKey}-${subId}${s}`);
+  const fiDiv=document.getElementById(`inv-sub-fi-${pKey}-${subId}${s}`);
+  const matRow=document.getElementById(`inv-sub-mat-row-${pKey}-${subId}${s}`);
+  if(!acEl||!fiDiv) return;
+  const isFI=acEl.value==='fixed_income';
   fiDiv.style.display=isFI?'block':'none';
-  if(matRow) matRow.style.display=(isFI&&ctSel&&ctSel.value==='daily_accrual')?'block':'none';
+  if(matRow) matRow.style.display=(isFI&&ctEl&&ctEl.value==='daily_accrual')?'block':'none';
+}
+
+function addInvSub(pKey, suffix){
+  const s=suffix||'';
+  const subs=getSubsForPlatform(pKey);
+  if(subs.length>=5){toast('Maximum 5 investments per platform');return;}
+  const newId=pKey+'_sub_'+(Date.now());
+  subs.push({id:newId,label:'Investment '+(subs.length+1),principal:'',
+    assetClass:'equity',rate:'',compoundType:'daily_accrual',startDate:'',maturityDate:''});
+  saveSubsForPlatform(pKey,subs);
+  renderInvestments();
+  // Re-open edit panel after re-render
+  setTimeout(()=>{
+    const panel=document.getElementById('inv-edit-panel-'+pKey+s);
+    const subDisplay=document.getElementById('inv-sub-display-'+pKey+s);
+    if(panel){panel.style.display='block';if(subDisplay)subDisplay.style.display='block';initNumInputs(panel);}
+  },50);
+}
+
+function removeInvSub(pKey, subId, suffix){
+  const subs=getSubsForPlatform(pKey);
+  if(subs.length<=1){toast('A platform must have at least one investment');return;}
+  if(!confirm('Remove this investment?')) return;
+  const updated=subs.filter(s=>s.id!==subId);
+  saveSubsForPlatform(pKey,updated);
+  renderInvestments();
+  setTimeout(()=>{
+    const s=suffix||'';
+    const panel=document.getElementById('inv-edit-panel-'+pKey+s);
+    const subDisplay=document.getElementById('inv-sub-display-'+pKey+s);
+    if(panel){panel.style.display='block';if(subDisplay)subDisplay.style.display='block';}
+  },50);
+}
+
+async function saveInvFromEdit(){
+  if(S.saving) return;S.saving=true;setSyncStatus('syncing');
+  try{
+    PLATFORMS=getPlatforms();
+    const data={month:S.expMonth,year:S.expYear};
+    const fxRates=getFxRates(S.expMonth,S.expYear);
+    // Process each platform
+    PLATFORMS.forEach(p=>{
+      // Check if any edit panel is open for this platform (either suffix)
+      const panel=document.getElementById('inv-edit-panel-'+p.key+'-2')||document.getElementById('inv-edit-panel-'+p.key);
+      if(!panel||panel.style.display==='none'){
+        // Not opened — carry forward existing stored value
+        const existing=cGet(CK.inv(S.expMonth,S.expYear));
+        if(existing&&existing[p.key]!=null) data[p.key]=existing[p.key];
+        return;
+      }
+      // Collect subs from their DOM inputs
+      const subs=getSubsForPlatform(p.key);
+      const s=panel.id.includes('-2')?'-2':'';
+      const isUSD=p.currency==='USD';
+      const isGBP=p.currency==='GBP';
+      const fxRate=isUSD?(fxRates.USD||1600):isGBP?(fxRates.GBP||2050):1;
+      let platformTotalNGN=0;
+      const updatedSubs=subs.map(sub=>{
+        const labelEl=document.getElementById(`inv-sub-label-${p.key}-${sub.id}${s}`);
+        const prinEl=document.getElementById(`inv-sub-prin-${p.key}-${sub.id}${s}`);
+        const acEl=document.getElementById(`inv-sub-ac-${p.key}-${sub.id}${s}`);
+        const rateEl=document.getElementById(`inv-sub-rate-${p.key}-${sub.id}${s}`);
+        const ctEl=document.getElementById(`inv-sub-ct-${p.key}-${sub.id}${s}`);
+        const startEl=document.getElementById(`inv-sub-start-${p.key}-${sub.id}${s}`);
+        const matEl=document.getElementById(`inv-sub-mat-${p.key}-${sub.id}${s}`);
+        const raw=prinEl?parseFloat(prinEl.value.replace(/,/g,'')):NaN;
+        const principalNGN=isNaN(raw)?Number(sub.principal)||0:Math.round(isUSD?raw*fxRate:isGBP?raw*fxRate:raw);
+        platformTotalNGN+=principalNGN;
+        return{
+          ...sub,
+          label:labelEl?labelEl.value.trim()||sub.label:sub.label,
+          principal:principalNGN,
+          assetClass:acEl?acEl.value:sub.assetClass,
+          rate:rateEl?rateEl.value:sub.rate,
+          compoundType:ctEl?ctEl.value:sub.compoundType,
+          startDate:startEl?startEl.value:sub.startDate,
+          maturityDate:matEl?matEl.value:sub.maturityDate,
+        };
+      });
+      saveSubsForPlatform(p.key,updatedSubs);
+      data[p.key]=platformTotalNGN;
+      // Update legacy meta from first sub (for any code still reading getInvPlatformMeta)
+      const first=updatedSubs[0];
+      if(first){
+        const meta={assetClass:first.assetClass};
+        if(first.assetClass==='fixed_income'&&first.rate){
+          meta.interestRate=Number(first.rate);
+          meta.compoundType=first.compoundType||'daily_accrual';
+          meta.startDate=first.startDate||todayStr();
+          if(first.maturityDate) meta.maturityDate=first.maturityDate;
+        }
+        const allMeta=getInvMeta();allMeta[p.key]=meta;saveInvMeta(allMeta);
+      }
+    });
+    S.investments=data;cSet(CK.inv(S.expMonth,S.expYear),data);
+    renderInvestments();renderDashboard();
+    try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});toast('Balances saved');haptic([8,40,8]);setSyncStatus('synced');}
+    catch(e){oqAdd('investments',sid(S.expMonth,S.expYear),data,true);toast('Saved offline — will sync when connected');}
+  }catch(e){console.error('saveInvFromEdit error',e);toast('Error saving — please try again');setSyncStatus('error');}
+  finally{S.saving=false;}
 }
 function renderInvestments(){
   _renderInvInto('');    // pg-investments page (legacy, may not be visible)
@@ -3944,90 +4090,6 @@ async function renderInvTrend(suffix){
       plugins:[datalabelsPlugin]
     });
   }catch(e){console.error('invTrend error',e);}
-}
-async function saveInvFromEdit(){
-  if(S.saving) return;S.saving=true;setSyncStatus('syncing');
-  try{
-    PLATFORMS=getPlatforms();
-    const data={month:S.expMonth,year:S.expYear};
-    const fxRates=getFxRates(S.expMonth,S.expYear);
-    const today=todayStr();
-    // ── Pass 1: store principal only — only for platforms with open edit panels ──
-    PLATFORMS.forEach(p=>{
-      const panel=document.getElementById('inv-edit-panel-'+p.key+'-2')||document.getElementById('inv-edit-panel-'+p.key);
-      if(!panel||panel.style.display==='none'){
-        // Edit panel not opened — carry forward the existing stored value unchanged
-        const existing=cGet(CK.inv(S.expMonth,S.expYear));
-        if(existing&&existing[p.key]!=null) data[p.key]=existing[p.key];
-        return;
-      }
-      const el=document.getElementById('inv-edit-'+p.key+'-2')||document.getElementById('inv-edit-'+p.key);
-      const v=el?parseFloat(el.value):NaN;
-      if(isNaN(v)){data[p.key]=0;return;}
-      const principalNGN=p.currency==='USD'?Math.round(v*fxRates.USD):p.currency==='GBP'?Math.round(v*(fxRates.GBP||2050)):v;
-      // If the user manually changed the principal here, clear this platform's
-      // movement history — a manual edit is a fresh baseline, and stale movements
-      // would make the reconstructed segment principals wrong.
-      const prevStored=cGet(CK.inv(S.expMonth,S.expYear));
-      const prevVal=prevStored?prevStored[p.key]:undefined;
-      if(prevVal!=null&&Math.round(prevVal)!==principalNGN){
-        const moves=getInvMovements().filter(mv=>mv.platformKey!==p.key);
-        cSet(INV_MOVE_KEY,moves);
-      }
-      data[p.key]=principalNGN;
-    });
-    S.investments=data;cSet(CK.inv(S.expMonth,S.expYear),data);
-    // ── Pass 2: cost basis — only for open edit panels ───────────────────
-    PLATFORMS.forEach(p=>{
-      const panel=document.getElementById('inv-edit-panel-'+p.key+'-2')||document.getElementById('inv-edit-panel-'+p.key);
-      if(!panel||panel.style.display==='none') return;
-      const costEl=document.getElementById('inv-cost-'+p.key+'-2')||document.getElementById('inv-cost-'+p.key);
-      if(!costEl) return;
-      const raw=costEl.value.trim();
-      // Empty field means "don't touch"; explicitly typing 0 clears the basis
-      if(raw==='') return;
-      const cv=parseFloat(raw);
-      if(isNaN(cv)||cv<0) return;
-      if(cv===0){
-        cSet('sw3_inv_cost_'+p.key,0);
-      } else {
-        const costNGN=p.currency==='USD'?Math.round(cv*fxRates.USD):p.currency==='GBP'?Math.round(cv*(fxRates.GBP||2050)):cv;
-        cSet('sw3_inv_cost_'+p.key,costNGN);
-      }
-    });
-    // ── Pass 3: meta (stateless — no ledger, no historical segments) ──────
-    // Only process platforms whose edit panel is open — hidden panels were not
-    // interacted with and must not overwrite their existing stored meta.
-    PLATFORMS.forEach(p=>{
-      const panel=document.getElementById('inv-edit-panel-'+p.key+'-2')||document.getElementById('inv-edit-panel-'+p.key);
-      if(!panel||panel.style.display==='none') return; // not opened — leave meta untouched
-      const acEl=document.getElementById('inv-ac-'+p.key+'-2')||document.getElementById('inv-ac-'+p.key);
-      const rateEl=document.getElementById('inv-rate-'+p.key+'-2')||document.getElementById('inv-rate-'+p.key);
-      const ctEl=document.getElementById('inv-ct-'+p.key+'-2')||document.getElementById('inv-ct-'+p.key);
-      const matEl=document.getElementById('inv-mat-'+p.key+'-2')||document.getElementById('inv-mat-'+p.key);
-      const startEl=document.getElementById('inv-start-'+p.key+'-2')||document.getElementById('inv-start-'+p.key);
-      if(!acEl) return;
-      const ac=acEl.value;
-      // Replace meta wholesale for this platform (no ledger carried forward)
-      const meta={assetClass:ac};
-      if(ac==='fixed_income'&&rateEl){
-        const rate=parseFloat(rateEl.value);
-        if(!isNaN(rate)&&rate>0) meta.interestRate=rate;
-        if(ctEl) meta.compoundType=ctEl.value;
-        if(matEl&&matEl.value) meta.maturityDate=matEl.value;
-        // Start date drives the interest calculation directly — stored as-is.
-        meta.startDate=startEl&&startEl.value?startEl.value:today;
-      }
-      // Overwrite the platform's meta entirely so stale ledger/startDate data is cleared
-      const allMeta=getInvMeta();
-      allMeta[p.key]=meta;
-      saveInvMeta(allMeta);
-    });
-    renderInvestments();renderDashboard();
-    try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});toast('Balances saved');haptic([8,40,8]);setSyncStatus('synced');}
-    catch(e){oqAdd('investments',sid(S.expMonth,S.expYear),data,true);toast('Saved offline — will sync when connected');}
-  }catch(e){console.error('saveInvFromEdit error',e);toast('Error saving — please try again');setSyncStatus('error');}
-  finally{S.saving=false;}
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -5252,7 +5314,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.52</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.52: Sort inside categories by date or actual expense; flat Excel export restored; settings cards cleaned up</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.53</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.53: Sort inside categories by date or actual expense; flat Excel export restored; settings cards cleaned up</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -5795,7 +5857,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.52';
+const APP_VERSION='v3.14.53';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
