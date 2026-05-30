@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.55</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.56</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -3534,7 +3534,12 @@ async function saveExpense(){
       const cash={...S.cash};cash[from]=(cash[from]||0)-amt;
       S.cash=cash;cSet(CK.cash(m,y),cash);
       if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
-      const inv={...S.investments};inv[to]=(inv[to]||0)+amt;
+      // Update sub principals — add to first sub (or create one via migration)
+      const toSubs=migrateToSubs(to);
+      toSubs[0].principal=(Number(toSubs[0].principal)||0)+amt;
+      saveSubsForPlatform(to,toSubs);
+      // Recompute platform total from subs and persist
+      const inv={...S.investments};inv[to]=toSubs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
       S.investments=inv;cSet(CK.inv(m,y),inv);
       if(db)db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(()=>{});
       const platLabel=PLATFORMS.find(p=>p.key===to)?.label||to;
@@ -3542,7 +3547,13 @@ async function saveExpense(){
 
     } else {
       // inv-cash: deduct from investment, add to cash
-      const inv={...S.investments};inv[from]=Math.max(0,(inv[from]||0)-amt);
+      // Update sub principals — deduct from first sub
+      const fromSubs=migrateToSubs(from);
+      const deductAmt=Math.min(amt,Number(fromSubs[0].principal)||0);
+      fromSubs[0].principal=Math.max(0,(Number(fromSubs[0].principal)||0)-amt);
+      saveSubsForPlatform(from,fromSubs);
+      // Recompute platform total from subs and persist
+      const inv={...S.investments};inv[from]=fromSubs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
       S.investments=inv;cSet(CK.inv(m,y),inv);
       if(db)db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(()=>{});
       const cash={...S.cash};cash[to]=(cash[to]||0)+amt;
@@ -5423,7 +5434,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.55</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.55: Sort inside categories by date or actual expense; flat Excel export restored; settings cards cleaned up</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.56</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.56: Sort inside categories by date or actual expense; flat Excel export restored; settings cards cleaned up</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -5966,7 +5977,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.55';
+const APP_VERSION='v3.14.56';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
