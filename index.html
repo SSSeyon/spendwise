@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.58</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.59</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1207,7 +1207,7 @@ const PLATFORMS_DEFAULT = [
 ];
 const PLATFORMS_KEY='sw3_platforms';
 function getPlatforms(){return cGet(PLATFORMS_KEY)||PLATFORMS_DEFAULT;}
-function savePlatforms(arr){cSet(PLATFORMS_KEY,arr);}
+function savePlatforms(arr){cSet(PLATFORMS_KEY,arr);_syncInvConfig();}
 // PLATFORMS is populated lazily at first render via getPlatforms() — never call at module scope
 let PLATFORMS=PLATFORMS_DEFAULT;
 
@@ -1222,16 +1222,46 @@ const SAVINGS_TARGET_KEY='sw3_savings_target_pct';
 // Keys: platformKey → {assetClass: 'equity'|'fixed_income', interestRate, compoundType: 'daily_compound'|'daily_accrual'}
 const INV_META_KEY='sw3_inv_meta';
 function getInvMeta(){return cGet(INV_META_KEY)||{};}
-function saveInvMeta(meta){cSet(INV_META_KEY,meta);}
+function saveInvMeta(meta){cSet(INV_META_KEY,meta);_syncInvConfig();}
 function getInvPlatformMeta(key){return(getInvMeta()[key])||{assetClass:'equity'};}
 function saveInvPlatformMeta(key,data){const m=getInvMeta();m[key]={...(m[key]||{}),...data};saveInvMeta(m);}
 
 // ── Sub-investments ──────────────────────────────────────────────────────
 const INV_SUBS_KEY='sw3_inv_subs';
 function getInvSubs(){return cGet(INV_SUBS_KEY)||{};}
-function saveInvSubs(subs){cSet(INV_SUBS_KEY,subs);}
+function saveInvSubs(subs){cSet(INV_SUBS_KEY,subs);_syncInvConfig();}
 function getSubsForPlatform(pKey){return(getInvSubs()[pKey])||[];}
 function saveSubsForPlatform(pKey,arr){const s=getInvSubs();s[pKey]=arr;saveInvSubs(s);}
+
+// ── Sync all investment config to Firestore (debounced) ──────────────────
+let _invConfigSyncTimer=null;
+function _syncInvConfig(){
+  clearTimeout(_invConfigSyncTimer);
+  _invConfigSyncTimer=setTimeout(()=>{
+    if(!db) return;
+    const payload={
+      platforms:getPlatforms(),
+      invMeta:getInvMeta(),
+      invSubs:getInvSubs(),
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+    };
+    db.collection('appConfig').doc('investments').set(payload,{merge:true}).catch(e=>console.warn('invConfig sync failed',e));
+  },800);
+}
+
+// ── Load investment config from Firestore (called at boot) ───────────────
+async function loadInvConfig(){
+  if(!db) return;
+  try{
+    const doc=await db.collection('appConfig').doc('investments').get();
+    if(!doc.exists) return;
+    const d=doc.data();
+    if(d.platforms&&d.platforms.length){cSet(PLATFORMS_KEY,d.platforms);}
+    if(d.invMeta&&Object.keys(d.invMeta).length){cSet(INV_META_KEY,d.invMeta);}
+    if(d.invSubs&&Object.keys(d.invSubs).length){cSet(INV_SUBS_KEY,d.invSubs);}
+  }catch(e){console.warn('loadInvConfig failed',e);}
+}
+
 function migrateToSubs(pKey){
   const existing=getSubsForPlatform(pKey);
   if(existing.length) return existing;
@@ -1742,7 +1772,7 @@ function initFirebase(){
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary()]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig()]);
 }
 
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
@@ -3892,8 +3922,7 @@ function _renderInvInto(suffix){
           </div>
           <div style="display:flex;gap:5px">
             <button onclick="openInvAdjModal('${p.key}','${sub.id}','inflow')" style="font-size:0.6rem;padding:3px 7px;border-radius:3px;background:rgba(100,200,100,0.15);border:1px solid rgba(100,200,100,0.3);color:#7dea7d;cursor:pointer">+ Inflow</button>
-            <button onclick="openInvAdjModal('${p.key}','${sub.id}','gain')" style="font-size:0.6rem;padding:3px 7px;border-radius:3px;background:rgba(200,245,66,0.12);border:1px solid rgba(200,245,66,0.3);color:var(--accent);cursor:pointer">+ Gain</button>
-            <button onclick="openInvAdjModal('${p.key}','${sub.id}','loss')" style="font-size:0.6rem;padding:3px 7px;border-radius:3px;background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.3);color:var(--red);cursor:pointer">− Loss</button>
+            <button onclick="openInvAdjModal('${p.key}','${sub.id}','gain_loss')" style="font-size:0.6rem;padding:3px 7px;border-radius:3px;background:rgba(200,245,66,0.08);border:1px solid rgba(200,245,66,0.25);color:var(--accent);cursor:pointer">± Gain/Loss</button>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
@@ -4059,13 +4088,12 @@ function openInvAdjModal(pKey, subId, type){
   const fxRates=getFxRates(m,y);
   const fxRate=isUSD?(fxRates.USD||1600):1;
   const curBal=isUSD?'$'+((Number(sub.principal)||0)/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(Number(sub.principal)||0);
-  const titles={inflow:'Record Inflow',gain:'Record Gain',loss:'Record Loss'};
+  const titles={inflow:'Record Inflow',gain_loss:'Record Gain / Loss'};
   const descs={
     inflow:`Adding new money to <strong>${esc(sub.label)}</strong>. Current balance: ${curBal}.`,
-    gain:`Recording appreciation on <strong>${esc(sub.label)}</strong>. Current balance: ${curBal}.`,
-    loss:`Recording a loss on <strong>${esc(sub.label)}</strong>. Current balance: ${curBal}.`,
+    gain_loss:`Enter a positive number for a gain, negative for a loss.<br>Current balance: ${curBal}.`,
   };
-  const amtLabels={inflow:`Amount (${isUSD?'$':'₦'})`,gain:`Gain amount (${isUSD?'$':'₦'})`,loss:`Loss amount (${isUSD?'$':'₦'})`};
+  const amtLabels={inflow:`Amount (${isUSD?'$':'₦'})`,gain_loss:`Amount (${isUSD?'$':'₦'}) — negative = loss`};
   document.getElementById('inv-adj-title').textContent=titles[type];
   document.getElementById('inv-adj-desc').innerHTML=descs[type];
   document.getElementById('inv-adj-amt-label').textContent=amtLabels[type];
@@ -4080,15 +4108,14 @@ async function applyInvAdjust(){
   if(!_adjPKey||!_adjSubId||!_adjType) return;
   const rawAmt=document.getElementById('inv-adj-amount').value.replace(/,/g,'');
   const amt=parseFloat(rawAmt);
-  if(!amt||amt<=0){toast('Enter a valid amount');return;}
+  if(isNaN(amt)||amt===0){toast('Enter a valid amount');return;}
   const date=document.getElementById('inv-adj-date').value||todayStr();
   const notes=document.getElementById('inv-adj-notes').value.trim();
   const p=PLATFORMS.find(pl=>pl.key===_adjPKey);
   const isUSD=p&&p.currency==='USD';
   const m=S.expMonth,y=S.expYear;
   const fxRate=isUSD?(getFxRates(m,y).USD||1600):1;
-  // Convert to NGN if USD platform
-  const amtNGN=Math.round(isUSD?amt*fxRate:amt);
+  const amtNGN=Math.round(isUSD?amt*fxRate:amt); // may be negative for gain_loss
 
   const subs=getSubsForPlatform(_adjPKey);
   const subIdx=subs.findIndex(s=>s.id===_adjSubId);
@@ -4096,16 +4123,15 @@ async function applyInvAdjust(){
   const sub=subs[subIdx];
   const prevPrincipal=Number(sub.principal)||0;
   let newPrincipal;
-  if(_adjType==='loss'){
-    newPrincipal=Math.max(0,prevPrincipal-amtNGN);
+  if(_adjType==='gain_loss'){
+    newPrincipal=Math.max(0,prevPrincipal+amtNGN);
   } else {
-    // inflow or gain — both increase the principal
-    newPrincipal=prevPrincipal+amtNGN;
+    // inflow — always positive
+    newPrincipal=prevPrincipal+Math.abs(amtNGN);
   }
   subs[subIdx]={...sub,principal:newPrincipal};
   saveSubsForPlatform(_adjPKey,subs);
 
-  // Recompute platform total and persist
   const newPlatTotal=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
   const invData={...(cGet(CK.inv(m,y))||S.investments),month:m,year:y};
   invData[_adjPKey]=newPlatTotal;
@@ -4113,10 +4139,11 @@ async function applyInvAdjust(){
   cSet(CK.inv(m,y),invData);
   if(db) db.collection('investments').doc(sid(m,y)).set(invData,{merge:true}).catch(()=>{});
 
-  const sign=_adjType==='loss'?'−':'+';
-  const dispAmt=isUSD?'$'+amt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'₦'+fNum(amtNGN);
+  const sign=amtNGN>=0?'+':'';
+  const dispAmt=isUSD?`${sign}$${Math.abs(amt).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`:`${sign}₦${fNum(Math.abs(amtNGN))}`;
+  const label=_adjType==='inflow'?'Inflow':amtNGN>=0?'Gain':'Loss';
   closeMod('inv-adj-modal');
-  toast(`${_adjType.charAt(0).toUpperCase()+_adjType.slice(1)}: ${sign}${dispAmt} applied`);
+  toast(`${label}: ${dispAmt} applied`);
   haptic([8,40,8]);
   renderInvestments();renderDashboard();
 }
@@ -5588,7 +5615,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.58</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.58: Sort inside categories by date or actual expense; flat Excel export restored; settings cards cleaned up</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.59</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.59: Sort inside categories by date or actual expense; flat Excel export restored; settings cards cleaned up</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -6131,7 +6158,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.58';
+const APP_VERSION='v3.14.59';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
