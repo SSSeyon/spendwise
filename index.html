@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.60</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.61</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -2224,6 +2224,7 @@ function renderDashboard(){
   const debtNW=_nwCfg.includeDebtors!==false?S.debtors.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0):0;
   const nw=invTotal+cashTotal+debtNW;
   const _nwParts=[_nwCfg.includeInvestments!==false?'Investments':null,_nwAccts.length?'Cash':null,_nwCfg.includeDebtors!==false&&debtNW?'Debtors':null].filter(Boolean);
+  document.getElementById('dash-nw').textContent=fmtCur(nw,cur,m,y)||'—';
   document.getElementById('dash-nw-sub').innerHTML=`${_nwParts.join(' + ')} · ${MONTHS[m-1]} ${y}`+_getNWDeltaBadge(m,y);
 
   const st=bSt(spent,budgTotal);
@@ -3236,8 +3237,9 @@ function setExpSort(mode){_expSort=mode;renderExpenses();}
 
 function renderExpenses(){
   const m=S.expMonth,y=S.expYear;
-  const months=[];for(let i=12;i>=1;i--) months.push(i);
+  const months=[];for(let i=1;i<=12;i++) months.push(i);
   document.getElementById('exp-months').innerHTML=months.map(mo=>`<div class="mpill ${mo===m?'active':''}" onclick="reloadMonth(${mo},${y})">${MS[mo-1]}</div>`).join('');
+  setTimeout(()=>{const el=document.querySelector('#exp-months .mpill.active');if(el)el.scrollIntoView({inline:'center',block:'nearest'});},0);
 
   // Update sort button active states
   const btnExp=document.getElementById('exp-sort-exp-btn');
@@ -4403,8 +4405,9 @@ async function renderInvTrend(suffix){
 function renderCashPage(){
   const m=S.cashMonth,y=S.cashYear,cur=S.dashCurrency;
   const ACCTS=getCashAccounts();
-  const months=[];for(let i=12;i>=1;i--) months.push(i);
+  const months=[];for(let i=1;i<=12;i++) months.push(i);
   document.getElementById('cash-months').innerHTML=months.map(mo=>`<div class="mpill ${mo===m?'active':''}" onclick="changeCashMonth(${mo})">${MS[mo-1]}</div>`).join('');
+  setTimeout(()=>{const el=document.querySelector('#cash-months .mpill.active');if(el)el.scrollIntoView({inline:'center',block:'nearest'});},0);
   document.getElementById('cash-month-label').textContent=`${MONTHS[m-1]} ${y}`;
   const cash=S.cash;
   const fxR=getFxRates(m,y);
@@ -5619,7 +5622,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.60</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.60: Gain/Loss combined; investment config (platforms, rates, subs) now syncs across devices via Firestore</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.61</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.61: Gain/Loss combined; investment config (platforms, rates, subs) now syncs across devices via Firestore</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -6192,7 +6195,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.60';
+const APP_VERSION='v3.14.61';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
