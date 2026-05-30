@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.57</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.58</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -952,6 +952,30 @@ datalist option{background:var(--bg2);color:var(--text)}
     </div>
   </div>
 </div>
+<!-- ── Investment Adjustment Modal ── -->
+<div class="mbackdrop" id="inv-adj-modal">
+  <div class="modal">
+    <div class="mhdr"><div class="mtitle" id="inv-adj-title">Record Inflow</div><button class="mclose" onclick="closeMod('inv-adj-modal')">×</button></div>
+    <div style="padding:0 16px 16px">
+      <div style="font-size:0.68rem;color:var(--text3);margin-bottom:12px" id="inv-adj-desc"></div>
+      <div class="ig" style="margin-bottom:10px">
+        <label class="ilabel" id="inv-adj-amt-label">Amount (₦)</label>
+        <input class="ifield" type="text" id="inv-adj-amount" placeholder="0">
+      </div>
+      <div class="ig" style="margin-bottom:10px">
+        <label class="ilabel">Date</label>
+        <input class="ifield" type="date" id="inv-adj-date">
+      </div>
+      <div class="ig" style="margin-bottom:14px">
+        <label class="ilabel">Notes (optional)</label>
+        <input class="ifield" type="text" id="inv-adj-notes" placeholder="e.g. Monthly top-up">
+      </div>
+      <button class="btn btn-p btn-full" style="font-weight:700" onclick="applyInvAdjust()">Apply</button>
+      <button class="btn btn-g btn-full" style="margin-top:8px" onclick="closeMod('inv-adj-modal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
 
 <!-- DEBTOR MODAL -->
 <div class="mbackdrop" id="deb-modal">
@@ -3854,14 +3878,24 @@ function _renderInvInto(suffix){
 
     // ── Per-sub edit forms ──
     const editPanels=subs.map((sub,idx)=>{
-      const dispP=isUSD&&sub.principal?((Number(sub.principal)/fxRate)).toFixed(2):(sub.principal||'');
+      const dispBal=isUSD&&sub.principal?'$'+((Number(sub.principal)/fxRate)).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):sub.principal?fN(Number(sub.principal)):'—';
       const lbl=isUSD?`$ USD`:'₦ NGN';
       return`<div id="inv-sub-panel-${p.key}-${sub.id}${s}" style="border:1px solid var(--border);border-radius:var(--rsm);padding:10px;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <input class="ifield" id="inv-sub-label-${p.key}-${sub.id}${s}" value="${esc(sub.label)}" placeholder="Label" style="font-size:0.74rem;padding:4px 8px;flex:1;margin-right:8px">
           ${subs.length>1?`<button class="txi-del" onclick="removeInvSub('${p.key}','${sub.id}','${s}')" title="Remove this investment">×</button>`:''}
         </div>
-        <div class="ig" style="margin-bottom:6px"><label class="ilabel">Principal (${lbl})</label><input class="ifield" type="text" id="inv-sub-prin-${p.key}-${sub.id}${s}" placeholder="0" value="${dispP}" data-currency="${p.currency}"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding:6px 8px;background:var(--bg3);border-radius:var(--rsm)">
+          <div>
+            <div style="font-size:0.58rem;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em">Balance (${lbl})</div>
+            <div style="font-size:0.86rem;font-family:var(--mono);color:var(--accent);font-weight:600">${dispBal}</div>
+          </div>
+          <div style="display:flex;gap:5px">
+            <button onclick="openInvAdjModal('${p.key}','${sub.id}','inflow')" style="font-size:0.6rem;padding:3px 7px;border-radius:3px;background:rgba(100,200,100,0.15);border:1px solid rgba(100,200,100,0.3);color:#7dea7d;cursor:pointer">+ Inflow</button>
+            <button onclick="openInvAdjModal('${p.key}','${sub.id}','gain')" style="font-size:0.6rem;padding:3px 7px;border-radius:3px;background:rgba(200,245,66,0.12);border:1px solid rgba(200,245,66,0.3);color:var(--accent);cursor:pointer">+ Gain</button>
+            <button onclick="openInvAdjModal('${p.key}','${sub.id}','loss')" style="font-size:0.6rem;padding:3px 7px;border-radius:3px;background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.3);color:var(--red);cursor:pointer">− Loss</button>
+          </div>
+        </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
           <select class="sfield" id="inv-sub-ac-${p.key}-${sub.id}${s}" style="flex:1;font-size:0.72rem;padding:5px 8px" onchange="toggleSubFIFields('${p.key}','${sub.id}','${s}')">
             <option value="equity"${sub.assetClass!=='fixed_income'?' selected':''}>Equity</option>
@@ -4009,6 +4043,82 @@ function removeInvSub(pKey, subId, suffix){
     const subDisplay=document.getElementById('inv-sub-display-'+pKey+s);
     if(panel){panel.style.display='block';if(subDisplay)subDisplay.style.display='block';}
   },50);
+}
+
+// ── Investment Adjustments (Inflow / Gain / Loss) ─────────────────────────
+let _adjPKey=null, _adjSubId=null, _adjType=null;
+
+function openInvAdjModal(pKey, subId, type){
+  _adjPKey=pKey; _adjSubId=subId; _adjType=type;
+  const subs=getSubsForPlatform(pKey);
+  const sub=subs.find(s=>s.id===subId);
+  if(!sub) return;
+  const p=PLATFORMS.find(pl=>pl.key===pKey);
+  const m=S.expMonth,y=S.expYear;
+  const isUSD=p&&p.currency==='USD';
+  const fxRates=getFxRates(m,y);
+  const fxRate=isUSD?(fxRates.USD||1600):1;
+  const curBal=isUSD?'$'+((Number(sub.principal)||0)/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(Number(sub.principal)||0);
+  const titles={inflow:'Record Inflow',gain:'Record Gain',loss:'Record Loss'};
+  const descs={
+    inflow:`Adding new money to <strong>${esc(sub.label)}</strong>. Current balance: ${curBal}.`,
+    gain:`Recording appreciation on <strong>${esc(sub.label)}</strong>. Current balance: ${curBal}.`,
+    loss:`Recording a loss on <strong>${esc(sub.label)}</strong>. Current balance: ${curBal}.`,
+  };
+  const amtLabels={inflow:`Amount (${isUSD?'$':'₦'})`,gain:`Gain amount (${isUSD?'$':'₦'})`,loss:`Loss amount (${isUSD?'$':'₦'})`};
+  document.getElementById('inv-adj-title').textContent=titles[type];
+  document.getElementById('inv-adj-desc').innerHTML=descs[type];
+  document.getElementById('inv-adj-amt-label').textContent=amtLabels[type];
+  document.getElementById('inv-adj-amount').value='';
+  document.getElementById('inv-adj-date').value=todayStr();
+  document.getElementById('inv-adj-notes').value='';
+  openMod('inv-adj-modal');
+  setTimeout(()=>initNumInputs(document.getElementById('inv-adj-modal')),50);
+}
+
+async function applyInvAdjust(){
+  if(!_adjPKey||!_adjSubId||!_adjType) return;
+  const rawAmt=document.getElementById('inv-adj-amount').value.replace(/,/g,'');
+  const amt=parseFloat(rawAmt);
+  if(!amt||amt<=0){toast('Enter a valid amount');return;}
+  const date=document.getElementById('inv-adj-date').value||todayStr();
+  const notes=document.getElementById('inv-adj-notes').value.trim();
+  const p=PLATFORMS.find(pl=>pl.key===_adjPKey);
+  const isUSD=p&&p.currency==='USD';
+  const m=S.expMonth,y=S.expYear;
+  const fxRate=isUSD?(getFxRates(m,y).USD||1600):1;
+  // Convert to NGN if USD platform
+  const amtNGN=Math.round(isUSD?amt*fxRate:amt);
+
+  const subs=getSubsForPlatform(_adjPKey);
+  const subIdx=subs.findIndex(s=>s.id===_adjSubId);
+  if(subIdx<0){toast('Investment not found');return;}
+  const sub=subs[subIdx];
+  const prevPrincipal=Number(sub.principal)||0;
+  let newPrincipal;
+  if(_adjType==='loss'){
+    newPrincipal=Math.max(0,prevPrincipal-amtNGN);
+  } else {
+    // inflow or gain — both increase the principal
+    newPrincipal=prevPrincipal+amtNGN;
+  }
+  subs[subIdx]={...sub,principal:newPrincipal};
+  saveSubsForPlatform(_adjPKey,subs);
+
+  // Recompute platform total and persist
+  const newPlatTotal=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
+  const invData={...(cGet(CK.inv(m,y))||S.investments),month:m,year:y};
+  invData[_adjPKey]=newPlatTotal;
+  S.investments=invData;
+  cSet(CK.inv(m,y),invData);
+  if(db) db.collection('investments').doc(sid(m,y)).set(invData,{merge:true}).catch(()=>{});
+
+  const sign=_adjType==='loss'?'−':'+';
+  const dispAmt=isUSD?'$'+amt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'₦'+fNum(amtNGN);
+  closeMod('inv-adj-modal');
+  toast(`${_adjType.charAt(0).toUpperCase()+_adjType.slice(1)}: ${sign}${dispAmt} applied`);
+  haptic([8,40,8]);
+  renderInvestments();renderDashboard();
 }
 
 // ── Liquidation ───────────────────────────────────────────────────────────
@@ -5478,7 +5588,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.57</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.57: Sort inside categories by date or actual expense; flat Excel export restored; settings cards cleaned up</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.58</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.58: Sort inside categories by date or actual expense; flat Excel export restored; settings cards cleaned up</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -6021,7 +6131,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.57';
+const APP_VERSION='v3.14.58';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
