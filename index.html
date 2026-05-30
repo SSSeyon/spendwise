@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.47</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.48</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -599,7 +599,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div style="display:flex;gap:8px;margin-bottom:10px">
       <div class="search-bar" style="flex:1">
         <span class="search-icon">🔍</span>
-        <input type="text" id="exp-search" placeholder="Search payee or notes…" oninput="renderExpenses()">
+        <input type="text" id="exp-search" placeholder="Search actual expense or notes…" oninput="renderExpenses()">
       </div>
       <button class="btn btn-g btn-sm" onclick="openFilterDrawer()" style="flex-shrink:0;padding:8px 12px">Filter ↑</button>
     </div>
@@ -4920,8 +4920,8 @@ function renderSettBudget(){
       <button class="btn btn-p" style="flex:1" onclick="saveBudget()">Save Budget</button>
     </div>
     <div style="border-top:1px solid var(--border);padding-top:14px">
-      <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Manage Categories &amp; Payees</div>
-      <div style="font-size:0.66rem;color:var(--text3);margin-bottom:10px">Tap a category to expand its payee lines. Built-in categories cannot be deleted (but can be merged). Custom categories with transactions must be merged before removal.</div>
+      <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Manage Categories &amp; Actual Expenses</div>
+      <div style="font-size:0.66rem;color:var(--text3);margin-bottom:10px">Tap a category to expand its actual expense lines. Built-in categories cannot be deleted (but can be merged). Custom categories with transactions must be merged before removal.</div>
       <div id="cat-payee-accordion">
         ${getAllCats().map((c)=>{
           const isCustom=!_BASE_CATS.includes(c);
@@ -4929,7 +4929,7 @@ function renderSettBudget(){
           return`<div class="cat-acc-item" id="cat-acc-${c.replace(/[^a-z0-9]/gi,'_')}">
             <div class="cat-acc-hdr" onclick="toggleCatAcc('${c.replace(/'/g,"\\'")}')">
               <span style="font-size:0.76rem;flex:1">${CAT_ICONS[c]||'📦'} ${c}</span>
-              <span style="font-size:0.62rem;color:var(--text3);margin-right:8px">${allPayees.length} payee${allPayees.length!==1?'s':''}</span>
+              <span style="font-size:0.62rem;color:var(--text3);margin-right:8px">${allPayees.length} expense${allPayees.length!==1?'s':''}</span>
               ${isCustom?`<button class="cat-remove-btn" onclick="event.stopPropagation();removeCustomCat('${c.replace(/'/g,"\\'")}')">×</button>`:''}
               <span class="cat-acc-chevron">›</span>
             </div>
@@ -4942,10 +4942,10 @@ function renderSettBudget(){
                       <button class="btn btn-g btn-sm" style="padding:2px 7px;font-size:0.66rem" onclick="startEditPayee('${c.replace(/'/g,"\\'")}','${p.replace(/'/g,"\\'")}')">Edit</button>
                       <button class="txi-del" onclick="removePayeeLine('${c.replace(/'/g,"\\'")}','${p.replace(/'/g,"\\'")}','${(CAT_LINES[c]||[]).includes(p)?'builtin':'custom'}')">×</button>
                     </div>
-                  </div>`).join(''):'<div style="font-size:0.7rem;color:var(--text3);padding:6px 0">No payees yet.</div>'}
+                  </div>`).join(''):'<div style="font-size:0.7rem;color:var(--text3);padding:6px 0">No actual expenses yet.</div>'}
               </div>
               <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
-                <input class="ifield" id="new-payee-${c.replace(/[^a-z0-9]/gi,'_')}" placeholder="Add payee…" style="flex:1;font-size:0.74rem;padding:5px 8px">
+                <input class="ifield" id="new-payee-${c.replace(/[^a-z0-9]/gi,'_')}" placeholder="Add actual expense…" style="flex:1;font-size:0.74rem;padding:5px 8px">
                 <button class="btn btn-p btn-sm" style="font-size:0.72rem" onclick="addPayeeToCategory('${c.replace(/'/g,"\\'")}')">+ Add</button>
               </div>
             </div>
@@ -5039,7 +5039,7 @@ function addPayeeToCategory(cat){
   const name=inp.value.trim();
   if(!name){toast('Enter a payee name');return;}
   const existing=[...(CAT_LINES[cat]||[]),...(S.customExpLines[cat]||[])];
-  if(existing.map(p=>p.toLowerCase()).includes(name.toLowerCase())){toast('Payee already exists in this category');return;}
+  if(existing.map(p=>p.toLowerCase()).includes(name.toLowerCase())){toast('Actual expense already exists in this category');return;}
   if(!S.customExpLines[cat]) S.customExpLines[cat]=[];
   S.customExpLines[cat].push(name);
   cSet(CK.customLines,S.customExpLines);
@@ -5198,31 +5198,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card">
-      <div class="exp-card-title" style="margin-bottom:6px">Firebase Sync Status</div>
-      <div class="pjrow"><span class="pjlabel">Last sync</span><span class="pjval">${syncInfo}</span></div>
-      <div class="pjrow"><span class="pjlabel">Seed version</span><span class="pjval" style="color:var(--accent)">${fbVer||'—'}</span></div>
-      <div class="pjrow"><span class="pjlabel">Transactions (this month)</span><span class="pjval">${S.txns.length}</span></div>
-      <div class="pjrow"><span class="pjlabel">Income records</span><span class="pjval">${S.income.length}</span></div>
-      <div class="pjrow"><span class="pjlabel">Debtors</span><span class="pjval">${S.debtors.length}</span></div>
-      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-g btn-sm" onclick="forceSyncNow()">↻ Force re-sync from Firebase</button>
-      </div>
-    </div>
-    <div class="exp-card" style="margin-top:10px">
-      <div class="exp-card-title" style="margin-bottom:6px">App Update</div>
-      <div class="exp-card-sub" style="margin-bottom:10px">If the app shows an old version after a deployment, use this to clear the service worker cache and reload the latest files.</div>
-      <button class="btn btn-g btn-sm" onclick="forceHardRefresh()">⬆ Force Hard Refresh</button>
-    </div>
-    <div class="exp-card" style="margin-top:10px">
-      <div class="exp-card-title" style="margin-bottom:6px">Import JSON Seed File</div>
-      <div class="exp-card-sub">Upload <strong>spendwise-seed.json</strong> to populate all data instantly. Firebase syncs in the background.</div>
-      <input type="file" id="seed-file-input" accept=".json" style="display:none" onchange="handleSeedFile(event)">
-      <div style="margin-top:10px"><button class="btn btn-p" onclick="document.getElementById('seed-file-input').click()">↑ Choose JSON File</button></div>
-      <div id="seed-status" style="margin-top:10px;font-size:0.72rem;color:var(--text2)"></div>
-      <div id="seed-preview" style="display:none;margin-top:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:10px"></div>
-    </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.47</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.48</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.48: Future months browsable; income/expenses bucket by entered date; local timezone date stamping; HTML escaping on user text; recurring items post to their due date</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -5539,11 +5515,11 @@ function drillDown(type){
 // ══════════════════════════════════════════════════════════════════════════
 // CATEGORY DETAIL POPUP (from chart click)
 // ══════════════════════════════════════════════════════════════════════════
-let _catPopupTxns=[], _catPopupSort='amount';
+let _catPopupTxns=[], _catPopupSort='expense';
 
 function openCatPopup(cat, txns, cur, m, y){
   _catPopupTxns=[...txns];
-  _catPopupSort='amount';
+  _catPopupSort='expense';
   document.getElementById('drill-title').innerHTML=`${CAT_ICONS[cat]||''} ${cat}`;
   _renderCatPopup(cur, m, y);
   openMod('drill-modal');
@@ -5551,28 +5527,59 @@ function openCatPopup(cat, txns, cur, m, y){
 
 function _renderCatPopup(cur, m, y){
   cur=cur||S.dashCurrency; m=m||S.dashMonth; y=y||S.dashYear;
-  const sorted=_catPopupSort==='amount'
-    ?[..._catPopupTxns].sort((a,b)=>(b.amount||0)-(a.amount||0))
-    :[..._catPopupTxns].sort((a,b)=>a.date>b.date?-1:1);
   const total=_catPopupTxns.reduce((s,t)=>s+(t.amount||0),0);
+
+  let listHTML='';
+  if(_catPopupSort==='date'){
+    // Group by date, sorted most-recent first
+    const byDate={};
+    _catPopupTxns.forEach(tx=>{const d=tx.date||'';(byDate[d]=byDate[d]||[]).push(tx);});
+    const dates=Object.keys(byDate).sort((a,b)=>a>b?-1:1);
+    listHTML=dates.map(d=>{
+      const dayTxns=byDate[d].sort((a,b)=>(b.amount||0)-(a.amount||0));
+      const dayTotal=dayTxns.reduce((s,t)=>s+(t.amount||0),0);
+      return`<div style="padding:6px 0 2px;font-size:0.68rem;font-weight:600;color:var(--text3);display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:4px">
+        <span>${fmtDate(d)}</span><span style="font-family:var(--mono);color:var(--text2)">${fmtCur(dayTotal,cur,m,y)}</span></div>
+        ${dayTxns.map(tx=>`
+        <div class="txi" style="padding:6px 0 6px 10px" onclick="openEditExpense('${tx.id}');closeMod('drill-modal')">
+          <div style="flex:1;min-width:0">
+            <div class="txi-cat" style="font-size:0.74rem">${esc(tx.payee)||'—'}</div>
+            ${tx.notes?`<div class="txi-meta">${esc(tx.notes)}</div>`:''}
+          </div>
+          <div class="txi-amt txi-exp">${fmtCur(tx.amount,cur,m,y)}</div>
+        </div>`).join('')}`;
+    }).join('');
+  } else {
+    // Group by actual expense (payee), sorted by group total desc
+    const byExpense={};
+    _catPopupTxns.forEach(tx=>{const key=tx.payee||'—';(byExpense[key]=byExpense[key]||[]).push(tx);});
+    const groups=Object.entries(byExpense)
+      .map(([name,txns])=>({name,txns,total:txns.reduce((s,t)=>s+(t.amount||0),0)}))
+      .sort((a,b)=>b.total-a.total);
+    listHTML=groups.map(g=>{
+      const gTxns=[...g.txns].sort((a,b)=>a.date>b.date?-1:1);
+      return`<div style="padding:6px 0 2px;font-size:0.72rem;font-weight:600;color:var(--text);display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:4px">
+        <span>${esc(g.name)}</span><span style="font-family:var(--mono);color:var(--red)">${fmtCur(g.total,cur,m,y)}</span></div>
+        ${gTxns.map(tx=>`
+        <div class="txi" style="padding:5px 0 5px 10px" onclick="openEditExpense('${tx.id}');closeMod('drill-modal')">
+          <div style="flex:1;min-width:0">
+            <div class="txi-meta">${fmtDate(tx.date)}${tx.bank?' · '+esc(tx.bank):''}</div>
+            ${tx.notes?`<div class="txi-meta">${esc(tx.notes)}</div>`:''}
+          </div>
+          <div class="txi-amt txi-exp">${fmtCur(tx.amount,cur,m,y)}</div>
+        </div>`).join('')}`;
+    }).join('');
+  }
+
   document.getElementById('drill-body').innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0 12px">
       <div style="font-family:var(--mono);font-size:0.88rem;color:var(--accent);font-weight:500">${fmtCur(total,cur,m,y)}<span style="font-size:0.62rem;color:var(--text3);margin-left:6px">${_catPopupTxns.length} transaction${_catPopupTxns.length!==1?'s':''}</span></div>
       <div style="display:flex;gap:6px">
-        <button onclick="_catPopupSort='amount';_renderCatPopup()" class="btn btn-sm ${_catPopupSort==='amount'?'btn-p':'btn-g'}" style="font-size:0.62rem;padding:4px 8px">Largest</button>
-        <button onclick="_catPopupSort='date';_renderCatPopup()" class="btn btn-sm ${_catPopupSort==='date'?'btn-p':'btn-g'}" style="font-size:0.62rem;padding:4px 8px">Recent</button>
+        <button onclick="_catPopupSort='expense';_renderCatPopup()" class="btn btn-sm ${_catPopupSort==='expense'?'btn-p':'btn-g'}" style="font-size:0.62rem;padding:4px 8px">By expense</button>
+        <button onclick="_catPopupSort='date';_renderCatPopup()" class="btn btn-sm ${_catPopupSort==='date'?'btn-p':'btn-g'}" style="font-size:0.62rem;padding:4px 8px">By date</button>
       </div>
     </div>
-    <div class="txlist">
-      ${sorted.map(tx=>`
-        <div class="txi" onclick="openEditExpense('${tx.id}');closeMod('drill-modal')">
-          <div style="flex:1;min-width:0">
-            <div class="txi-cat" style="font-size:0.76rem">${esc(tx.payee)||'—'}</div>
-            <div class="txi-meta">${fmtDate(tx.date)}${tx.bank?' · '+esc(tx.bank):''}${tx.notes?' · '+esc(tx.notes):''}</div>
-          </div>
-          <div class="txi-amt txi-exp">${fmtCur(tx.amount,cur,m,y)}</div>
-        </div>`).join('')}
-    </div>`;
+    <div class="txlist">${listHTML}</div>`;
 }
 
 
@@ -5734,7 +5741,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.47';
+const APP_VERSION='v3.14.48';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
