@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.48</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.52</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -602,6 +602,10 @@ datalist option{background:var(--bg2);color:var(--text)}
         <input type="text" id="exp-search" placeholder="Search actual expense or notes…" oninput="renderExpenses()">
       </div>
       <button class="btn btn-g btn-sm" onclick="openFilterDrawer()" style="flex-shrink:0;padding:8px 12px">Filter ↑</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <button id="exp-sort-date-btn" class="btn btn-sm btn-p" style="font-size:0.62rem;padding:4px 10px" onclick="setExpSort('date')">By date</button>
+      <button id="exp-sort-exp-btn" class="btn btn-sm btn-g" style="font-size:0.62rem;padding:4px 10px" onclick="setExpSort('expense')">By expense</button>
     </div>
     <div id="exp-list"></div>
   </div>
@@ -3121,14 +3125,23 @@ async function delIncome(id){
   }catch(e){toast('Error deleting income');}
 }
 
+let _expSort='date'; // 'date' | 'expense' — controls layout inside each category
+function setExpSort(mode){_expSort=mode;renderExpenses();}
+
 function renderExpenses(){
   const m=S.expMonth,y=S.expYear;
   const months=[];for(let i=12;i>=1;i--) months.push(i);
   document.getElementById('exp-months').innerHTML=months.map(mo=>`<div class="mpill ${mo===m?'active':''}" onclick="reloadMonth(${mo},${y})">${MS[mo-1]}</div>`).join('');
 
-  // Sort all txns by date descending
+  // Update sort button active states
+  const btnExp=document.getElementById('exp-sort-exp-btn');
+  const btnDate=document.getElementById('exp-sort-date-btn');
+  if(btnExp) btnExp.className=`btn btn-sm ${_expSort==='expense'?'btn-p':'btn-g'}`;
+  if(btnDate) btnDate.className=`btn btn-sm ${_expSort==='date'?'btn-p':'btn-g'}`;
+
   const txns=[...S.txns].sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:0);
   const searchQ=(document.getElementById('exp-search')?.value||'').toLowerCase().trim();
+  const cur=S.dashCurrency;
 
   let filtered=txns;
   if(S.expCat!=='All') filtered=filtered.filter(t=>t.category===S.expCat);
@@ -3143,7 +3156,7 @@ function renderExpenses(){
       <div><div class="clabel">Total — ${MONTHS[m-1]}${filterDesc}</div><div class="cval">${fN(S.expCat!=='All'?filtered.reduce((s,t)=>s+(t.amount||0),0):total)}</div></div>
       <div style="text-align:right"><div class="clabel">Count</div><div class="cval">${filtered.length}${filtered.length!==txns.length?`<span style="font-size:0.6rem;color:var(--text3)"> / ${txns.length}</span>`:''}</div></div>
     </div>
-    ${Object.keys(catSpend).length?`<div style="display:flex;flex-wrap:wrap;gap:5px">${Object.entries(catSpend).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([c,a])=>`<div onclick="quickCatFilter('${c}')" style="padding:2px 9px;border-radius:20px;background:${S.expCat===c?'var(--adim)':'var(--bg2)'};border:1px solid ${S.expCat===c?'var(--accent)':'var(--border)'};font-size:0.63rem;color:${S.expCat===c?'var(--accent)':'var(--text2)'};cursor:pointer">${c} · ${fN(a)}</div>`).join('')}</div>`:''}`;
+    ${Object.keys(catSpend).length?`<div style="display:flex;flex-wrap:wrap;gap:5px">${Object.entries(catSpend).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([c,amt])=>`<div onclick="quickCatFilter('${c}')" style="padding:2px 9px;border-radius:20px;background:${S.expCat===c?'var(--adim)':'var(--bg2)'};border:1px solid ${S.expCat===c?'var(--accent)':'var(--border)'};font-size:0.63rem;color:${S.expCat===c?'var(--accent)':'var(--text2)'};cursor:pointer">${c} · ${fN(amt)}</div>`).join('')}</div>`:''}`;
 
   const listEl=document.getElementById('exp-list');
   if(!filtered.length){
@@ -3151,7 +3164,7 @@ function renderExpenses(){
     return;
   }
 
-  // Helper to build a swipeable row
+  // ── Swipeable flat row ──
   const swipeRow=(tx)=>`
     <div class="swipe-wrap" id="sw-${tx.id}">
       <div class="swipe-del-bg" id="swbg-${tx.id}">DELETE</div>
@@ -3161,7 +3174,7 @@ function renderExpenses(){
            ontouchend="swipeEnd(event,'${tx.id}')">
         <div style="flex:1;min-width:0">
           <div class="txi-cat" style="font-size:0.76rem">${esc(tx.payee)||'—'}</div>
-          <div class="txi-meta">${fmtDate(tx.date)} · ${esc(tx.bank||'')}</div>
+          <div class="txi-meta">${fmtDate(tx.date)} · ${esc(tx.bank||'')}${tx.notes?' · '+esc(tx.notes):''}</div>
         </div>
         <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
           <div class="txi-amt txi-exp">${fN(tx.amount)}</div>
@@ -3171,24 +3184,63 @@ function renderExpenses(){
       </div>
     </div>`;
 
+  // ── Inner body for a category's items ──
+  // By date: sub-group by date, most-recent first; items within date sorted by amount desc
+  // By expense: sub-group by actual expense name, sorted by total desc; items within group sorted by date desc
+  const renderCatBody=(items)=>{
+    if(_expSort==='date'){
+      const byDate={};
+      items.forEach(tx=>{const d=tx.date||'';(byDate[d]=byDate[d]||[]).push(tx);});
+      const dates=Object.keys(byDate).sort((a,b)=>a>b?-1:1);
+      return dates.map(d=>{
+        const dayTxns=byDate[d].sort((a,b)=>(b.amount||0)-(a.amount||0));
+        const dayTotal=dayTxns.reduce((s,t)=>s+(t.amount||0),0);
+        return`<div style="padding:5px 12px 2px;font-size:0.68rem;font-weight:600;color:var(--text3);display:flex;justify-content:space-between;border-top:1px solid var(--border)">
+          <span>${fmtDate(d)}</span><span style="font-family:var(--mono);color:var(--text2)">${fN(dayTotal)}</span></div>
+          ${dayTxns.map(tx=>`
+          <div onclick="openEditExp('${tx.id}')" style="display:flex;justify-content:space-between;align-items:center;padding:3px 12px;cursor:pointer">
+            <span style="font-size:0.75rem;color:var(--text);min-width:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(tx.payee)||'—'}${tx.bank?`<span style="color:var(--text3)"> · ${esc(tx.bank)}</span>`:''}${tx.notes?`<span style="color:var(--text3)"> · ${esc(tx.notes)}</span>`:''}</span>
+            <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:8px">
+              <span style="font-family:var(--mono);font-size:0.75rem;color:var(--red)">${fN(tx.amount)}</span>
+              <button class="txi-del" onclick="event.stopPropagation();delExpense('${tx.id}')">×</button>
+            </div>
+          </div>`).join('')}`;
+      }).join('');
+    } else {
+      // By expense
+      const byExp={};
+      items.forEach(tx=>{const key=tx.payee||'—';(byExp[key]=byExp[key]||[]).push(tx);});
+      const groups=Object.entries(byExp)
+        .map(([name,grpTxns])=>({name,grpTxns,total:grpTxns.reduce((s,t)=>s+(t.amount||0),0)}))
+        .sort((a,b)=>b.total-a.total);
+      return groups.map(g=>{
+        const gTxns=[...g.grpTxns].sort((a,b)=>a.date>b.date?-1:1);
+        return`<div style="padding:5px 12px 2px;font-size:0.68rem;font-weight:600;color:var(--text3);display:flex;justify-content:space-between;border-top:1px solid var(--border)">
+          <span>${esc(g.name)}</span><span style="font-family:var(--mono);color:var(--text2)">${fN(g.total)}</span></div>
+          ${gTxns.map(tx=>`
+          <div onclick="openEditExp('${tx.id}')" style="display:flex;justify-content:space-between;align-items:center;padding:3px 12px;cursor:pointer">
+            <span style="font-size:0.75rem;color:var(--text3);min-width:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${fmtDate(tx.date)}${tx.bank?` · ${esc(tx.bank)}`:''}${tx.notes?` · ${esc(tx.notes)}`:''}</span>
+            <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:8px">
+              <span style="font-family:var(--mono);font-size:0.75rem;color:var(--red)">${fN(tx.amount)}</span>
+              <button class="txi-del" onclick="event.stopPropagation();delExpense('${tx.id}')">×</button>
+            </div>
+          </div>`).join('')}`;
+      }).join('');
+    }
+  };
+
+  // When filtered to a single category or searching, skip the outer category accordion
   if(S.expCat!=='All'||searchQ){
-    // Flat list when filtered to single category or searching
-    listEl.innerHTML='<div class="txlist">'+filtered.map(swipeRow).join('')+'</div>';
+    listEl.innerHTML=`<div style="border:1px solid var(--border);border-radius:var(--rsm);overflow:hidden">${renderCatBody(filtered)}</div>`;
     return;
   }
 
-  // All categories — group by category, sorted by total spend desc, items sorted by date within group
+  // ── Outer: categories sorted by total spend desc ──
   const groups={};
-  filtered.forEach(tx=>{
-    if(!groups[tx.category]) groups[tx.category]=[];
-    groups[tx.category].push(tx);
-  });
+  filtered.forEach(tx=>{if(!groups[tx.category])groups[tx.category]=[];groups[tx.category].push(tx);});
   const orderedCats=Object.keys(groups).sort((a,b)=>{
-    const ta=groups[a].reduce((s,t)=>s+(t.amount||0),0);
-    const tb=groups[b].reduce((s,t)=>s+(t.amount||0),0);
-    return tb-ta;
+    return groups[b].reduce((s,t)=>s+(t.amount||0),0)-groups[a].reduce((s,t)=>s+(t.amount||0),0);
   });
-
   listEl.innerHTML=orderedCats.map(cat=>{
     const items=groups[cat];
     const catTotal=items.reduce((s,t)=>s+(t.amount||0),0);
@@ -3204,7 +3256,7 @@ function renderExpenses(){
         <span style="font-family:var(--mono);font-size:0.82rem;color:var(--red)">${fN(catTotal)}</span>
       </div>
       <div id="${gid}" style="display:none;border:1px solid var(--border);border-top:none;border-radius:0 0 var(--rsm) var(--rsm);overflow:hidden">
-        ${items.map(swipeRow).join('')}
+        ${renderCatBody(items)}
       </div>
     </div>`;
   }).join('');
@@ -5175,12 +5227,14 @@ async function exportFullBackup(){
   toast(`Backup downloaded (${totalDocs} records)`);haptic([8]);
 }
 function buildRows(txns,month,year){
-  const rows=[[`SpendWise Export — ${month?MONTHS[month-1]+' '+year:'All Transactions'}`],[],['Date','Category','Actual Expense','Bank','Notes','Amount (₦)']];
   const sorted=[...txns].sort((a,b)=>a.date>b.date?1:-1);
+  const rows=[[`SpendWise Export — ${month?MONTHS[month-1]+' '+year:'All Transactions'}`],[],
+    ['Date','Category','Actual Expense','Bank','Notes','Amount (₦)']];
   sorted.forEach(t=>rows.push([t.date||'',t.category||'',t.payee||'',t.bank||'',t.notes||'',t.amount||0]));
-  rows.push([]);rows.push(['SUMMARY','','','','','']);
-  rows.push(['Total Transactions','','','','',sorted.length]);
-  rows.push(['Total Amount','','','','',sorted.reduce((s,t)=>s+(t.amount||0),0)]);
+  rows.push([]);
+  rows.push(['SUMMARY']);
+  rows.push(['Total transactions','','','','',sorted.length]);
+  rows.push(['Total amount','','','','',sorted.reduce((s,t)=>s+(t.amount||0),0)]);
   const catT={};sorted.forEach(t=>{catT[t.category]=(catT[t.category]||0)+(t.amount||0);});
   Object.entries(catT).sort((a,b)=>b[1]-a[1]).forEach(([c,a])=>rows.push([c,'','','','',a]));
   return rows;
@@ -5189,7 +5243,7 @@ async function exportAll(fmt){toast('Fetching all transactions…');try{const sn
 async function exportMonth(fmt){const m=parseInt(document.getElementById('exp-mo-sel').value),y=parseInt(document.getElementById('exp-yr-sel').value);toast(`Fetching ${MONTHS[m-1]} ${y}…`);try{let snap;try{snap=await db.collection('transactions').where('year','==',y).where('month','==',m).orderBy('date','desc').get();}catch{snap=await db.collection('transactions').where('year','==',y).where('month','==',m).get();}const txns=snap.docs.map(d=>({id:d.id,...d.data()}));if(!txns.length){toast('No transactions for that month');return;}doExport(buildRows(txns,m,y),`SpendWise_${MONTHS[m-1]}_${y}`,fmt);}catch(e){toast('Error fetching');}}
 function doExport(rows,filename,fmt){
   if(fmt==='csv'){const csv=rows.map(r=>r.map(c=>typeof c==='string'&&c.includes(',')?`"${c}"`:String(c)).join(',')).join('\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename+'.csv';a.click();URL.revokeObjectURL(url);toast('CSV downloaded');}
-  else{if(typeof XLSX==='undefined'){toast('Excel library not loaded');return;}const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=[{wch:12},{wch:18},{wch:24},{wch:10},{wch:24},{wch:14}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Transactions');XLSX.writeFile(wb,filename+'.xlsx');toast('Excel file downloaded');}
+  else{if(typeof XLSX==='undefined'){toast('Excel library not loaded');return;}const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=[{wch:12},{wch:18},{wch:28},{wch:12},{wch:28},{wch:14}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Transactions');XLSX.writeFile(wb,filename+'.xlsx');toast('Excel file downloaded');}
 }
 
 function renderSettData(){
@@ -5198,7 +5252,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.48</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.48: Future months browsable; income/expenses bucket by entered date; local timezone date stamping; HTML escaping on user text; recurring items post to their due date</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.52</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.52: Sort inside categories by date or actual expense; flat Excel export restored; settings cards cleaned up</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -5558,8 +5612,8 @@ function _renderCatPopup(cur, m, y){
       .sort((a,b)=>b.total-a.total);
     listHTML=groups.map(g=>{
       const gTxns=[...g.txns].sort((a,b)=>a.date>b.date?-1:1);
-      return`<div style="padding:6px 0 2px;font-size:0.72rem;font-weight:600;color:var(--text);display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:4px">
-        <span>${esc(g.name)}</span><span style="font-family:var(--mono);color:var(--red)">${fmtCur(g.total,cur,m,y)}</span></div>
+      return`<div style="padding:6px 0 2px;font-size:0.68rem;font-weight:600;color:var(--text3);display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:4px">
+        <span>${esc(g.name)}</span><span style="font-family:var(--mono);color:var(--text2)">${fmtCur(g.total,cur,m,y)}</span></div>
         ${gTxns.map(tx=>`
         <div class="txi" style="padding:5px 0 5px 10px" onclick="openEditExpense('${tx.id}');closeMod('drill-modal')">
           <div style="flex:1;min-width:0">
@@ -5741,7 +5795,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.48';
+const APP_VERSION='v3.14.52';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
