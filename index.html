@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.65</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.66</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -483,7 +483,7 @@ datalist option{background:var(--bg2);color:var(--text)}
         <div class="collapsible-hdr open" id="dash-recent-hdr" onclick="toggleCollapsible('dash-recent','dash-recent-hdr')">
           <div style="font-size:0.82rem;font-weight:700">Recent Transactions</div>
           <div style="display:flex;align-items:center;gap:16px">
-            <span class="sh-link" onclick="event.stopPropagation();navTo('expenses')" style="font-size:0.66rem">View all →</span>
+            <span class="sh-link" onclick="event.stopPropagation();openAllTxnsModal()" style="font-size:0.66rem">View all →</span>
             <span class="chevron"><svg width="20" height="12" viewBox="0 0 20 12" fill="none"><polyline points="2,2 10,10 18,2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
           </div>
         </div>
@@ -955,6 +955,13 @@ datalist option{background:var(--bg2);color:var(--text)}
       <button class="btn btn-g" style="flex:1" onclick="closeMod('merge-cat-modal')">Cancel</button>
       <button class="btn btn-d" style="flex:1" id="merge-cat-confirm" onclick="execMergeCat()">Merge</button>
     </div>
+  </div>
+</div>
+<!-- ── All Transactions Modal ── -->
+<div class="mbackdrop" id="all-txns-modal" onclick="closeMod('all-txns-modal')">
+  <div class="modal" onclick="event.stopPropagation()" style="max-height:88vh">
+    <div class="mhdr"><div class="mtitle" id="all-txns-title">All Transactions</div><button class="mclose" onclick="closeMod('all-txns-modal')">×</button></div>
+    <div id="all-txns-body" style="overflow-y:auto;max-height:calc(88vh - 90px);padding-bottom:8px"></div>
   </div>
 </div>
 <!-- ── Investment Adjustment Modal ── -->
@@ -2375,6 +2382,62 @@ function renderDashboard(){
   renderDashAlerts();
 }
 
+
+// ══════════════════════════════════════════════════════════════════════════
+// ALL TRANSACTIONS MODAL (dashboard "View all")
+// ══════════════════════════════════════════════════════════════════════════
+function openAllTxnsModal(){
+  const m=S.dashMonth,y=S.dashYear,cur=S.dashCurrency||'NGN';
+  const title=document.getElementById('all-txns-title');
+  const body=document.getElementById('all-txns-body');
+  if(!body) return;
+  const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  if(title) title.textContent=MONTHS[m-1]+' '+y+' — All Transactions';
+
+  const all=[
+    ...S.txns.map(t=>({...t,_type:'exp'})),
+    ...S.income.map(i=>({...i,_type:'inc'}))
+  ].sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:txnTs(b.createdAt)-txnTs(a.createdAt));
+
+  if(!all.length){
+    body.innerHTML='<div class="empty"><div class="empty-i">↕</div>No transactions this month</div>';
+    openMod('all-txns-modal');
+    return;
+  }
+
+  // Group by date for day headers
+  const groups=[];
+  let curDate=null;
+  all.forEach(tx=>{
+    const d=tx.date?tx.date.slice(0,10):'';
+    if(d!==curDate){curDate=d;groups.push({date:d,rows:[]});}
+    groups[groups.length-1].rows.push(tx);
+  });
+
+  body.innerHTML=groups.map(g=>{
+    const dateHdr=g.date?`<div style="font-size:0.62rem;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;padding:10px 0 4px">${fmtDate(g.date)}</div>`:'';
+    const rows=g.rows.map(tx=>{
+      const isInc=tx._type==='inc';
+      const icon=tx.category?(CAT_ICONS[tx.category]||''):'';
+      const cat=tx.category||'Income';
+      const sub=isInc?(tx.notes||tx.bank||''):(tx.payee&&tx.payee!==cat?esc(tx.payee):'')+(tx.bank?`<span style="color:var(--text3)"> · ${esc(tx.bank)}</span>`:'');
+      const amt=`${isInc?'+':'−'}${fmtCur(tx.amount,cur,m,y)}`;
+      const typeBadge=isInc
+        ?`<span style="font-size:0.55rem;font-weight:700;color:var(--accent);background:rgba(52,211,153,0.12);border-radius:3px;padding:1px 4px;margin-left:4px">INC</span>`
+        :'';
+      return`<div class="txi" style="padding:7px 0;border-bottom:1px solid var(--border)">
+        <div style="min-width:0;flex:1">
+          <div class="txi-cat">${icon?icon+' ':''}${esc(cat)}${typeBadge}</div>
+          ${sub?`<div class="txi-meta">${sub}</div>`:''}
+        </div>
+        <div class="txi-amt ${isInc?'txi-inc':'txi-exp'}" style="white-space:nowrap;margin-left:10px">${amt}</div>
+      </div>`;
+    }).join('');
+    return dateHdr+rows;
+  }).join('');
+
+  openMod('all-txns-modal');
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // DASHBOARD CALENDAR
@@ -5915,7 +5978,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.65</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.65: Same-day transactions ordered by save time; bank and investment selectors show live balances</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.66</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.66: ‘View all’ on dashboard shows full month transaction list grouped by date</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -6494,7 +6557,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.65';
+const APP_VERSION='v3.14.66';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
