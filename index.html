@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.66</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.67</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -2331,13 +2331,15 @@ function renderDashboard(){
   // Investments (collapsible card)
   document.getElementById('dash-inv-total').textContent=invTotal?fmtCur(invTotal,cur==='NATIVE'?'NGN':cur,m,y):'—';
   document.getElementById('dash-inv').innerHTML=PLATFORMS.map(p=>{
-    const val=inv[p.key]||0;const pct=invTotal>0?((val/invTotal)*100).toFixed(1):'0.0';
+    const subs=getSubsForPlatform(p.key);
+    const val=subs.length?subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0):(inv[p.key]||0);
+    const pct=invTotal>0?((val/invTotal)*100).toFixed(1):'0.0';
     const dispVal=fmtPlatformVal(val,p.key,cur,m,y);
     const badge=`<span style="font-size:0.56rem;padding:1px 4px;border-radius:3px;background:var(--bg3);color:var(--text3);margin-left:4px">${p.currency}</span>`;
     return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)"><div style="display:flex;align-items:center;gap:8px">${platformLogoEl(p.key,p.color,22)}<div><div style="font-size:0.78rem;font-weight:600">${p.label}${badge}</div><div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono)">${pct}%</div></div></div><div style="font-family:var(--mono);font-size:0.84rem;color:${val?p.color:'var(--text3)'};">${val?dispVal:'—'}</div></div>`;
   }).join('');
-  const active=PLATFORMS.filter(p=>inv[p.key]);
-  document.getElementById('dash-abar').innerHTML=invTotal&&active.length?active.map(p=>`<div style="flex:${inv[p.key]};background:${p.color};opacity:0.8"></div>`).join(''):'';
+  const active=PLATFORMS.filter(p=>{const subs=getSubsForPlatform(p.key);return subs.length?subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0)>0:inv[p.key]>0;});
+  document.getElementById('dash-abar').innerHTML=invTotal&&active.length?active.map(p=>{const subs=getSubsForPlatform(p.key);const val=subs.length?subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0):(inv[p.key]||0);return`<div style="flex:${val};background:${p.color};opacity:0.8"></div>`;}).join(''):'';
 
   // 6-Month Trend
   const recent=getHistory().slice(-6);
@@ -5978,7 +5980,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.66</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.66: ‘View all’ on dashboard shows full month transaction list grouped by date</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.67</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.67: Dashboard investment list now reads live sub-account principals, fixing stale zero-balance display</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -6557,7 +6559,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.66';
+const APP_VERSION='v3.14.67';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
