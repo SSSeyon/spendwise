@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.72</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.73</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -2155,7 +2155,7 @@ function dashPeriodChange(){
   S.dashYear=newYear;S.dashMonth=newMonth;S.dashCurrency=newCur;
   cSet(CK.currency,newCur);
   updateMonthOptions();
-  if(curOnly){renderDashboard();renderExpenses();renderForecast();return;}
+  if(curOnly){renderDashboard();renderExpenses();renderForecast();renderInvestments();renderCashPage();return;}
   if(S.dashMonth>0){
     S.expMonth=S.dashMonth;S.expYear=S.dashYear;
     S.txns=cGet(CK.txns(S.dashMonth,S.dashYear))||[];
@@ -2164,7 +2164,7 @@ function dashPeriodChange(){
     S.cash=cGet(CK.cash(S.dashMonth,S.dashYear))||{};
     S.budgets=cGet(CK.budgets(S.dashMonth,S.dashYear))||{...DEF_BUDGETS};
   }
-  renderDashboard();renderExpenses();renderForecast();
+  renderDashboard();renderExpenses();renderForecast();renderInvestments();renderCashPage();
   if(db&&navigator.onLine){
     const m=S.dashMonth,y=S.dashYear;
     setSyncStatus('syncing');
@@ -5884,12 +5884,55 @@ function _buildCashSheet(cashSnap){
   return rows;
 }
 
-function _exportMultiSheet(txnRows,invRows,cashRows,filename){
+function _buildDailySheet(txns, incomeRecs, label){
+  // One row per calendar day that has any activity, sorted ascending
+  const byDate={};
+  txns.forEach(t=>{
+    const d=t.date||'';
+    if(!byDate[d])byDate[d]={date:d,expenses:[],income:[]};
+    byDate[d].expenses.push(t);
+  });
+  (incomeRecs||[]).forEach(i=>{
+    const d=i.date||'';
+    if(!byDate[d])byDate[d]={date:d,expenses:[],income:[]};
+    byDate[d].income.push(i);
+  });
+  const dates=Object.keys(byDate).filter(Boolean).sort();
+  const rows=[[`${label} — Daily Summary`],[],
+    ['Date','Income (₦)','Expenses (₦)','Net (₦)','# Transactions','Detail']
+  ];
+  dates.forEach(d=>{
+    const day=byDate[d];
+    const totalInc=day.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
+    const totalExp=day.expenses.reduce((s,t)=>s+(t.amount||0),0);
+    const net=totalInc-totalExp;
+    const count=day.income.length+day.expenses.length;
+    const detail=[
+      ...day.income.map(i=>`+${(i.amtNGN||i.amount||0).toLocaleString()} ${i.category||'Income'}${i.bank?' ('+i.bank+')':''}`),
+      ...day.expenses.map(t=>`-${(t.amount||0).toLocaleString()} ${t.category||''}${t.payee?' '+t.payee:''}${t.bank?' ('+t.bank+')':''}`)
+    ].join(' | ');
+    rows.push([d,totalInc||'',totalExp||'',net,count,detail]);
+  });
+  if(!dates.length)rows.push(['No data for this period']);
+  const totInc=txns.length?0:(incomeRecs||[]).reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
+  const grandInc=(incomeRecs||[]).reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
+  const grandExp=txns.reduce((s,t)=>s+(t.amount||0),0);
+  rows.push([],[`TOTAL`,'','','','','']);
+  rows.push(['',grandInc,grandExp,grandInc-grandExp,'','']);
+  return rows;
+}
+
+function _exportMultiSheet(txnRows,invRows,cashRows,filename,dailyRows){
   if(typeof XLSX==='undefined'){toast('Excel library not loaded');return;}
   const wb=XLSX.utils.book_new();
   const wsTxn=XLSX.utils.aoa_to_sheet(txnRows);
   wsTxn['!cols']=[{wch:12},{wch:10},{wch:18},{wch:24},{wch:12},{wch:24},{wch:14},{wch:14}];
   XLSX.utils.book_append_sheet(wb,wsTxn,'Transactions');
+  if(dailyRows&&dailyRows.length){
+    const wsDaily=XLSX.utils.aoa_to_sheet(dailyRows);
+    wsDaily['!cols']=[{wch:14},{wch:16},{wch:16},{wch:16},{wch:14},{wch:80}];
+    XLSX.utils.book_append_sheet(wb,wsDaily,'Daily Summary');
+  }
   const wsInv=XLSX.utils.aoa_to_sheet(invRows);
   wsInv['!cols']=[{wch:14},...(invRows[2]||[]).slice(1).map(()=>({wch:16}))];
   XLSX.utils.book_append_sheet(wb,wsInv,'Investments');
@@ -5897,7 +5940,7 @@ function _exportMultiSheet(txnRows,invRows,cashRows,filename){
   wsCash['!cols']=[{wch:14},...(cashRows[2]||[]).slice(1).map(()=>({wch:16}))];
   XLSX.utils.book_append_sheet(wb,wsCash,'Cash');
   XLSX.writeFile(wb,filename+'.xlsx');
-  toast('Excel downloaded — 3 sheets: Transactions, Investments, Cash');
+  toast('Excel downloaded — 4 sheets: Transactions, Daily Summary, Investments, Cash');
 }
 
 async function _fetchInvAndCashSnaps(m,y){
@@ -5952,7 +5995,7 @@ async function exportAll(fmt){
       toast('CSV downloaded');return;
     }
     const{invSnap,cashSnap}=await _fetchInvAndCashSnaps(null,null);
-    _exportMultiSheet(_buildTxnSheet(txns,incRecs,'All Time'),_buildInvSheet(invSnap),_buildCashSheet(cashSnap),'SpendWise_All');
+    _exportMultiSheet(_buildTxnSheet(txns,incRecs,'All Time'),_buildInvSheet(invSnap),_buildCashSheet(cashSnap),'SpendWise_All',_buildDailySheet(txns,incRecs,'All Time'));
   }catch(e){console.error(e);toast('Error exporting — check console');}
 }
 
@@ -5984,7 +6027,7 @@ async function exportMonth(fmt){
       toast('CSV downloaded');return;
     }
     const{invSnap,cashSnap}=await _fetchInvAndCashSnaps(m,y);
-    _exportMultiSheet(_buildTxnSheet(txns,incRecs,label),_buildInvSheet(invSnap),_buildCashSheet(cashSnap),`SpendWise_${MONTHS[m-1]}_${y}`);
+    _exportMultiSheet(_buildTxnSheet(txns,incRecs,label),_buildInvSheet(invSnap),_buildCashSheet(cashSnap),`SpendWise_${MONTHS[m-1]}_${y}`,_buildDailySheet(txns,incRecs,label));
   }catch(e){console.error(e);toast('Error exporting');}
 }
 
@@ -6004,7 +6047,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.72</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.72: Fix null innerHTML crash in renderForecast on initial load</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.73</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.73: Investments tab now responds to currency change; Excel export includes Daily Summary sheet</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -6689,7 +6732,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.72';
+const APP_VERSION='v3.14.73';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
