@@ -414,7 +414,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.69</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.70</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -3958,8 +3958,8 @@ function _renderInvInto(suffix){
   // Split platforms into equities and fixed income
   const eqPlats=PLATFORMS.filter(p=>{const meta=getInvPlatformMeta(p.key);return meta.assetClass!=='fixed_income';});
   const fiPlats=PLATFORMS.filter(p=>{const meta=getInvPlatformMeta(p.key);return meta.assetClass==='fixed_income';});
-  const eqTotal=eqPlats.reduce((acc,p)=>acc+(inv[p.key]||0),0);
-  const fiTotal=fiPlats.reduce((acc,p)=>acc+(inv[p.key]||0),0);
+  const eqTotal=eqPlats.reduce((acc,p)=>{const subs=getSubsForPlatform(p.key);const sp=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);return acc+(sp>0?sp:(inv[p.key]||0));},0);
+  const fiTotal=fiPlats.reduce((acc,p)=>{const subs=getSubsForPlatform(p.key);const sp=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);return acc+(sp>0?sp:(inv[p.key]||0));},0);
 
   if(elTotal){
     const intBadge=fiPlats.filter(p=>getInvPlatformMeta(p.key).interestRate).length?`<span class="int-badge">Interest-bearing</span>`:'';
@@ -4014,7 +4014,10 @@ function _renderInvInto(suffix){
         </div>`};
     });
 
-    const platformNGN=totalPrincipalNGN+totalInterestNGN;
+    const subPrincipalTotal=totalPrincipalNGN;
+    // Fall back to flat Firestore total if subs haven't been populated yet
+    const effectivePrincipalNGN=subPrincipalTotal>0?subPrincipalTotal:(inv[p.key]||0);
+    const platformNGN=effectivePrincipalNGN+totalInterestNGN;
     const pct=inv[p.key]&&(PLATFORMS.reduce((a,pp)=>a+(inv[pp.key]||0),0)>0)?((inv[p.key]/(PLATFORMS.reduce((a,pp)=>a+(inv[pp.key]||0),0)))*100).toFixed(1):'0.0';
     const badge=`<span style="font-size:0.56rem;padding:1px 4px;border-radius:3px;background:var(--bg3);color:var(--text3);margin-left:4px">${p.currency}</span>`;
     const fiCount=subs.filter(s=>s.assetClass==='fixed_income'&&s.rate).length;
@@ -5996,7 +5999,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.69</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.69: Transfers now appear in account history; investment account drill-down fixed to show correct balances</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.70</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.70: Investment page balances now fall back to Firestore total when sub principals are zero</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -6681,7 +6684,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.69';
+const APP_VERSION='v3.14.70';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
