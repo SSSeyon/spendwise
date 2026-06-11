@@ -415,7 +415,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.76</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.77</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -3690,6 +3690,32 @@ function _saveXfrRecord(from, to, amt, date, m, y, notes){
   if(db) db.collection('transfers').doc(rec.id).set(rec).catch(()=>{});
 }
 
+// ── Shared investment balance mutators (keep subs + flat totals in sync) ──
+// All amounts are NGN equivalents (USD platforms store NGN per the storage rule).
+function _invDeposit(pKey, ngnAmt, m, y){
+  const subs=migrateToSubs(pKey);
+  subs[0].principal=(Number(subs[0].principal)||0)+ngnAmt;
+  saveSubsForPlatform(pKey,subs);
+  const inv={...S.investments};inv[pKey]=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
+  S.investments=inv;cSet(CK.inv(m,y),inv);
+  if(db)db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(()=>{});
+}
+function _invWithdraw(pKey, ngnAmt, m, y){
+  // Returns false if the platform balance is insufficient. Deducts across subs in order.
+  const subs=migrateToSubs(pKey);
+  let subTotal=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
+  const flat=S.investments[pKey]||0;
+  if(subTotal===0&&flat>0){subs[0].principal=flat;subTotal=flat;} // repair corrupt zero-principal subs
+  if(subTotal<ngnAmt) return false;
+  let rem=ngnAmt;
+  subs.forEach(sb=>{if(rem<=0)return;const p=Number(sb.principal)||0;const d=Math.min(p,rem);sb.principal=p-d;rem-=d;});
+  saveSubsForPlatform(pKey,subs);
+  const inv={...S.investments};inv[pKey]=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
+  S.investments=inv;cSet(CK.inv(m,y),inv);
+  if(db)db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(()=>{});
+  return true;
+}
+
 async function saveExpense(){
   if(S.saving)return;
   const type=document.getElementById('e-type')?.value||'expense';
@@ -3704,46 +3730,40 @@ async function saveExpense(){
     const date=document.getElementById('e-date').value||todayStr();
     const notes=document.getElementById('e-notes').value||'';
 
+    const _fx=getFxRates(m,y).USD||1650;
+
     if(_xfrType==='cash-cash'){
       if(from===to){toast('Select different accounts');return;}
-      const cash={...S.cash};cash[from]=(cash[from]||0)-amt;cash[to]=(cash[to]||0)+amt;
+      if((S.cash[from]||0)<amt){toast(`Insufficient funds in ${from}`);return;}
+      const fU=isUSDCashAccount(from),tU=isUSDCashAccount(to);
+      // Amount is entered in the FROM account's currency; convert when currencies differ
+      const toAmt=fU===tU?amt:(fU?Math.round(amt*_fx):+(amt/_fx).toFixed(2));
+      const cash={...S.cash};cash[from]=(cash[from]||0)-amt;cash[to]=(cash[to]||0)+toAmt;
       S.cash=cash;cSet(CK.cash(m,y),cash);
       if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
       _saveXfrRecord(from,to,amt,date,m,y,notes);
-      toast(`${fN(amt)}: ${from} → ${to}`);
+      toast(fU===tU?`${fU?'$'+amt:fN(amt)}: ${from} → ${to}`:`${fU?'$'+amt:fN(amt)} → ${tU?'$'+toAmt:fN(toAmt)}: ${from} → ${to}`);
 
     } else if(_xfrType==='cash-inv'){
-      // Deduct from cash, add to investment platform
+      // Deduct from cash (account currency), add NGN equivalent to investment
+      if((S.cash[from]||0)<amt){toast(`Insufficient funds in ${from}`);return;}
+      const ngnAmt=isUSDCashAccount(from)?Math.round(amt*_fx):amt;
       const cash={...S.cash};cash[from]=(cash[from]||0)-amt;
       S.cash=cash;cSet(CK.cash(m,y),cash);
       if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
-      // Update sub principals — add to first sub (or create one via migration)
-      const toSubs=migrateToSubs(to);
-      toSubs[0].principal=(Number(toSubs[0].principal)||0)+amt;
-      saveSubsForPlatform(to,toSubs);
-      // Recompute platform total from subs and persist
-      const inv={...S.investments};inv[to]=toSubs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
-      S.investments=inv;cSet(CK.inv(m,y),inv);
-      if(db)db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(()=>{});
+      _invDeposit(to,ngnAmt,m,y);
       const platLabel=PLATFORMS.find(p=>p.key===to)?.label||to;
       _saveXfrRecord(from,to,amt,date,m,y,notes);
-      toast(`${fN(amt)}: ${from} → ${platLabel}`);
+      toast(`${isUSDCashAccount(from)?'$'+amt:fN(ngnAmt)}: ${from} → ${platLabel}`);
 
     } else {
-      // inv-cash: deduct from investment, add to cash
-      // Update sub principals — deduct from first sub
-      const fromSubs=migrateToSubs(from);
-      const deductAmt=Math.min(amt,Number(fromSubs[0].principal)||0);
-      fromSubs[0].principal=Math.max(0,(Number(fromSubs[0].principal)||0)-amt);
-      saveSubsForPlatform(from,fromSubs);
-      // Recompute platform total from subs and persist
-      const inv={...S.investments};inv[from]=fromSubs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
-      S.investments=inv;cSet(CK.inv(m,y),inv);
-      if(db)db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(()=>{});
-      const cash={...S.cash};cash[to]=(cash[to]||0)+amt;
+      // inv-cash: deduct NGN from investment, credit cash in its own currency
+      const platLabel=PLATFORMS.find(p=>p.key===from)?.label||from;
+      if(!_invWithdraw(from,amt,m,y)){toast(`Insufficient balance in ${platLabel}`);return;}
+      const toAmt=isUSDCashAccount(to)?+(amt/_fx).toFixed(2):amt;
+      const cash={...S.cash};cash[to]=(cash[to]||0)+toAmt;
       S.cash=cash;cSet(CK.cash(m,y),cash);
       if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
-      const platLabel=PLATFORMS.find(p=>p.key===from)?.label||from;
       _saveXfrRecord(from,to,amt,date,m,y,notes);
       toast(`${fN(amt)}: ${platLabel} → ${to}`);
     }
@@ -3779,7 +3799,17 @@ async function saveExpense(){
       cSet('sw3_history',hist);
       closeMod('exp-modal');toast(`Income recorded · ${incBank} updated`);haptic([8,40,8]);setSyncStatus('synced');renderDashboard();renderCashPage();renderIncome();
     }
-    catch(e){toast('Error saving income');setSyncStatus('error');}
+    catch(e){
+      // Queue for retry when back online; apply local state so the entry stays visible
+      const qd={...data};delete qd.createdAt; // FieldValue sentinel doesn't survive JSON
+      const offId='offline_inc_'+Date.now();
+      oqAdd('income',offId,qd,true);
+      S.income.unshift({...qd,id:offId});
+      cSet(CK.inc(incTxM,incTxY),S.income);
+      _adjustCash(incBank, amt, incTxM, incTxY);
+      closeMod('exp-modal');toast('Saved offline — will sync when connected');
+      renderIncome();renderDashboard();renderCashPage();
+    }
     finally{S.saving=false;btn.textContent='Record Income';btn.disabled=false;}
     return;
   }
@@ -3832,11 +3862,21 @@ async function saveExpense(){
     }
     cSet(CK.txns(expTxM,expTxY),S.txns);closeMod('exp-modal');const _ep=document.getElementById('e-payee-emoji');if(_ep)_ep.textContent='📦';toast(editId?'Updated':'Saved');haptic([8,40,8]);setSyncStatus('synced');renderExpenses();renderDashboard();
   }catch(e){
-    // Queue for retry when back online
-    const qData={...data,id:editId||('offline_'+Date.now())};
-    oqAdd('transactions',qData.id,qData,true);
+    // Queue for retry when back online; apply local state so the entry stays visible
+    const qData={...data};delete qData.createdAt; // FieldValue sentinel doesn't survive JSON
+    const offId=editId||('offline_'+Date.now());
+    oqAdd('transactions',offId,qData,true);
+    if(editId){
+      // Old cash was already restored before the failed Firestore call
+      const idx=S.txns.findIndex(t=>t.id===editId);
+      if(idx>=0)S.txns[idx]={...S.txns[idx],...qData};
+    }else{
+      S.txns.unshift({...qData,id:offId});
+    }
+    if(data.bank) _adjustCash(data.bank, -amt, expTxM, expTxY);
     cSet(CK.txns(expTxM,expTxY),S.txns);
     closeMod('exp-modal');toast('Saved offline — will sync when connected');
+    renderExpenses();renderDashboard();
   }
   finally{S.saving=false;btn.textContent='Save Expense';btn.disabled=false;}
 }
@@ -3846,8 +3886,8 @@ async function delExpense(id){
   // Optimistically remove from local state immediately
   if(idx>=0) S.txns.splice(idx,1);
   cSet(CK.txns(S.expMonth,S.expYear),S.txns);
-  // Restore cash balance immediately
-  if(tx&&tx.bank&&tx.amount) _adjustCash(tx.bank, tx.amount, S.expMonth, S.expYear);
+  // Restore cash balance immediately — to the transaction's own month bucket
+  if(tx&&tx.bank&&tx.amount) _adjustCash(tx.bank, tx.amount, tx.month||S.expMonth, tx.year||S.expYear);
   renderExpenses();renderDashboard();
   haptic([6]);toast('Deleted');
   // Persist to Firestore in background
@@ -3856,7 +3896,7 @@ async function delExpense(id){
     toast('Delete failed — restored');
     // Rollback: re-add tx and re-deduct cash
     if(tx){S.txns.splice(idx,0,tx);cSet(CK.txns(S.expMonth,S.expYear),S.txns);}
-    if(tx&&tx.bank&&tx.amount) _adjustCash(tx.bank, -tx.amount, S.expMonth, S.expYear);
+    if(tx&&tx.bank&&tx.amount) _adjustCash(tx.bank, -tx.amount, tx.month||S.expMonth, tx.year||S.expYear);
     renderExpenses();renderDashboard();
   }
 }
@@ -3924,7 +3964,25 @@ async function saveIncome(){
     closeMod('inc-modal');
     _resetIncModal();
     renderIncome();renderDashboard();renderCashPage();
-  }catch(e){toast('Error saving income');setSyncStatus('error');}
+  }catch(e){
+    // Queue for retry when back online; apply local state so the entry stays visible
+    const qd={...data};
+    if(editId){
+      // Old cash was already reversed before the failed Firestore call
+      oqAdd('income',editId,qd,true);
+      const idx=S.income.findIndex(i=>i.id===editId);
+      if(idx>=0)S.income[idx]={...S.income[idx],...qd};else S.income.unshift({...qd,id:editId});
+    }else{
+      const offId='offline_inc_'+Date.now();
+      oqAdd('income',offId,qd,true);
+      S.income.unshift({...qd,id:offId});
+    }
+    cSet(CK.inc(txM,txY),S.income);
+    _adjustCash(bank, amt, txM, txY);
+    closeMod('inc-modal');_resetIncModal();
+    toast('Saved offline — will sync when connected');
+    renderIncome();renderDashboard();renderCashPage();
+  }
   finally{S.saving=false;btn.textContent=document.getElementById('i-edit-id')?.value?'Update Income':'Record Income';btn.disabled=false;}
 }
 function _resetIncModal(){
@@ -4696,41 +4754,37 @@ async function saveMoveFunds(){
   const notes = document.getElementById('move-notes').value.trim();
   const m = S.expMonth, y = S.expYear;
 
+  const _mfx = getFxRates(m,y).USD||1650;
+
   if(_moveDir === 'cash-inv'){
-    // Deduct from cash account
+    // Deduct from cash account (in its own currency)
+    if((S.cash[from]||0) < amt){ toast(`Insufficient funds in ${from}`); return; }
+    const ngnAmt = isUSDCashAccount(from)?Math.round(amt*_mfx):amt;
     const cash = {...S.cash};
     cash[from] = (cash[from]||0) - amt;
     S.cash = cash;
     cSet(CK.cash(m,y), cash);
     if(db) db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
 
-    // Add to investment platform (stored in NGN equiv)
-    const inv = {...S.investments};
-    inv[to] = (inv[to]||0) + amt;
-    S.investments = inv;
-    cSet(CK.inv(m,y), inv);
-    if(db) db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(()=>{});
+    // Add NGN equivalent to investment platform (subs + flat total kept in sync)
+    _invDeposit(to, ngnAmt, m, y);
 
     const platLabel = PLATFORMS.find(p=>p.key===to)?.label || to;
-    toast(`Moved ${fN(amt)} from ${from} → ${platLabel}`);
+    toast(`Moved ${isUSDCashAccount(from)?'$'+amt:fN(ngnAmt)} from ${from} → ${platLabel}`);
     // Log deposit as a positive movement so withdrawal-aware accrual sees it
-    addInvMovement(to, amt, date, notes);
+    addInvMovement(to, ngnAmt, date, notes);
 
   } else {
-    // Deduct from investment platform
-    const inv = {...S.investments};
+    // Deduct from investment platform (subs + flat total kept in sync)
     const platLabel = PLATFORMS.find(p=>p.key===from)?.label || from;
-    if((inv[from]||0) < amt){
+    if(!_invWithdraw(from, amt, m, y)){
       toast(`Insufficient balance in ${platLabel}`); return;
     }
-    inv[from] = (inv[from]||0) - amt;
-    S.investments = inv;
-    cSet(CK.inv(m,y), inv);
-    if(db) db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(()=>{});
 
-    // Add to cash account
+    // Add to cash account (in its own currency)
+    const toAmt = isUSDCashAccount(to)?+(amt/_mfx).toFixed(2):amt;
     const cash = {...S.cash};
-    cash[to] = (cash[to]||0) + amt;
+    cash[to] = (cash[to]||0) + toAmt;
     S.cash = cash;
     cSet(CK.cash(m,y), cash);
     if(db) db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
@@ -4755,9 +4809,12 @@ async function transferFunds(){
   if(from===to){toast('Choose different accounts');return;}
   const cash={...S.cash};
   if((cash[from]||0)<amt){toast(`Insufficient funds in ${from}`);return;}
-  cash[from]=(cash[from]||0)-amt;cash[to]=(cash[to]||0)+amt;
+  const _tfU=isUSDCashAccount(from),_ttU=isUSDCashAccount(to);
+  const _tfx=getFxRates(S.cashMonth,S.cashYear).USD||1650;
+  const _toAmt=_tfU===_ttU?amt:(_tfU?Math.round(amt*_tfx):+(amt/_tfx).toFixed(2));
+  cash[from]=(cash[from]||0)-amt;cash[to]=(cash[to]||0)+_toAmt;
   S.cash=cash;cSet(CK.cash(S.cashMonth,S.cashYear),cash);
-  document.getElementById('xfr-amt').value='';toast(`Transferred ${fN(amt)} from ${from} to ${to}`);
+  document.getElementById('xfr-amt').value='';toast(`Transferred ${_tfU?'$'+amt:fN(amt)} from ${from} to ${to}`);
   renderCashPage();renderDashboard();setSyncStatus('syncing');
   try{await db.collection('cashBalances').doc(sid(S.cashMonth,S.cashYear)).set({...cash,month:S.cashMonth,year:S.cashYear},{merge:true});setSyncStatus('synced');}
   catch(e){setSyncStatus('error');}
@@ -5776,7 +5833,7 @@ async function saveBudget(){
 
 function renderSettExport(){
   document.getElementById('sett-export').innerHTML=`
-    <div class="exp-card"><div class="exp-card-title">Full Data Backup (JSON)</div><div class="exp-card-sub">Export everything — transactions, income, cash, investments, debtors, history — as a JSON file you can re-import later.</div><button class="btn btn-p btn-sm" onclick="exportFullBackup()">↓ Download Backup JSON</button></div>
+    <div class="exp-card"><div class="exp-card-title">Full Data Backup (JSON)</div><div class="exp-card-sub">Export everything — transactions, income, cash, investments, debtors, history — as a JSON file you can re-import later.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-p btn-sm" onclick="exportFullBackup()">↓ Download Backup JSON</button><button class="btn btn-g btn-sm" onclick="document.getElementById('backup-file-input').click()">↑ Restore from Backup</button></div><input type="file" id="backup-file-input" accept=".json,application/json" style="display:none" onchange="importFullBackup(event)"></div>
     <div class="exp-card"><div class="exp-card-title">Export All Data</div><div class="exp-card-sub">All transactions (expenses + income), investment balances, and cash balances — 3 sheets, daily transaction detail.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-exp btn-sm" onclick="exportAll('csv')">↓ CSV</button><button class="btn btn-exp btn-sm" onclick="exportAll('xlsx')">↓ Excel</button></div></div>
     <div class="exp-card"><div class="exp-card-title">Export by Month</div><div class="exp-card-sub">Select a month and export just that month.</div>
     <div class="gform" style="margin-bottom:10px">
@@ -5818,6 +5875,47 @@ async function exportFullBackup(){
   const a=document.createElement('a');a.href=url;a.download=`spendwise-backup-${todayStr()}.json`;a.click();
   URL.revokeObjectURL(url);
   toast(`Backup downloaded (${totalDocs} records)`);haptic([8]);
+}
+
+async function importFullBackup(ev){
+  const file=ev.target.files&&ev.target.files[0];
+  ev.target.value=''; // allow picking the same file again
+  if(!file)return;
+  let data;
+  try{data=JSON.parse(await file.text());}
+  catch(e){toast('Invalid backup file');return;}
+  const tx=Array.isArray(data.transactions)?data.transactions:[];
+  const inc=Array.isArray(data.income)?data.income:[];
+  const cashB=Array.isArray(data.cashBalances)?data.cashBalances:[];
+  const invB=Array.isArray(data.investments)?data.investments:[];
+  const debs=Array.isArray(data.debtors)?data.debtors:[];
+  const hist=Array.isArray(data.historicalSummary)?data.historicalSummary:[];
+  const total=tx.length+inc.length+cashB.length+invB.length+debs.length+hist.length;
+  if(!total){toast('Backup file contains no records');return;}
+  if(!db){toast('Restore needs a connection');return;}
+  if(!confirm(`Restore from backup${data._meta?.generated?' ('+data._meta.generated+')':''}?\n\n${tx.length} transactions\n${inc.length} income records\n${cashB.length} cash months\n${invB.length} investment months\n${debs.length} debtors\n${hist.length} history rows\n\nExisting records with matching IDs will be overwritten.`))return;
+  toast('Restoring…');setSyncStatus('syncing');
+  try{
+    const ops=[];
+    const docRows=(arr,col)=>arr.forEach(r=>{const{_id,...d}=r;ops.push({col,id:_id||(col+'_restore_'+Math.random().toString(36).slice(2,10)),d});});
+    docRows(tx,'transactions');docRows(inc,'income');docRows(debs,'debtors');
+    const monthRows=(arr,col)=>arr.forEach(r=>{if(r.month&&r.year)ops.push({col,id:sid(r.month,r.year),d:r});});
+    monthRows(cashB,'cashBalances');monthRows(invB,'investments');monthRows(hist,'historicalSummary');
+    // Batched writes — Firestore caps batches at 500 ops
+    for(let i=0;i<ops.length;i+=400){
+      const batch=db.batch();
+      ops.slice(i,i+400).forEach(o=>batch.set(db.collection(o.col).doc(o.id),o.d,{merge:true}));
+      await batch.commit();
+    }
+    // Bust monthly localStorage caches so onSnapshot listeners refetch fresh data.
+    // Match only sw3_{txns|inc|cash|inv}_{year}_{month} — NOT sw3_inv_subs / sw3_inv_meta etc.
+    Object.keys(localStorage).forEach(k=>{if(/^sw3_(txns|inc|cash|inv)_\d{4}_\d{1,2}$/.test(k))localStorage.removeItem(k);});
+    setSyncStatus('synced');toast(`Restored ${ops.length} records ✓ — reloading…`);haptic([8,40,8]);
+    setTimeout(()=>location.reload(),1200);
+  }catch(e){
+    console.error('Restore failed:',e);
+    setSyncStatus('error');toast('Restore failed — check connection and try again');
+  }
 }
 // ── Multi-sheet Excel export ───────────────────────────────────────────────
 function _buildTxnSheet(txns,incomeRecs,label){
@@ -6027,7 +6125,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.76</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.76: Fix onclick SyntaxError on investment rows; dashboard investment balances now fall back to Firestore flat totals</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.77</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.77: Transfers now convert USD↔NGN and block insufficient balances on all paths; Move Funds keeps sub-investments in sync; income and expenses save offline and stay visible; restore from backup JSON added</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -6746,7 +6844,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.76';
+const APP_VERSION='v3.14.77';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
