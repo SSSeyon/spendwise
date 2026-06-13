@@ -415,7 +415,8 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="hdr-status">
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.77</span>
+      <span id="oq-badge" style="display:none;margin-left:4px;font-size:0.58rem;color:var(--gold);font-family:var(--mono)"></span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.78</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -659,6 +660,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <div class="card"><div class="clabel" style="margin-bottom:12px">Balance by Account</div><div id="cash-breakdown"></div></div>
     <!-- Edit mode toggle -->
     <button class="btn btn-g btn-full" style="margin-bottom:10px" onclick="toggleCashEdit()">✎ Edit Balances</button>
+    <button class="btn btn-g btn-full" style="margin-bottom:10px" onclick="openXfrHistory()">⇄ Transfer History</button>
     <div id="cash-edit-section" style="display:none">
       <div class="card">
         <div class="clabel" style="margin-bottom:10px">Update — <span id="cash-month-label"></span></div>
@@ -853,6 +855,16 @@ datalist option{background:var(--bg2);color:var(--text)}
 </div>
 
 <!-- RECURRING MODAL -->
+<div class="mbackdrop" id="xfr-hist-modal">
+  <div class="modal">
+    <div class="mhdr">
+      <div class="mtitle" id="xfr-hist-title">Transfer History</div>
+      <button class="mclose" onclick="closeMod('xfr-hist-modal')">×</button>
+    </div>
+    <div id="xfr-hist-body"></div>
+  </div>
+</div>
+
 <div class="mbackdrop" id="move-modal">
   <div class="modal">
     <div class="mhdr">
@@ -1474,6 +1486,11 @@ function isDueThisMonth(nextRun){
   const n=new Date(nextRun),now=new Date();
   return n.getFullYear()===now.getFullYear()&&n.getMonth()===now.getMonth()||n<now;
 }
+function _logRecurPost(payee,amount,type){
+  const log=cGet('sw3_recur_posted_log')||[];
+  log.unshift({date:todayStr(),payee,amount,type});
+  cSet('sw3_recur_posted_log',log.slice(0,20));
+}
 async function postRecurring(idx){
   const list=getRecurring();const r=list[idx];if(!r)return;
   if(!confirm(`Post "${r.payee}" — ${fN(r.amount)} as ${r.type==='income'?'income':'expense'}?`))return;
@@ -1492,6 +1509,7 @@ async function postRecurring(idx){
       if(pM===S.expMonth&&pY===S.expYear) S.income.unshift({...data,id:ref.id});
       const incCache=cGet(CK.inc(pM,pY))||[];incCache.unshift({...data,id:ref.id});cSet(CK.inc(pM,pY),incCache);
       _adjustCash(bank, r.amount, pM, pY);
+      _logRecurPost(r.payee,r.amount,'income');
       toast(`${r.payee} posted as income · ${bank} updated`);
     }catch(e){toast('Error posting');}
   }else{
@@ -1505,6 +1523,7 @@ async function postRecurring(idx){
       if(pM===S.expMonth&&pY===S.expYear) S.txns.unshift({...data,id:ref.id});
       const txCache=cGet(CK.txns(pM,pY))||[];txCache.unshift({...data,id:ref.id});cSet(CK.txns(pM,pY),txCache);
       _adjustCash(bank, -r.amount, pM, pY);
+      _logRecurPost(r.payee,r.amount,'expense');
       toast(`${r.payee} posted · ${bank} updated`);
     }catch(e){toast('Error posting');}
   }
@@ -1760,6 +1779,42 @@ function fmtPlatformVal(rawVal,platformKey,currency,m,y){
 }
 
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);}
+
+// ── UNDO TOAST ─────────────────────────────────────────────────────────────
+// Shows a toast with an Undo button for 5s. If untouched, commitFn runs
+// (the permanent Firestore delete); tapping Undo restores local state instead.
+let _undoTimer=null,_undoPending=null;
+function _undoEl(){
+  let el=document.getElementById('undo-toast');
+  if(!el){
+    el=document.createElement('div');el.id='undo-toast';
+    el.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:84px;z-index:9999;display:none;align-items:center;gap:14px;padding:10px 16px;background:var(--bg2);border:1px solid var(--border2);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,0.4);font-size:0.78rem';
+    el.innerHTML='<span id="undo-msg"></span><button id="undo-btn" style="background:none;border:none;color:var(--accent);font-weight:700;font-size:0.78rem;cursor:pointer;padding:0">UNDO</button>';
+    document.body.appendChild(el);
+    document.getElementById('undo-btn').onclick=()=>{
+      if(_undoPending){clearTimeout(_undoTimer);_undoPending.undo();_undoPending=null;_undoTimer=null;}
+      el.style.display='none';
+    };
+  }
+  return el;
+}
+function _commitPendingUndo(){
+  if(_undoPending){clearTimeout(_undoTimer);_undoPending.commit();_undoPending=null;_undoTimer=null;}
+  const el=document.getElementById('undo-toast');if(el)el.style.display='none';
+}
+function showUndoToast(msg, undoFn, commitFn){
+  _commitPendingUndo(); // only one pending undo at a time
+  const el=_undoEl();
+  document.getElementById('undo-msg').textContent=msg;
+  el.style.display='flex';
+  _undoPending={undo:undoFn,commit:commitFn};
+  _undoTimer=setTimeout(()=>{const p=_undoPending;_undoPending=null;_undoTimer=null;el.style.display='none';if(p)p.commit();},5000);
+}
+function _recalcHistIncome(m,y){
+  const hist=cGet('sw3_history')||[];
+  const hIdx=hist.findIndex(h=>h.year===y&&h.month===m);
+  if(hIdx>=0){hist[hIdx].income=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);cSet('sw3_history',hist);}
+}
 function openMod(id){document.getElementById(id).classList.add('open');}
 function closeMod(id){document.getElementById(id).classList.remove('open');}
 
@@ -1770,6 +1825,13 @@ function setSyncStatus(st){
   const map={syncing:{cls:'yellow',text:'Syncing'},synced:{cls:'green',text:'Synced'},offline:{cls:'red',text:'Offline'},error:{cls:'red',text:'Error'}};
   const s=map[st]||map.offline;
   dot.classList.add(s.cls);lbl.textContent=s.text;
+  _updateOqBadge();
+}
+function _updateOqBadge(){
+  const el=document.getElementById('oq-badge');if(!el)return;
+  const n=oqGet().length;
+  el.textContent=n?`${n} pending`:'';
+  el.style.display=n?'inline':'none';
 }
 function showStaleBar(){
   if(!S.lastSync) return;
@@ -3033,6 +3095,17 @@ function renderDashAlerts(){
     });
   }
 
+  // 2b) Recently posted recurring (last 3 days) — confirms what went out
+  const _rpl=(cGet('sw3_recur_posted_log')||[]).filter(p=>{const d=new Date(p.date);return !isNaN(d)&&(Date.now()-d.getTime())/86400000<=3;});
+  if(_rpl.length){
+    alerts.push({
+      type:'info',
+      icon:'✅',
+      title:`${_rpl.length} recurring transaction${_rpl.length>1?'s':''} posted recently`,
+      sub:_rpl.map(p=>`${p.payee} (${fN(p.amount)})`).join(' · ')
+    });
+  }
+
   // 3) Savings target progress
   if(isCurrentMonth){
     const targetPct=getSavingsTarget();
@@ -3319,23 +3392,30 @@ function openEditInc(id){
   openMod('inc-modal');
 }
 
-async function delIncome(id){
-  if(!confirm('Delete this income record?')) return;
-  try{
-    const inc=S.income.find(i=>i.id===id);
-    await db.collection('income').doc(id).delete();
-    S.income=S.income.filter(i=>i.id!==id);
+function delIncome(id){
+  const idx=S.income.findIndex(i=>i.id===id);
+  const inc=idx>=0?S.income[idx]:null;
+  if(!inc)return;
+  // Optimistically remove from local state immediately
+  S.income.splice(idx,1);
+  cSet(CK.inc(S.expMonth,S.expYear),S.income);
+  if(inc.bank&&inc.amount) _adjustCash(inc.bank, -inc.amount, inc.month||S.expMonth, inc.year||S.expYear);
+  _recalcHistIncome(S.expMonth,S.expYear);
+  renderIncome();renderDashboard();renderCashPage();
+  haptic([6]);
+  const rollback=()=>{
+    S.income.splice(Math.min(idx,S.income.length),0,inc);
     cSet(CK.inc(S.expMonth,S.expYear),S.income);
-    if(inc&&inc.bank&&inc.amount) _adjustCash(inc.bank, -inc.amount, inc.year||S.expYear, inc.month||S.expMonth);
-    const hist=cGet('sw3_history')||[];
-    const hIdx=hist.findIndex(h=>h.year===S.expYear&&h.month===S.expMonth);
-    if(hIdx>=0){
-      const incTotal=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-      hist[hIdx].income=incTotal;cSet('sw3_history',hist);
-    }
+    if(inc.bank&&inc.amount) _adjustCash(inc.bank, inc.amount, inc.month||S.expMonth, inc.year||S.expYear);
+    _recalcHistIncome(S.expMonth,S.expYear);
     renderIncome();renderDashboard();renderCashPage();
-    toast(inc&&inc.bank?`Income deleted · ${inc.bank} adjusted`:'Income deleted');
-  }catch(e){toast('Error deleting income');}
+  };
+  showUndoToast('Income deleted',
+    rollback,
+    async ()=>{ // commit: permanent Firestore delete
+      try{await db.collection('income').doc(id).delete();}
+      catch(e){toast('Delete failed — restored');rollback();}
+    });
 }
 
 let _expSort='date'; // 'date' | 'expense' — controls layout inside each category
@@ -3361,6 +3441,26 @@ function renderExpenses(){
   if(S.expCat!=='All') filtered=filtered.filter(t=>t.category===S.expCat);
   if(searchQ) filtered=filtered.filter(t=>(t.payee||'').toLowerCase().includes(searchQ)||(t.notes||'').toLowerCase().includes(searchQ));
 
+  // ── Cross-month search across cached months ──
+  let _crossHtml='';
+  if(searchQ.length>=2){
+    const _others=[];
+    Object.keys(localStorage).forEach(k=>{
+      const mt=k.match(/^sw3_txns_(\d{4})_(\d{1,2})$/);
+      if(!mt)return;
+      const ky=parseInt(mt[1]),km=parseInt(mt[2]);
+      if(km===m&&ky===y)return;
+      (cGet(k)||[]).forEach(t=>{
+        if((t.payee||'').toLowerCase().includes(searchQ)||(t.notes||'').toLowerCase().includes(searchQ)) _others.push({...t,_m:km,_y:ky});
+      });
+    });
+    if(_others.length){
+      _others.sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:0);
+      const _shown=_others.slice(0,30);
+      _crossHtml=`<div class="card" style="margin-top:12px"><div class="clabel" style="margin-bottom:8px">Results in other months (${_others.length})</div>${_shown.map(t=>`<div class="txi" style="cursor:pointer" onclick="reloadMonth(${t._m},${t._y})"><div style="flex:1;min-width:0"><div class="txi-cat" style="font-size:0.76rem">${esc(t.payee)||'—'}</div><div class="txi-meta">${fmtDate(t.date)} · ${MS[t._m-1]} ${t._y} · ${esc(t.bank||'')}</div></div><div class="txi-amt txi-exp">${fmtCur(t.amount,cur,t._m,t._y)}</div></div>`).join('')}${_others.length>30?`<div class="csub" style="margin-top:6px">Showing first 30 — tap a row to open its month</div>`:`<div class="csub" style="margin-top:6px">Tap a row to open its month</div>`}</div>`;
+    }
+  }
+
   const total=txns.reduce((s,t)=>s+(t.amount||0),0);
   const catSpend={};txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+(t.amount||0);});
 
@@ -3374,7 +3474,7 @@ function renderExpenses(){
 
   const listEl=document.getElementById('exp-list');
   if(!filtered.length){
-    listEl.innerHTML=`<div class="empty"><div class="empty-i">↕</div>${searchQ?`No results for "${searchQ}"`:S.expCat!=='All'?`No ${S.expCat} transactions`:'No transactions'}</div>`;
+    listEl.innerHTML=`<div class="empty"><div class="empty-i">↕</div>${searchQ?`No results for "${searchQ}"`:S.expCat!=='All'?`No ${S.expCat} transactions`:'No transactions'}</div>`+_crossHtml;
     return;
   }
 
@@ -3445,7 +3545,7 @@ function renderExpenses(){
 
   // When filtered to a single category or searching, skip the outer category accordion
   if(S.expCat!=='All'||searchQ){
-    listEl.innerHTML=`<div style="border:1px solid var(--border);border-radius:var(--rsm);overflow:hidden">${renderCatBody(filtered)}</div>`;
+    listEl.innerHTML=`<div style="border:1px solid var(--border);border-radius:var(--rsm);overflow:hidden">${renderCatBody(filtered)}</div>`+_crossHtml;
     return;
   }
 
@@ -3682,8 +3782,9 @@ function _adjustCash(bank, delta, m, y){
 }
 
 // Save a lightweight transfer record for history display
-function _saveXfrRecord(from, to, amt, date, m, y, notes){
-  const rec={id:'xfr_'+Date.now(),from,to,amount:amt,date,notes:notes||'',month:m,year:y,createdAt:Date.now()};
+function _saveXfrRecord(from, to, amt, date, m, y, notes, toAmt, kind){
+  // amount is in the FROM side's currency; toAmt is what the TO side received (falls back to amount)
+  const rec={id:'xfr_'+Date.now(),from,to,amount:amt,toAmt:toAmt!=null?toAmt:amt,kind:kind||'',date,notes:notes||'',month:m,year:y,createdAt:Date.now()};
   const list=cGet(CK.xfr(m,y))||[];
   list.unshift(rec);
   cSet(CK.xfr(m,y),list);
@@ -3716,6 +3817,92 @@ function _invWithdraw(pKey, ngnAmt, m, y){
   return true;
 }
 
+// ── TRANSFER HISTORY (view / reverse / delete) ────────────────────────────
+async function openXfrHistory(){
+  const m=S.cashMonth||S.expMonth,y=S.cashYear||S.expYear;
+  document.getElementById('xfr-hist-title').textContent=`Transfers — ${MONTHS[m-1]} ${y}`;
+  const body=document.getElementById('xfr-hist-body');
+  body.innerHTML='<div class="csub">Loading…</div>';
+  openMod('xfr-hist-modal');
+  // Local cache first, then merge Firestore records for cross-device coverage
+  let recs=cGet(CK.xfr(m,y))||[];
+  try{
+    const snap=await db.collection('transfers').where('year','==',y).where('month','==',m).get();
+    const seen=new Set(recs.map(r=>r.id));
+    snap.docs.forEach(d=>{const r=d.data();if(!seen.has(r.id)){recs.push(r);seen.add(r.id);}});
+    cSet(CK.xfr(m,y),recs);
+  }catch(e){}
+  recs.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  _renderXfrHistory(recs,m,y);
+}
+function _xfrSideLabel(name){
+  if(getCashAccounts().includes(name))return name;
+  return PLATFORMS.find(p=>p.key===name)?.label||name;
+}
+function _xfrAmtDisp(name,val){
+  return getCashAccounts().includes(name)&&isUSDCashAccount(name)?'$'+Number(val).toLocaleString('en-US',{maximumFractionDigits:2}):fN(val);
+}
+function _renderXfrHistory(recs,m,y){
+  const body=document.getElementById('xfr-hist-body');
+  if(!recs.length){body.innerHTML='<div class="empty"><div class="empty-i">⇄</div>No transfers this month</div>';return;}
+  body.innerHTML=recs.map(r=>{
+    const toVal=r.toAmt!=null?r.toAmt:r.amount;
+    const cross=String(_xfrAmtDisp(r.from,r.amount))!==String(_xfrAmtDisp(r.to,toVal));
+    return`<div class="dc" style="margin-bottom:8px">
+      <div class="dc-top">
+        <div>
+          <div class="dc-name" style="font-size:0.78rem">${esc(_xfrSideLabel(r.from))} → ${esc(_xfrSideLabel(r.to))}</div>
+          <div class="dc-sub">${fmtDate(r.date)}${r.notes?' · '+esc(r.notes):''}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-family:var(--mono);font-size:0.82rem;color:var(--blue)">${_xfrAmtDisp(r.from,r.amount)}</div>
+          ${cross?`<div style="font-size:0.6rem;color:var(--text3);font-family:var(--mono)">→ ${_xfrAmtDisp(r.to,toVal)}</div>`:''}
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn btn-g btn-sm" onclick="reverseTransfer('${r.id}')">↩ Reverse</button>
+        <button class="btn btn-g btn-sm" onclick="removeXfrRecord('${r.id}')" style="color:var(--red)">× Remove record</button>
+      </div>
+    </div>`;}).join('')+
+    '<div class="csub" style="margin-top:4px">Reverse undoes the balance changes and removes the record. Remove deletes only the log entry, leaving balances untouched.</div>';
+}
+async function reverseTransfer(recId){
+  const m=S.cashMonth||S.expMonth,y=S.cashYear||S.expYear;
+  const recs=cGet(CK.xfr(m,y))||[];
+  const r=recs.find(x=>x.id===recId);
+  if(!r){toast('Record not found');return;}
+  if(!confirm(`Reverse this transfer?\n\n${_xfrSideLabel(r.from)} → ${_xfrSideLabel(r.to)}\n${_xfrAmtDisp(r.from,r.amount)}\n\nBalances on both sides will be restored.`))return;
+  const toVal=r.toAmt!=null?r.toAmt:r.amount;
+  const fromIsCash=getCashAccounts().includes(r.from);
+  const toIsCash=getCashAccounts().includes(r.to);
+  // Take back from the TO side first — abort cleanly if it lacks funds
+  if(toIsCash){
+    if((S.cash[r.to]||0)<toVal&&!confirm(`${r.to} has less than the transferred amount. Reverse anyway (balance may go negative)?`))return;
+    _adjustCash(r.to,-toVal,r.month||m,r.year||y);
+  }else{
+    if(!_invWithdraw(r.to,toVal,r.month||m,r.year||y)){toast(`Insufficient balance in ${_xfrSideLabel(r.to)} to reverse`);return;}
+  }
+  // Give back to the FROM side
+  if(fromIsCash) _adjustCash(r.from,r.amount,r.month||m,r.year||y);
+  else _invDeposit(r.from,r.amount,r.month||m,r.year||y);
+  await _deleteXfrRecord(recId,m,y);
+  toast('Transfer reversed');haptic([8,40,8]);
+  renderCashPage();renderInvestments();renderDashboard();
+  openXfrHistory();
+}
+async function removeXfrRecord(recId){
+  const m=S.cashMonth||S.expMonth,y=S.cashYear||S.expYear;
+  if(!confirm('Remove this record from the log? Balances will NOT change.'))return;
+  await _deleteXfrRecord(recId,m,y);
+  toast('Record removed');
+  openXfrHistory();
+}
+async function _deleteXfrRecord(recId,m,y){
+  const recs=(cGet(CK.xfr(m,y))||[]).filter(x=>x.id!==recId);
+  cSet(CK.xfr(m,y),recs);
+  try{await db.collection('transfers').doc(recId).delete();}catch(e){}
+}
+
 async function saveExpense(){
   if(S.saving)return;
   const type=document.getElementById('e-type')?.value||'expense';
@@ -3741,7 +3928,7 @@ async function saveExpense(){
       const cash={...S.cash};cash[from]=(cash[from]||0)-amt;cash[to]=(cash[to]||0)+toAmt;
       S.cash=cash;cSet(CK.cash(m,y),cash);
       if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
-      _saveXfrRecord(from,to,amt,date,m,y,notes);
+      _saveXfrRecord(from,to,amt,date,m,y,notes,toAmt,'cash-cash');
       toast(fU===tU?`${fU?'$'+amt:fN(amt)}: ${from} → ${to}`:`${fU?'$'+amt:fN(amt)} → ${tU?'$'+toAmt:fN(toAmt)}: ${from} → ${to}`);
 
     } else if(_xfrType==='cash-inv'){
@@ -3753,7 +3940,7 @@ async function saveExpense(){
       if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
       _invDeposit(to,ngnAmt,m,y);
       const platLabel=PLATFORMS.find(p=>p.key===to)?.label||to;
-      _saveXfrRecord(from,to,amt,date,m,y,notes);
+      _saveXfrRecord(from,to,amt,date,m,y,notes,ngnAmt,'cash-inv');
       toast(`${isUSDCashAccount(from)?'$'+amt:fN(ngnAmt)}: ${from} → ${platLabel}`);
 
     } else {
@@ -3764,7 +3951,7 @@ async function saveExpense(){
       const cash={...S.cash};cash[to]=(cash[to]||0)+toAmt;
       S.cash=cash;cSet(CK.cash(m,y),cash);
       if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
-      _saveXfrRecord(from,to,amt,date,m,y,notes);
+      _saveXfrRecord(from,to,amt,date,m,y,notes,toAmt,'inv-cash');
       toast(`${fN(amt)}: ${platLabel} → ${to}`);
     }
 
@@ -3831,6 +4018,15 @@ async function saveExpense(){
     if(!S.customExpLines[cat].includes(payee))S.customExpLines[cat].push(payee);
     cSet(CK.customLines,S.customExpLines);
   }
+  // Duplicate guard — same payee + amount + date is almost always a double-tap
+  if(!document.getElementById('e-edit-id').value){
+    const _dupDate=document.getElementById('e-date').value||todayStr();
+    const _ddp=_dupDate.split('-');const _ddm=parseInt(_ddp[1]),_ddy=parseInt(_ddp[0]);
+    const _pool=(_ddm===S.expMonth&&_ddy===S.expYear)?S.txns:(cGet(CK.txns(_ddm,_ddy))||[]);
+    const _dupBank=document.getElementById('e-bank').value;
+    const _dup=_pool.find(t=>t.payee===payee&&t.amount===amt&&t.date===_dupDate);
+    if(_dup&&!confirm(`Possible duplicate: "${payee}" for ${isUSDCashAccount(_dupBank)?'$'+amt:fN(amt)} is already recorded on ${fmtDate(_dupDate)}.\n\nSave anyway?`))return;
+  }
   S.saving=true;const btn=document.getElementById('e-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
   const editId=document.getElementById('e-edit-id').value;
   const freq=document.getElementById('e-recur')?.value;
@@ -3880,25 +4076,29 @@ async function saveExpense(){
   }
   finally{S.saving=false;btn.textContent='Save Expense';btn.disabled=false;}
 }
-async function delExpense(id){
+function delExpense(id){
   const idx=S.txns.findIndex(t=>t.id===id);
   const tx=idx>=0?S.txns[idx]:null;
+  if(!tx)return;
   // Optimistically remove from local state immediately
-  if(idx>=0) S.txns.splice(idx,1);
+  S.txns.splice(idx,1);
   cSet(CK.txns(S.expMonth,S.expYear),S.txns);
   // Restore cash balance immediately — to the transaction's own month bucket
-  if(tx&&tx.bank&&tx.amount) _adjustCash(tx.bank, tx.amount, tx.month||S.expMonth, tx.year||S.expYear);
+  if(tx.bank&&tx.amount) _adjustCash(tx.bank, tx.amount, tx.month||S.expMonth, tx.year||S.expYear);
   renderExpenses();renderDashboard();
-  haptic([6]);toast('Deleted');
-  // Persist to Firestore in background
-  try{await db.collection('transactions').doc(id).delete();}
-  catch(e){
-    toast('Delete failed — restored');
-    // Rollback: re-add tx and re-deduct cash
-    if(tx){S.txns.splice(idx,0,tx);cSet(CK.txns(S.expMonth,S.expYear),S.txns);}
-    if(tx&&tx.bank&&tx.amount) _adjustCash(tx.bank, -tx.amount, tx.month||S.expMonth, tx.year||S.expYear);
+  haptic([6]);
+  const rollback=()=>{
+    S.txns.splice(Math.min(idx,S.txns.length),0,tx);
+    cSet(CK.txns(S.expMonth,S.expYear),S.txns);
+    if(tx.bank&&tx.amount) _adjustCash(tx.bank, -tx.amount, tx.month||S.expMonth, tx.year||S.expYear);
     renderExpenses();renderDashboard();
-  }
+  };
+  showUndoToast('Expense deleted',
+    rollback,
+    async ()=>{ // commit: permanent Firestore delete
+      try{await db.collection('transactions').doc(id).delete();}
+      catch(e){toast('Delete failed — restored');rollback();}
+    });
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -4770,6 +4970,7 @@ async function saveMoveFunds(){
     _invDeposit(to, ngnAmt, m, y);
 
     const platLabel = PLATFORMS.find(p=>p.key===to)?.label || to;
+    _saveXfrRecord(from,to,amt,date,m,y,notes,ngnAmt,'cash-inv');
     toast(`Moved ${isUSDCashAccount(from)?'$'+amt:fN(ngnAmt)} from ${from} → ${platLabel}`);
     // Log deposit as a positive movement so withdrawal-aware accrual sees it
     addInvMovement(to, ngnAmt, date, notes);
@@ -4789,6 +4990,7 @@ async function saveMoveFunds(){
     cSet(CK.cash(m,y), cash);
     if(db) db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
 
+    _saveXfrRecord(from,to,amt,date,m,y,notes,toAmt,'inv-cash');
     toast(`Moved ${fN(amt)} from ${platLabel} → ${to}`);
     // Log withdrawal for realised gain tracking (existing) + accrual movement (negative)
     addInvWithdrawal(from,amt,document.getElementById('move-date')?.value||todayStr(),document.getElementById('move-notes')?.value||'');
@@ -4814,6 +5016,7 @@ async function transferFunds(){
   const _toAmt=_tfU===_ttU?amt:(_tfU?Math.round(amt*_tfx):+(amt/_tfx).toFixed(2));
   cash[from]=(cash[from]||0)-amt;cash[to]=(cash[to]||0)+_toAmt;
   S.cash=cash;cSet(CK.cash(S.cashMonth,S.cashYear),cash);
+  _saveXfrRecord(from,to,amt,todayStr(),S.cashMonth,S.cashYear,'',_toAmt,'cash-cash');
   document.getElementById('xfr-amt').value='';toast(`Transferred ${_tfU?'$'+amt:fN(amt)} from ${from} to ${to}`);
   renderCashPage();renderDashboard();setSyncStatus('syncing');
   try{await db.collection('cashBalances').doc(sid(S.cashMonth,S.cashYear)).set({...cash,month:S.cashMonth,year:S.cashYear},{merge:true});setSyncStatus('synced');}
@@ -4853,6 +5056,7 @@ function renderDebtors(){
       ${d.notes?`<div style="font-size:0.65rem;color:var(--text2);margin-top:5px">${esc(d.notes)}</div>`:''}
       <div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">
         ${expectRepay&&!settled?`<button class="btn btn-g btn-sm" onclick="recordPmt('${d.id||idx}',${d.amount},${d.paid||0},${d.rate||DEF_RATES[d.currency]||1})">Record Payment</button>`:''}
+        <button class="btn btn-g btn-sm" onclick="openAddDebt('${d.id||idx}')">+ Add Debt</button>
         ${(d.pmtLog&&d.pmtLog.length)?`<button class="btn btn-g btn-sm" onclick="togglePmtLog('${d.id||idx}')">Payment History (${d.pmtLog.length})</button>`:''}
         <button class="btn btn-g btn-sm" onclick="openEditDeb('${d.id||idx}')">Edit</button>
         <button class="btn btn-d btn-sm" onclick="removeDeb('${d.id||idx}')">Remove</button>
@@ -4944,6 +5148,57 @@ async function saveDebtor(){
   }
   catch(e){toast('Error saving');setSyncStatus('error');}
   finally{S.saving=false;btn.textContent=document.getElementById('d-eid').value?'Update':'Add Debtor';btn.disabled=false;}
+}
+// ── ADD ADDITIONAL DEBT TO AN EXISTING DEBTOR ─────────────────────────────
+function openAddDebt(id){
+  const d=S.debtors.find(x=>x.id===id);if(!d){toast('Debtor not found');return;}
+  const cashOpts=cashOptsWithBal(true);
+  document.getElementById('drill-title').textContent='Add Debt — '+d.name;
+  document.getElementById('drill-body').innerHTML=`
+    <div class="csub" style="margin-bottom:10px">Current: ${d.currency} ${fNum(d.amount)} loaned · ${fNum((d.amount||0)-(d.paid||0))} outstanding</div>
+    <div class="ig"><label class="ilabel">Additional Amount (${d.currency})</label>
+      <input class="ifield" type="text" id="ad-amt" placeholder="0" style="font-size:1.1rem;font-family:var(--mono)"></div>
+    <div class="ig"><label class="ilabel">Disburse from Account (optional)</label>
+      <select class="sfield" id="ad-bank"><option value="">— Don't deduct —</option>${cashOpts}</select></div>
+    <div class="ig"><label class="ilabel">Date</label>
+      <input class="ifield" type="date" id="ad-date" value="${todayStr()}"></div>
+    <div class="ig"><label class="ilabel">Note</label>
+      <input class="ifield" type="text" id="ad-note" placeholder="Optional"></div>
+    <button class="btn btn-p btn-full" id="ad-save" onclick="_doAddDebt('${id}')">Add to Debt</button>`;
+  openMod('drill-modal');
+  setTimeout(()=>initNumInputs(document.getElementById('drill-body')),80);
+}
+async function _doAddDebt(id){
+  const d=S.debtors.find(x=>x.id===id);if(!d)return;
+  const add=parseFloat(document.getElementById('ad-amt')?.value);
+  if(!add||add<=0){toast('Enter a valid amount');return;}
+  const bank=document.getElementById('ad-bank')?.value||'';
+  const dDate=document.getElementById('ad-date')?.value||todayStr();
+  const note=document.getElementById('ad-note')?.value||'';
+  const rate=d.rate||DEF_RATES[d.currency]||1;
+  const newAmt=(d.amount||0)+add;
+  const newBal=newAmt-(d.paid||0);
+  const entry={date:dDate,amount:add,note,disbursedFrom:bank||null};
+  const log=[...(d.addLog||[]),entry];
+  const btn=document.getElementById('ad-save');
+  if(btn){btn.textContent='Saving…';btn.disabled=true;}
+  try{
+    await db.collection('debtors').doc(id).update({amount:newAmt,balance:newBal,ngnBalance:newBal*rate,addLog:log,expectRepayment:true});
+    if(bank){
+      // Mirror the payment-credit currency rules, in the deduction direction
+      const isUSDAcct=isUSDCashAccount(bank);
+      let delta;
+      if(isUSDAcct) delta=(d.currency==='USD')?add:add/rate;
+      else delta=(d.currency==='NGN'||!d.currency)?add:add*rate;
+      const txD=new Date(dDate);const dm=txD.getMonth()+1,dy=txD.getFullYear();
+      _adjustCash(bank,-delta,dm,dy);
+    }
+    closeMod('drill-modal');
+    toast(`Debt increased by ${d.currency} ${fNum(add)}${bank?' · '+bank+' deducted':''}`);
+    haptic([8,40,8]);
+    await loadDebtors();renderDebtors();renderDashboard();
+  }catch(e){toast('Error adding debt');}
+  finally{if(btn){btn.textContent='Add to Debt';btn.disabled=false;}}
 }
 async function recordPmt(id,amt,paid,rate){
   const d=S.debtors.find(x=>x.id===id);if(!d)return;
@@ -5679,7 +5934,7 @@ function copyLastBudget(){
   const prevM=S.expMonth===1?12:S.expMonth-1,prevY=S.expMonth===1?S.expYear-1:S.expYear;
   const prev=cGet(CK.budgets(prevM,prevY));
   if(!prev){toast('No budget found for last month');return;}
-  CATS.forEach(c=>{const k=ck(c);const el=document.getElementById('b-'+k);if(el)el.value=prev[k]||'';});
+  getAllCats().forEach(c=>{const k=ck(c);const el=document.getElementById('b-'+k);if(el)el.value=prev[k]||'';});
   toast(`Copied from ${MONTHS[prevM-1]} — remember to save`);
 }
 function addCustomCat(){
@@ -5826,7 +6081,7 @@ function copyActualSpend(){
   toast('Copied actual spend from '+MS[prevM-1]);
 }
 async function saveBudget(){
-  const cats={};CATS.forEach(c=>{const k=ck(c);const v=parseFloat(document.getElementById('b-'+k).value);cats[k]=isNaN(v)?0:v;});setSyncStatus('syncing');
+  const cats={};getAllCats().forEach(c=>{const k=ck(c);const el=document.getElementById('b-'+k);const v=el?parseFloat(el.value):NaN;cats[k]=isNaN(v)?0:v;});setSyncStatus('syncing');
   try{await db.collection('budgets').doc(sid(S.expMonth,S.expYear)).set({month:S.expMonth,year:S.expYear,categories:cats},{merge:true});S.budgets={...DEF_BUDGETS,...cats};cSet(CK.budgets(S.expMonth,S.expYear),S.budgets);toast('Budget saved');setSyncStatus('synced');renderDashboard();}
   catch(e){toast('Error saving budget');setSyncStatus('error');}
 }
@@ -5841,7 +6096,66 @@ function renderSettExport(){
       <div class="ig"><label class="ilabel">Year</label><select class="sfield" id="exp-yr-sel"><option value="2026">2026</option><option value="2025">2025</option><option value="2024">2024</option></select></div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-exp btn-sm" onclick="exportMonth('csv')">↓ CSV</button><button class="btn btn-exp btn-sm" onclick="exportMonth('xlsx')">↓ Excel</button></div></div>
+    <div class="exp-card"><div class="exp-card-title">Balance Audit</div><div class="exp-card-sub">Recomputes each cash account for the current month from records (opening balance + income − expenses ± transfers) and flags any gap against the stored balance. Manual balance edits and debtor flows not recorded elsewhere will show as differences.</div><button class="btn btn-p btn-sm" onclick="runBalanceAudit()">Run Audit</button><div id="audit-result" style="margin-top:10px"></div></div>
   `;
+}
+
+// ── BALANCE AUDIT ──────────────────────────────────────────────────────────
+async function runBalanceAudit(){
+  const m=S.dashMonth,y=S.dashYear;
+  const out=document.getElementById('audit-result');
+  if(out)out.innerHTML='<div class="csub">Auditing '+MONTHS[m-1]+' '+y+'…</div>';
+  const prevM=m===1?12:m-1,prevY=m===1?y-1:y;
+  async function fetchMonth(col){
+    try{const s=await db.collection(col).where('year','==',y).where('month','==',m).get();return s.docs.map(d=>({...d.data(),id:d.id}));}
+    catch(e){return null;}
+  }
+  let txns=await fetchMonth('transactions');if(!txns)txns=cGet(CK.txns(m,y))||[];
+  let incs=await fetchMonth('income');if(!incs)incs=cGet(CK.inc(m,y))||[];
+  let xfrs=await fetchMonth('transfers');if(!xfrs)xfrs=cGet(CK.xfr(m,y))||[];
+  let prevCash=null;
+  try{const d=await db.collection('cashBalances').doc(sid(prevM,prevY)).get();prevCash=d.exists?d.data():null;}catch(e){}
+  if(!prevCash)prevCash=cGet(CK.cash(prevM,prevY))||{};
+  let curCash=null;
+  try{const d=await db.collection('cashBalances').doc(sid(m,y)).get();curCash=d.exists?d.data():null;}catch(e){}
+  if(!curCash)curCash=cGet(CK.cash(m,y))||S.cash||{};
+  const accounts=getCashAccounts();
+  const rows=accounts.map(b=>{
+    const open=prevCash[b]||0;
+    const incSum=incs.filter(i=>i.bank===b).reduce((s,i)=>s+(i.amount||0),0);
+    const expSum=txns.filter(t=>t.bank===b).reduce((s,t)=>s+(t.amount||0),0);
+    const xfrOut=xfrs.filter(x=>x.from===b).reduce((s,x)=>s+(x.amount||0),0);
+    const xfrIn=xfrs.filter(x=>x.to===b).reduce((s,x)=>s+((x.toAmt!=null?x.toAmt:x.amount)||0),0);
+    const expected=Math.round((open+incSum-expSum-xfrOut+xfrIn)*100)/100;
+    const actual=curCash[b]||0;
+    const diff=Math.round((actual-expected)*100)/100;
+    return{b,open,incSum,expSum,xfrOut,xfrIn,expected,actual,diff};
+  });
+  const fmt=(b,v)=>isUSDCashAccount(b)?'$'+Number(v).toLocaleString('en-US',{maximumFractionDigits:2}):fN(Math.round(v));
+  if(out)out.innerHTML=rows.map(r=>{
+    const ok=Math.abs(r.diff)<1;
+    return`<div style="padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:0.76rem;font-weight:600">${r.b}</span>
+        <span class="badge ${ok?'bg':'br'}">${ok?'✓ Reconciled':'Δ '+fmt(r.b,r.diff)}</span>
+      </div>
+      <div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono);margin-top:3px">
+        Open ${fmt(r.b,r.open)} + Inc ${fmt(r.b,r.incSum)} − Exp ${fmt(r.b,r.expSum)} − Out ${fmt(r.b,r.xfrOut)} + In ${fmt(r.b,r.xfrIn)} = ${fmt(r.b,r.expected)} · Stored: ${fmt(r.b,r.actual)}
+      </div>
+      ${ok?'':`<button class="btn btn-g btn-sm" style="margin-top:6px" onclick="auditFix('${r.b}',${r.expected},${m},${y})">Set to computed ${fmt(r.b,r.expected)}</button>`}
+    </div>`;}).join('')+
+    '<div class="csub" style="margin-top:8px">Differences are not always errors — manual balance edits, debtor disbursements and repayments appear here as gaps.</div>';
+}
+function auditFix(b,val,m,y){
+  if(!confirm(`Set ${b} balance to the computed value?`))return;
+  const cash={...(cGet(CK.cash(m,y))||S.cash||{})};
+  cash[b]=val;
+  if(m===S.cashMonth&&y===S.cashYear)S.cash=cash;
+  if(m===S.dashMonth&&y===S.dashYear)S.cash=cash;
+  cSet(CK.cash(m,y),cash);
+  if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
+  renderCashPage();renderDashboard();toast(`${b} balance updated`);
+  runBalanceAudit();
 }
 
 async function exportFullBackup(){
@@ -5894,6 +6208,8 @@ async function importFullBackup(ev){
   if(!total){toast('Backup file contains no records');return;}
   if(!db){toast('Restore needs a connection');return;}
   if(!confirm(`Restore from backup${data._meta?.generated?' ('+data._meta.generated+')':''}?\n\n${tx.length} transactions\n${inc.length} income records\n${cashB.length} cash months\n${invB.length} investment months\n${debs.length} debtors\n${hist.length} history rows\n\nExisting records with matching IDs will be overwritten.`))return;
+  // Safety net: download a backup of the current data before overwriting anything
+  try{toast('Downloading safety backup first…');await exportFullBackup();}catch(e){}
   toast('Restoring…');setSyncStatus('syncing');
   try{
     const ops=[];
@@ -6125,7 +6441,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.77</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.77: Transfers now convert USD↔NGN and block insufficient balances on all paths; Move Funds keeps sub-investments in sync; income and expenses save offline and stay visible; restore from backup JSON added</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.78</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.78: Balance Audit in Settings; undo for deleted expenses/income; Transfer History with reverse; duplicate expense warning; search spans all months; offline queue badge; custom categories now save in budgets; recurring posts logged to alerts; safety backup before restore; add debt to existing debtors</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -6844,7 +7160,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.77';
+const APP_VERSION='v3.14.78';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
