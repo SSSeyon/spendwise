@@ -416,7 +416,7 @@ datalist option{background:var(--bg2);color:var(--text)}
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
       <span id="oq-badge" style="display:none;margin-left:4px;font-size:0.58rem;color:var(--gold);font-family:var(--mono)"></span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.78</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.79</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -523,6 +523,7 @@ datalist option{background:var(--bg2);color:var(--text)}
           <button class="tab" onclick="dashChartTab('trend',this)">6-Month</button>
           <button class="tab" onclick="dashChartTab('networth',this)">Net Worth</button>
           <button class="tab" onclick="dashChartTab('cashflow',this)">Cash Flow</button>
+          <button class="tab" onclick="dashChartTab('trends',this)">Trends</button>
         </div>
         <div id="dash-tab-breakdown">
           <div class="chart-btns" id="chart-btns">
@@ -549,6 +550,10 @@ datalist option{background:var(--bg2);color:var(--text)}
             <canvas id="cashflow-diagram"></canvas>
           </div>
           <div id="cashflow-legend" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center"></div>
+        </div>
+        <div id="dash-tab-trends" style="display:none">
+          <div class="csub" style="margin-bottom:8px">Spending per category across the last 6 months. ▲ rising vs the prior 3-month average, ▼ falling.</div>
+          <div id="cat-spark-list"></div>
         </div>
       </div>
     </div>
@@ -1915,7 +1920,11 @@ function startRealtimeListeners(){
   _cashListener=db.collection('cashBalances').doc(sid(m,y))
     .onSnapshot(snap=>{
       if(!snap.exists||snap.metadata.hasPendingWrites) return;
-      const data=snap.data();
+      const data={...snap.data()};
+      // Preserve any field with a local write still in flight to this device,
+      // so a remote update to a different field can't blank it momentarily.
+      const local=cGet(CK.cash(m,y))||{};
+      Object.keys(local).forEach(k=>{ if(_isCashDirty(m,y,k)) data[k]=local[k]; });
       cSet(CK.cash(m,y),data);
       S.cash=data;
       renderCashPage();renderDashboard();
@@ -1991,8 +2000,14 @@ async function loadCashData(m,y){
     const localCash=cGet(CK.cash(m,y))||{};
     const doc=await db.collection('cashBalances').doc(sid(m,y)).get();
     if(doc.exists&&doc.data()){
-      // Local always wins: Firestore may be behind in-flight writes from _adjustCash
-      const merged={...doc.data(),...localCash};
+      // Start from the authoritative remote doc (other devices' atomic increments
+      // are already reflected here), then let ONLY in-flight local fields win so
+      // we don't momentarily show a stale value for a write we just made.
+      const remote=doc.data();
+      const merged={...remote};
+      Object.keys(localCash).forEach(k=>{
+        if(_isCashDirty(m,y,k)) merged[k]=localCash[k];
+      });
       S.cash=merged;cSet(CK.cash(m,y),merged);return;
     }
     if(Object.keys(localCash).length){S.cash=localCash;return;}
@@ -2345,8 +2360,21 @@ function renderDashboard(){
     const up=pct>0;const good=invertGood?!up:up;
     return`<span class="mom-badge ${good?'mom-dn':'mom-up'}">${up?'+':''}${pct}%</span>`;
   };
+  // ── Safe-to-spend: remaining budget ÷ days left, shown only for the live month ──
+  const _now=new Date();
+  const _isLiveMonth=(m===_now.getMonth()+1&&y===_now.getFullYear());
+  let _spentFooter=`${fmtCur(budgTotal-spent,cur,m,y)} left`;
+  if(_isLiveMonth&&budgTotal>0){
+    const _diM=new Date(y,m,0).getDate();
+    const _daysLeft=Math.max(1,_diM-_now.getDate()+1);
+    const _safe=Math.max(0,budgTotal-spent)/_daysLeft;
+    const _over=spent>budgTotal;
+    _spentFooter=_over
+      ?`<span style="color:var(--red)">Over by ${fmtCur(spent-budgTotal,cur,m,y)}</span>`
+      :`<span title="Remaining budget ÷ ${_daysLeft} days left">${fmtCur(_safe,cur,m,y)}/day safe · ${_daysLeft}d left</span>`;
+  }
   document.getElementById('dash-stats').innerHTML=`
-    <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('expenses')"><div class="clabel">Spent ›</div><div class="cval-sm">${fmtCur(spent,cur,m,y)}${momBadge(spent,prevSpent,true)}</div><div class="prog"><div class="pf ${st}" style="width:${budgTotal?Math.min(spent/budgTotal*100,100):0}%"></div></div><div class="csub">${fmtCur(budgTotal-spent,cur,m,y)} left</div></div>
+    <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('expenses')"><div class="clabel">Spent ›</div><div class="cval-sm">${fmtCur(spent,cur,m,y)}${momBadge(spent,prevSpent,true)}</div><div class="prog"><div class="pf ${st}" style="width:${budgTotal?Math.min(spent/budgTotal*100,100):0}%"></div></div><div class="csub">${_spentFooter}</div></div>
     <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('income')"><div class="clabel">Income ›</div><div class="cval-sm" style="color:var(--accent)">${fmtCur(incomeDisplay,cur,m,y)}${momBadge(incomeDisplay,prevIncAmt,false)}</div><div class="csub">This month</div></div>
     <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('cash')"><div class="clabel">Cash ›</div><div class="cval-sm">${cashTotal?fmtCur(cashTotal,cur,m,y):'—'}</div><div class="csub">All accounts</div></div>
     <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Investments</div><div class="cval-sm">${invTotal?fmtCur(invTotal,cur,m,y):'—'}</div><div class="csub">All platforms</div></div>
@@ -3136,16 +3164,25 @@ function renderDashAlerts(){
 }
 
 
+// Net worth for a given month from cached balances — subs-aware + debtors.
+// Debtors aren't month-bucketed, so the live debtor balance is used for all points.
+function _nwForMonth(m,y){
+  const inv=cGet(CK.inv(m,y))||{};
+  const cash=cGet(CK.cash(m,y))||{};
+  const invT=PLATFORMS.reduce((s,p)=>{
+    const subs=(cGet('sw3_inv_subs')||{})[p.key];
+    const subTotal=Array.isArray(subs)?subs.reduce((ss,sb)=>ss+(Number(sb.principal)||0),0):0;
+    return s+(subTotal>0?subTotal:(inv[p.key]||0));
+  },0);
+  const cashT=cashTotalNGN(cash,m,y);
+  const _nwCfg=cGet('sw3_nw_config')||{};
+  const debtT=_nwCfg.includeDebtors!==false?S.debtors.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0):0;
+  return invT+cashT+debtT;
+}
 function renderNWTrendChart(){
   const hist=getHistory();
   if(!hist.length) return;
-  const pts=hist.slice(-12).map(h=>{
-    const inv=cGet(CK.inv(h.month,h.year))||{};
-    const cash=cGet(CK.cash(h.month,h.year))||{};
-    const invT=PLATFORMS.reduce((s,p)=>s+(inv[p.key]||0),0);
-    const cashT=cashTotalNGN(cash);
-    return{label:h.label,nw:invT+cashT};
-  }).filter(p=>p.nw>0);
+  const pts=hist.slice(-12).map(h=>({label:h.label,nw:_nwForMonth(h.month,h.year)})).filter(p=>p.nw>0);
   if(pts.length<2) return;
   const canvas=document.getElementById('nw-trend-chart');
   if(!canvas) return;
@@ -3399,7 +3436,7 @@ function delIncome(id){
   // Optimistically remove from local state immediately
   S.income.splice(idx,1);
   cSet(CK.inc(S.expMonth,S.expYear),S.income);
-  if(inc.bank&&inc.amount) _adjustCash(inc.bank, -inc.amount, inc.month||S.expMonth, inc.year||S.expYear);
+  if(inc.bank&&inc.amount) _adjustCash(inc.bank, -inc.amount, inc.month||S.expMonth, inc.year||S.expYear, 'income-delete');
   _recalcHistIncome(S.expMonth,S.expYear);
   renderIncome();renderDashboard();renderCashPage();
   haptic([6]);
@@ -3765,19 +3802,51 @@ function openEditExp(id){
 const openEditExpense=openEditExp; // alias used in category popup
 
 // ── CASH BALANCE HELPERS ────────────────────────────────────────────────────
-function _adjustCash(bank, delta, m, y){
+// Pending-write tracker: while an atomic increment is in flight, the field is
+// "dirty" so loadCashData lets the local value win. Once the server confirms,
+// the field is cleared and remote increments from OTHER devices flow through.
+const _cashDirty={}; // key: `${y}-${m}|${bank}` -> count of in-flight writes
+function _cashDirtyKey(m,y,bank){return `${y}-${m}|${bank}`;}
+function _markCashDirty(m,y,bank){const k=_cashDirtyKey(m,y,bank);_cashDirty[k]=(_cashDirty[k]||0)+1;}
+function _clearCashDirty(m,y,bank){const k=_cashDirtyKey(m,y,bank);if(_cashDirty[k]){_cashDirty[k]--;if(_cashDirty[k]<=0)delete _cashDirty[k];}}
+function _isCashDirty(m,y,bank){return !!_cashDirty[_cashDirtyKey(m,y,bank)];}
+
+// Append a reason entry to the cash ledger so the audit can explain any gap.
+function _logCashLedger(bank, delta, m, y, source, ref){
+  try{
+    const key=`sw3_cash_ledger_${y}_${m}`;
+    const log=cGet(key)||[];
+    log.push({ts:Date.now(),date:todayStr(),bank,delta:Math.round(delta*100)/100,source:source||'',ref:ref||''});
+    cSet(key, log.slice(-500)); // cap per month
+  }catch(e){}
+}
+
+function _adjustCash(bank, delta, m, y, source, ref){
   // delta: positive = add, negative = deduct
   if(!bank||!delta) return;
-  // Use in-memory S.cash when it matches the target month (already populated from Firestore).
-  // Fall back to localStorage only for cross-month adjustments where S.cash doesn't apply.
+  // Update local state immediately for instant UI (single-device correctness).
   const isCurMonth=(m===S.cashMonth&&y===S.cashYear)||(m===S.dashMonth&&y===S.dashYear);
   const base=isCurMonth&&Object.keys(S.cash||{}).length?{...S.cash}:{...(cGet(CK.cash(m,y))||{})};
   base[bank]=(base[bank]||0)+delta;
-  // Keep S.cash in sync if this is the displayed month
   if(m===S.cashMonth&&y===S.cashYear) S.cash=base;
   if(m===S.dashMonth&&y===S.dashYear) S.cash=base;
   cSet(CK.cash(m,y),base);
-  if(db) db.collection('cashBalances').doc(sid(m,y)).set({...base,month:m,year:y},{merge:true}).catch(()=>{});
+  _logCashLedger(bank, delta, m, y, source, ref);
+  // Firestore write is an ATOMIC field increment — commutes with concurrent
+  // writes to other fields/devices, so balances can't clobber each other.
+  if(db){
+    _markCashDirty(m,y,bank);
+    db.collection('cashBalances').doc(sid(m,y)).set({
+      [bank]: firebase.firestore.FieldValue.increment(delta),
+      month:m, year:y
+    },{merge:true})
+      .then(()=>_clearCashDirty(m,y,bank))
+      .catch(()=>{
+        _clearCashDirty(m,y,bank);
+        // Queue a full-doc fallback so the delta isn't lost while offline
+        oqAdd('cashBalances', sid(m,y), {...base, month:m, year:y}, true);
+      });
+  }
   renderCashPage();renderDashboard();
 }
 
@@ -3977,7 +4046,7 @@ async function saveExpense(){
       const ref=await db.collection('income').add(data);
       S.income.unshift({...data,id:ref.id});
       cSet(CK.inc(incTxM,incTxY),S.income);
-      _adjustCash(incBank, amt, incTxM, incTxY);
+      _adjustCash(incBank, amt, incTxM, incTxY, 'income');
       const hist=cGet('sw3_history')||[];
       const hIdx=hist.findIndex(h=>h.year===incTxY&&h.month===incTxM);
       const totalInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
@@ -4046,15 +4115,15 @@ async function saveExpense(){
     if(editId){
       // Reverse old bank deduction, apply new one
       const oldTx=S.txns.find(t=>t.id===editId);
-      if(oldTx&&oldTx.bank) _adjustCash(oldTx.bank, oldTx.amount, oldTx.year||expTxY, oldTx.month||expTxM);   // restore old
+      if(oldTx&&oldTx.bank) _adjustCash(oldTx.bank, oldTx.amount, oldTx.year||expTxY, oldTx.month||expTxM, 'expense-edit-reverse');   // restore old
       await db.collection('transactions').doc(editId).update(data);
       const idx=S.txns.findIndex(t=>t.id===editId);if(idx>=0)S.txns[idx]={...S.txns[idx],...data};
-      if(data.bank) _adjustCash(data.bank, -amt, expTxM, expTxY);                     // apply new
+      if(data.bank) _adjustCash(data.bank, -amt, expTxM, expTxY, 'expense-edit');                     // apply new
     } else {
       data.createdAt=firebase.firestore.FieldValue.serverTimestamp();
       const ref=await db.collection('transactions').add(data);
       S.txns.unshift({...data,id:ref.id});
-      if(data.bank) _adjustCash(data.bank, -amt, expTxM, expTxY);                     // deduct
+      if(data.bank) _adjustCash(data.bank, -amt, expTxM, expTxY, 'expense');                     // deduct
     }
     cSet(CK.txns(expTxM,expTxY),S.txns);closeMod('exp-modal');const _ep=document.getElementById('e-payee-emoji');if(_ep)_ep.textContent='📦';toast(editId?'Updated':'Saved');haptic([8,40,8]);setSyncStatus('synced');renderExpenses();renderDashboard();
   }catch(e){
@@ -4084,7 +4153,7 @@ function delExpense(id){
   S.txns.splice(idx,1);
   cSet(CK.txns(S.expMonth,S.expYear),S.txns);
   // Restore cash balance immediately — to the transaction's own month bucket
-  if(tx.bank&&tx.amount) _adjustCash(tx.bank, tx.amount, tx.month||S.expMonth, tx.year||S.expYear);
+  if(tx.bank&&tx.amount) _adjustCash(tx.bank, tx.amount, tx.month||S.expMonth, tx.year||S.expYear, 'expense-delete');
   renderExpenses();renderDashboard();
   haptic([6]);
   const rollback=()=>{
@@ -4151,7 +4220,7 @@ async function saveIncome(){
       const ref=await db.collection('income').add({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
       S.income.unshift({...data,id:ref.id});
       cSet(CK.inc(txM,txY),S.income);
-      _adjustCash(bank, amt, txM, txY);
+      _adjustCash(bank, amt, txM, txY, 'income');
       toast(`Income recorded · ${bank} updated`);
     }
     const hist=cGet('sw3_history')||[];
@@ -4643,7 +4712,7 @@ async function confirmLiquidation(){
     toast(`₦${fNum(amtNGN)} → ${destPlat?destPlat.label:destPKey}`);
   } else {
     // Liquidate to cash account
-    _adjustCash(destVal,amtNGN,liqM,liqY);
+    _adjustCash(destVal,amtNGN,liqM,liqY,'investment-liquidation');
     toast(`₦${fNum(amtNGN)} liquidated → ${destVal}`);
   }
 
@@ -5191,7 +5260,7 @@ async function _doAddDebt(id){
       if(isUSDAcct) delta=(d.currency==='USD')?add:add/rate;
       else delta=(d.currency==='NGN'||!d.currency)?add:add*rate;
       const txD=new Date(dDate);const dm=txD.getMonth()+1,dy=txD.getFullYear();
-      _adjustCash(bank,-delta,dm,dy);
+      _adjustCash(bank,-delta,dm,dy,'debt-add');
     }
     closeMod('drill-modal');
     toast(`Debt increased by ${d.currency} ${fNum(add)}${bank?' · '+bank+' deducted':''}`);
@@ -5279,10 +5348,68 @@ function toggleCashEdit(){
 // DASHBOARD CHART TABS
 // ══════════════════════════════════════════════════════════════════════════
 function dashChartTab(tab, btn){
-  ['breakdown','trend','networth','cashflow'].forEach(t=>{const el=document.getElementById('dash-tab-'+t);if(el)el.style.display=t===tab?'block':'none';});
+  ['breakdown','trend','networth','cashflow','trends'].forEach(t=>{const el=document.getElementById('dash-tab-'+t);if(el)el.style.display=t===tab?'block':'none';});
   btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active');
   if(tab==='cashflow') renderCashFlowChart();
+  if(tab==='trends') renderCategoryTrends();
+}
+
+// ── CATEGORY TRENDS (6-month sparklines) ──────────────────────────────────
+function _last6MonthKeys(m,y){
+  const out=[];let cm=m,cy=y;
+  for(let i=0;i<6;i++){out.unshift({m:cm,y:cy});cm--;if(cm<1){cm=12;cy--;}}
+  return out;
+}
+function renderCategoryTrends(){
+  const m=S.dashMonth,y=S.dashYear,cur=S.dashCurrency;
+  const el=document.getElementById('cat-spark-list');
+  if(!el) return;
+  const months=_last6MonthKeys(m,y);
+  // Per-category spend per month
+  const series={}; // cat -> [6 values]
+  months.forEach((mk,i)=>{
+    const isCurrent=(mk.m===S.expMonth&&mk.y===S.expYear);
+    const txns=isCurrent?S.txns:(cGet(CK.txns(mk.m,mk.y))||[]);
+    txns.forEach(t=>{
+      if(!series[t.category])series[t.category]=[0,0,0,0,0,0];
+      series[t.category][i]+=(t.amount||0);
+    });
+  });
+  const cats=Object.keys(series).filter(c=>series[c].some(v=>v>0));
+  if(!cats.length){el.innerHTML='<div class="empty"><div class="empty-i">📈</div>Not enough history yet</div>';return;}
+  // Sort by latest-month spend desc
+  cats.sort((a,b)=>series[b][5]-series[a][5]);
+  const allMax=Math.max(...cats.flatMap(c=>series[c]),1);
+  el.innerHTML=cats.map(c=>{
+    const vals=series[c];
+    const latest=vals[5];
+    const prior3=(vals[2]+vals[3]+vals[4])/3;
+    const delta=prior3>0?((latest-prior3)/prior3)*100:(latest>0?100:0);
+    const rising=delta>10,falling=delta<-10;
+    const arrow=rising?'<span style="color:var(--red)">▲</span>':falling?'<span style="color:var(--accent)">▼</span>':'<span style="color:var(--text3)">→</span>';
+    const deltaTxt=Math.abs(delta)<1?'flat':`${delta>0?'+':''}${Math.round(delta)}%`;
+    // Inline SVG sparkline
+    const W=120,H=28,pad=2;
+    const max=Math.max(...vals,1);
+    const pts=vals.map((v,i)=>{
+      const x=pad+(i*(W-2*pad)/5);
+      const yv=H-pad-(v/max)*(H-2*pad);
+      return`${x.toFixed(1)},${yv.toFixed(1)}`;
+    }).join(' ');
+    const lastX=pad+(5*(W-2*pad)/5);
+    const lastY=H-pad-(vals[5]/max)*(H-2*pad);
+    return`<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:0.74rem;font-weight:600;display:flex;align-items:center;gap:5px">${CAT_ICONS[c]||'📋'} ${esc(c)}</div>
+        <div style="font-size:0.6rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${fmtCur(latest,cur,m,y)} ${arrow} ${deltaTxt}</div>
+      </div>
+      <svg width="${W}" height="${H}" style="flex-shrink:0">
+        <polyline points="${pts}" fill="none" stroke="${rising?'var(--red)':falling?'var(--accent)':'var(--blue)'}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" opacity="0.85"/>
+        <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="2.2" fill="${rising?'var(--red)':falling?'var(--accent)':'var(--blue)'}"/>
+      </svg>
+    </div>`;
+  }).join('')+`<div class="csub" style="margin-top:8px">Bars span ${MS[months[0].m-1]} ${String(months[0].y).slice(2)} – ${MS[months[5].m-1]} ${String(months[5].y).slice(2)}</div>`;
 }
 
 function renderCashFlowChart(){
@@ -6142,7 +6269,7 @@ async function runBalanceAudit(){
       <div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono);margin-top:3px">
         Open ${fmt(r.b,r.open)} + Inc ${fmt(r.b,r.incSum)} − Exp ${fmt(r.b,r.expSum)} − Out ${fmt(r.b,r.xfrOut)} + In ${fmt(r.b,r.xfrIn)} = ${fmt(r.b,r.expected)} · Stored: ${fmt(r.b,r.actual)}
       </div>
-      ${ok?'':`<button class="btn btn-g btn-sm" style="margin-top:6px" onclick="auditFix('${r.b}',${r.expected},${m},${y})">Set to computed ${fmt(r.b,r.expected)}</button>`}
+      ${ok?'':`<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-g btn-sm" onclick="auditFix('${r.b}',${r.expected},${m},${y})">Set to computed ${fmt(r.b,r.expected)}</button><button class="btn btn-g btn-sm" onclick="showCashLedger('${r.b}',${m},${y})">View ledger</button></div>`}
     </div>`;}).join('')+
     '<div class="csub" style="margin-top:8px">Differences are not always errors — manual balance edits, debtor disbursements and repayments appear here as gaps.</div>';
 }
@@ -6156,6 +6283,17 @@ function auditFix(b,val,m,y){
   if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
   renderCashPage();renderDashboard();toast(`${b} balance updated`);
   runBalanceAudit();
+}
+function showCashLedger(bank,m,y){
+  const log=(cGet(`sw3_cash_ledger_${y}_${m}`)||[]).filter(e=>e.bank===bank);
+  const out=document.getElementById('audit-result');
+  if(!out)return;
+  const fmt=v=>isUSDCashAccount(bank)?(v<0?'-$':'$')+Math.abs(v).toLocaleString('en-US',{maximumFractionDigits:2}):(v<0?'-₦':'₦')+Math.abs(Math.round(v)).toLocaleString();
+  const SRC={income:'Income',expense:'Expense','expense-edit':'Expense edit','expense-edit-reverse':'Expense edit (reversal)','expense-delete':'Expense deleted','income-delete':'Income deleted','debt-add':'Debt disbursed','investment-liquidation':'Investment liquidation'};
+  const body=log.length
+    ?log.slice().reverse().map(e=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:0.66rem"><span style="color:var(--text2)">${e.date} · ${SRC[e.source]||e.source||'manual'}</span><span style="font-family:var(--mono);color:${e.delta<0?'var(--red)':'var(--accent)'}">${e.delta>0?'+':''}${fmt(e.delta)}</span></div>`).join('')
+    :'<div class="csub">No recorded movements this month. The ledger only captures changes made since v3.14.79; earlier balances and manual edits won\'t appear.</div>';
+  out.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:0.78rem;font-weight:700">${bank} — ${MONTHS[m-1]} ledger</span><button class="btn btn-g btn-sm" onclick="runBalanceAudit()">← Back to audit</button></div>${body}`;
 }
 
 async function exportFullBackup(){
@@ -6441,7 +6579,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.78</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.78: Balance Audit in Settings; undo for deleted expenses/income; Transfer History with reverse; duplicate expense warning; search spans all months; offline queue badge; custom categories now save in budgets; recurring posts logged to alerts; safety backup before restore; add debt to existing debtors</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.79</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.79: Cash adjustments are now atomic field-increments (no more cross-device balance clobbering) with a per-account ledger trail viewable in the audit; net-worth trend now includes sub-investments and debtors; Trends tab with 6-month per-category sparklines; safe-to-spend per-day figure on the dashboard</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7160,7 +7298,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.78';
+const APP_VERSION='v3.14.79';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
