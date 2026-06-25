@@ -416,7 +416,7 @@ datalist option{background:var(--bg2);color:var(--text)}
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
       <span id="oq-badge" style="display:none;margin-left:4px;font-size:0.58rem;color:var(--gold);font-family:var(--mono)"></span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.81</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.82</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1157,7 +1157,14 @@ const CAT_ICONS = {
 // Filename must match exactly what you enter in the settings (case-sensitive).
 const LOGOS_BASE_URL='https://raw.githubusercontent.com/SSSeyon/spendwise/main/Logos/';
 function getCashLogos(){return cGet('sw3_cash_logos')||{};}
-function setCashLogo(acctName,filename){const m=getCashLogos();if(filename)m[acctName]=filename.trim();else delete m[acctName];cSet('sw3_cash_logos',m);}
+function setCashLogo(acctName,filename){
+  const m=getCashLogos();
+  if(filename) m[acctName]=filename.trim();
+  else delete m[acctName];
+  cSet('sw3_cash_logos',m);
+  // Mirror to Firestore so logos sync across devices, matching how platform logos work
+  if(db) db.collection('appConfig').doc('cashLogos').set(m).catch(()=>{});
+}
 function _logoFallbackBank(el,name,size){
   const initials=name.slice(0,2).toUpperCase();
   const d=document.createElement('div');
@@ -1278,6 +1285,17 @@ function _syncInvConfig(){
 }
 
 // ── Load investment config from Firestore (called at boot) ───────────────
+async function loadCashLogos(){
+  if(!db) return;
+  try{
+    const doc=await db.collection('appConfig').doc('cashLogos').get();
+    if(doc.exists&&doc.data()){
+      // Remote is the source of truth; merge so any offline-only entries survive
+      const merged={...getCashLogos(),...doc.data()};
+      cSet('sw3_cash_logos',merged);
+    }
+  }catch(e){}
+}
 async function loadInvConfig(){
   if(!db) return;
   try{
@@ -1318,9 +1336,8 @@ function updatePlatLogo(key,filename){
   if(!p) return;
   p.logo=(filename||'').trim();
   savePlatforms(plats);PLATFORMS=plats;
-  // Debounced re-render after typing pauses
-  clearTimeout(updatePlatLogo._t);
-  updatePlatLogo._t=setTimeout(()=>renderInvestments(),600);
+  // No re-render — avoids closing the edit panel or losing focus mid-typing.
+  // The updated logo thumbnail appears on the next natural re-render of the tab.
 }
 function removePlatform(key){
   if(!confirm('Remove this investment platform? Its balance data will remain in history.')) return;
@@ -1863,7 +1880,7 @@ function initFirebase(){
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig()]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos()]);
 }
 
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
@@ -4932,7 +4949,7 @@ function renderCashPage(){
   const customAccts=ACCTS.filter(a=>!DEFAULT_CASH_ACCOUNTS.includes(a));
   const caEl=document.getElementById('custom-accts-list');
   // Show logo editing for ALL accounts (default + custom)
-  if(caEl){const allAccts=getCashAccounts();const logos=getCashLogos();caEl.innerHTML=allAccts.map(a=>{const isDefault=DEFAULT_CASH_ACCOUNTS.includes(a);const logoFile=logos[a]||'';return`<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)"><div style="flex-shrink:0">${bankLogoEl(a,20)}</div><div style="flex:1;min-width:0"><div style="font-size:0.74rem;font-weight:600">${a}</div><input class="ifield" type="text" placeholder="logo filename, e.g. gtb.png" value="${esc(logoFile)}" style="font-size:0.65rem;padding:3px 6px;margin-top:3px" oninput="setCashLogo('${a}',this.value);setTimeout(()=>renderCashPage(),600)"></div>${isDefault?'':` <button class="btn btn-d btn-sm" onclick="removeCashAccount('${a}')">✕</button>`}</div>`;}).join('');}
+  if(caEl){const allAccts=getCashAccounts();const logos=getCashLogos();caEl.innerHTML=allAccts.map(a=>{const isDefault=DEFAULT_CASH_ACCOUNTS.includes(a);const logoFile=logos[a]||'';return`<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)"><div style="flex-shrink:0">${bankLogoEl(a,20)}</div><div style="flex:1;min-width:0"><div style="font-size:0.74rem;font-weight:600">${a}</div><input class="ifield" type="text" placeholder="logo filename, e.g. gtb.png" value="${esc(logoFile)}" style="font-size:0.65rem;padding:3px 6px;margin-top:3px" oninput="setCashLogo('${a}',this.value)"></div>${isDefault?'':` <button class="btn btn-d btn-sm" onclick="removeCashAccount('${a}')">✕</button>`}</div>`;}).join('');}
   const opts=ACCTS.map(a=>`<option>${a}</option>`).join('');
   const xFrom=document.getElementById('xfr-from');const xTo=document.getElementById('xfr-to');
   if(xFrom) xFrom.innerHTML=opts;if(xTo) xTo.innerHTML=opts;
@@ -6604,7 +6621,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.81</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.81: Logos now fetched from GitHub Logos/ folder instead of embedded base64; logo filename inputs on all bank and investment platform forms — both cash adjustments now happen after the Firestore write completes, using a single net delta for same-bank edits to eliminate any snapshot race between the two steps (no more cross-device balance clobbering) with a per-account ledger trail viewable in the audit; net-worth trend now includes sub-investments and debtors; Trends tab with 6-month per-category sparklines; safe-to-spend per-day figure on the dashboard</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.82</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.82: Fix logo name inputs losing focus mid-type and closing investment panel; cash logos now sync to Firestore across devices instead of embedded base64; logo filename inputs on all bank and investment platform forms — both cash adjustments now happen after the Firestore write completes, using a single net delta for same-bank edits to eliminate any snapshot race between the two steps (no more cross-device balance clobbering) with a per-account ledger trail viewable in the audit; net-worth trend now includes sub-investments and debtors; Trends tab with 6-month per-category sparklines; safe-to-spend per-day figure on the dashboard</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7323,7 +7340,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.81';
+const APP_VERSION='v3.14.82';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
