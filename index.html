@@ -416,7 +416,7 @@ datalist option{background:var(--bg2);color:var(--text)}
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
       <span id="oq-badge" style="display:none;margin-left:4px;font-size:0.58rem;color:var(--gold);font-family:var(--mono)"></span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.82</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.83</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1162,8 +1162,16 @@ function setCashLogo(acctName,filename){
   if(filename) m[acctName]=filename.trim();
   else delete m[acctName];
   cSet('sw3_cash_logos',m);
-  // Mirror to Firestore so logos sync across devices, matching how platform logos work
-  if(db) db.collection('appConfig').doc('cashLogos').set(m).catch(()=>{});
+  // Mirror to Firestore — use {merge:true} so concurrent per-account writes don't
+  // erase each other (each call only changes the one field that changed).
+  if(db){
+    const payload=filename?{[acctName]:filename.trim()}:{[acctName]:firebase.firestore.FieldValue.delete()};
+    db.collection('appConfig').doc('cashLogos').set(payload,{merge:true}).catch(()=>{});
+  }
+  // Update the thumbnail in the settings list immediately without re-rendering the page.
+  const safeId=acctName.replace(/\s/g,'-');
+  const th=document.getElementById('cash-logo-th-'+safeId);
+  if(th) th.innerHTML=bankLogoEl(acctName,20);
 }
 function _logoFallbackBank(el,name,size){
   const initials=name.slice(0,2).toUpperCase();
@@ -1336,8 +1344,8 @@ function updatePlatLogo(key,filename){
   if(!p) return;
   p.logo=(filename||'').trim();
   savePlatforms(plats);PLATFORMS=plats;
-  // No re-render — avoids closing the edit panel or losing focus mid-typing.
-  // The updated logo thumbnail appears on the next natural re-render of the tab.
+  // Update every visible thumbnail for this platform immediately without re-rendering.
+  document.querySelectorAll('[id^="inv-logo-th-'+key+'"]').forEach(th=>{th.innerHTML=platformLogoEl(key,p.color,26);});
 }
 function removePlatform(key){
   if(!confirm('Remove this investment platform? Its balance data will remain in history.')) return;
@@ -1889,6 +1897,7 @@ async function syncAll(){
 let _txnListener=null;
 let _incListener=null;
 let _cashListener=null;
+let _logosListener=null;
 
 function startRealtimeListeners(){
   stopRealtimeListeners();
@@ -1932,12 +1941,25 @@ function startRealtimeListeners(){
       S.cash=data;
       renderCashPage();renderDashboard();
     },err=>console.warn('cash listener:',err));
+
+  // Cash logos — real-time cross-device sync
+  if(_logosListener){_logosListener();_logosListener=null;}
+  _logosListener=db.collection('appConfig').doc('cashLogos')
+    .onSnapshot(snap=>{
+      if(!snap.exists||snap.metadata.hasPendingWrites) return;
+      const data=snap.data()||{};
+      // Merge: remote wins for keys it has, local keeps anything not yet on remote
+      const merged={...getCashLogos(),...data};
+      cSet('sw3_cash_logos',merged);
+      renderCashPage();renderDashboard();
+    },err=>console.warn('cashLogos listener:',err));
 }
 
 function stopRealtimeListeners(){
   if(_txnListener){_txnListener();_txnListener=null;}
   if(_incListener){_incListener();_incListener=null;}
   if(_cashListener){_cashListener();_cashListener=null;}
+  if(_logosListener){_logosListener();_logosListener=null;}
 }
 
 async function loadTxns(m,y){
@@ -4453,7 +4475,7 @@ function _renderInvInto(suffix){
 
     return`<div class="card" style="margin-bottom:8px;cursor:pointer" onclick="toggleInvEdit('${p.key}','${s}')">
       <div style="display:flex;align-items:center;gap:10px">
-        <div style="flex-shrink:0">${platformLogoEl(p.key,p.color,26)}</div>
+        <div id="inv-logo-th-${p.key}${s}" style="flex-shrink:0">${platformLogoEl(p.key,p.color,26)}</div>
         <div style="flex:1;min-width:0">
           <div class="pname">${p.label}${badge}${intBadge}${maturedBadge}${subCount}</div>
           <div class="ppct">${pct}%</div>
@@ -4949,7 +4971,7 @@ function renderCashPage(){
   const customAccts=ACCTS.filter(a=>!DEFAULT_CASH_ACCOUNTS.includes(a));
   const caEl=document.getElementById('custom-accts-list');
   // Show logo editing for ALL accounts (default + custom)
-  if(caEl){const allAccts=getCashAccounts();const logos=getCashLogos();caEl.innerHTML=allAccts.map(a=>{const isDefault=DEFAULT_CASH_ACCOUNTS.includes(a);const logoFile=logos[a]||'';return`<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)"><div style="flex-shrink:0">${bankLogoEl(a,20)}</div><div style="flex:1;min-width:0"><div style="font-size:0.74rem;font-weight:600">${a}</div><input class="ifield" type="text" placeholder="logo filename, e.g. gtb.png" value="${esc(logoFile)}" style="font-size:0.65rem;padding:3px 6px;margin-top:3px" oninput="setCashLogo('${a}',this.value)"></div>${isDefault?'':` <button class="btn btn-d btn-sm" onclick="removeCashAccount('${a}')">✕</button>`}</div>`;}).join('');}
+  if(caEl){const allAccts=getCashAccounts();const logos=getCashLogos();caEl.innerHTML=allAccts.map(a=>{const isDefault=DEFAULT_CASH_ACCOUNTS.includes(a);const logoFile=logos[a]||'';const _safeId=a.replace(/\s/g,'-');return`<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)"><div id="cash-logo-th-${_safeId}" style="flex-shrink:0">${bankLogoEl(a,20)}</div><div style="flex:1;min-width:0"><div style="font-size:0.74rem;font-weight:600">${a}</div><input class="ifield" type="text" placeholder="logo filename, e.g. gtb.png" value="${esc(logoFile)}" style="font-size:0.65rem;padding:3px 6px;margin-top:3px" oninput="setCashLogo('${a}',this.value)" onblur="renderCashPage()"></div>${isDefault?'':` <button class="btn btn-d btn-sm" onclick="removeCashAccount('${a}')">✕</button>`}</div>`;}).join('');}
   const opts=ACCTS.map(a=>`<option>${a}</option>`).join('');
   const xFrom=document.getElementById('xfr-from');const xTo=document.getElementById('xfr-to');
   if(xFrom) xFrom.innerHTML=opts;if(xTo) xTo.innerHTML=opts;
@@ -6621,7 +6643,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.82</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.82: Fix logo name inputs losing focus mid-type and closing investment panel; cash logos now sync to Firestore across devices instead of embedded base64; logo filename inputs on all bank and investment platform forms — both cash adjustments now happen after the Firestore write completes, using a single net delta for same-bank edits to eliminate any snapshot race between the two steps (no more cross-device balance clobbering) with a per-account ledger trail viewable in the audit; net-worth trend now includes sub-investments and debtors; Trends tab with 6-month per-category sparklines; safe-to-spend per-day figure on the dashboard</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.83</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.83: Cash logo thumbnails update instantly as you type; investment logo thumbnails also update in-place; real-time onSnapshot listener for cash logos syncs across devices without page reload instead of embedded base64; logo filename inputs on all bank and investment platform forms — both cash adjustments now happen after the Firestore write completes, using a single net delta for same-bank edits to eliminate any snapshot race between the two steps (no more cross-device balance clobbering) with a per-account ledger trail viewable in the audit; net-worth trend now includes sub-investments and debtors; Trends tab with 6-month per-category sparklines; safe-to-spend per-day figure on the dashboard</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7340,7 +7362,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.82';
+const APP_VERSION='v3.14.83';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
