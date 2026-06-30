@@ -416,7 +416,7 @@ datalist option{background:var(--bg2);color:var(--text)}
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
       <span id="oq-badge" style="display:none;margin-left:4px;font-size:0.58rem;color:var(--gold);font-family:var(--mono)"></span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.85</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.86</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -655,6 +655,7 @@ datalist option{background:var(--bg2);color:var(--text)}
     <button class="tab active" onclick="acctTab('cash',this)">Cash</button>
     <button class="tab" onclick="acctTab('invest',this)">Investments</button>
     <button class="tab" onclick="acctTab('debtors',this)">Debtors</button>
+    <button class="tab" onclick="acctTab('loans',this)">Loans</button>
   </div>
   <div class="mrow" id="cash-months" style="margin-bottom:6px"></div>
   </div>
@@ -725,6 +726,15 @@ datalist option{background:var(--bg2);color:var(--text)}
       <button class="btn btn-p btn-sm" style="margin-left:10px;flex-shrink:0" onclick="openDebMod()">+ Add</button>
     </div>
     <div id="debtor-list"></div>
+  </div>
+
+  <!-- LOANS TAB -->
+  <div id="acct-loans" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div class="g2" id="loan-stats" style="flex:1;margin-bottom:0"></div>
+      <button class="btn btn-p btn-sm" style="margin-left:10px;flex-shrink:0" onclick="openLoanMod()">+ Add</button>
+    </div>
+    <div id="loan-list"></div>
   </div>
 </div>
 
@@ -1032,6 +1042,42 @@ datalist option{background:var(--bg2);color:var(--text)}
   </div>
 </div>
 
+<div class="mbackdrop" id="loan-modal">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="mhdr"><div class="mtitle" id="loan-mod-title">Add Loan</div><button class="mclose" onclick="closeMod('loan-modal')">×</button></div>
+    <div class="ig"><label class="ilabel">Lender</label><input class="ifield" type="text" id="ln-lender" placeholder="e.g. GTBank, Renmoney"></div>
+    <div class="gform">
+      <div class="ig"><label class="ilabel">Currency</label><select class="sfield" id="ln-cur"><option>NGN</option><option>USD</option><option>GBP</option></select></div>
+      <div class="ig"><label class="ilabel">Loan Type</label><select class="sfield" id="ln-type"><option>Personal</option><option>Business</option><option>Mortgage</option><option>Auto</option><option>Student</option><option>Other</option></select></div>
+    </div>
+    <div class="gform">
+      <div class="ig"><label class="ilabel">Principal Amount</label><input class="ifield" type="text" id="ln-amt" placeholder="0"></div>
+      <div class="ig"><label class="ilabel">Interest Rate (% p.a.)</label><input class="ifield" type="text" id="ln-rate-pa" placeholder="e.g. 24"></div>
+    </div>
+    <div class="ig"><label class="ilabel">Proceeds To Account</label><select class="sfield" id="ln-acct"><option value="">— None / External —</option></select></div>
+    <div class="gform">
+      <div class="ig"><label class="ilabel">Start Date</label><input class="ifield" type="date" id="ln-start"></div>
+      <div class="ig"><label class="ilabel">Due Date</label><input class="ifield" type="date" id="ln-due" placeholder="Optional"></div>
+    </div>
+    <div class="ig"><label class="ilabel">Exchange Rate to ₦ (blank = default)</label><input class="ifield" type="text" id="ln-fx" placeholder="e.g. 1600"></div>
+    <div class="ig"><label class="ilabel">Notes</label><input class="ifield" type="text" id="ln-notes" placeholder="Optional — purpose, collateral, etc."></div>
+    <button class="btn btn-p btn-full" id="loan-save" onclick="saveLoan()">Add Loan</button>
+    <input type="hidden" id="ln-eid">
+  </div>
+</div>
+
+<div class="mbackdrop" id="loan-repay-modal">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="mhdr"><div class="mtitle">Record Repayment</div><button class="mclose" onclick="closeMod('loan-repay-modal')">×</button></div>
+    <div class="ig"><label class="ilabel">Repayment Amount</label><input class="ifield" type="text" id="lrp-amt" placeholder="0"></div>
+    <div class="ig"><label class="ilabel">Deduct From Account</label><select class="sfield" id="lrp-acct"><option value="">— None / External —</option></select></div>
+    <div class="ig"><label class="ilabel">Date</label><input class="ifield" type="date" id="lrp-date"></div>
+    <div class="ig"><label class="ilabel">Notes</label><input class="ifield" type="text" id="lrp-notes" placeholder="Optional"></div>
+    <button class="btn btn-p btn-full" onclick="saveLoanRepayment()">Record Repayment</button>
+    <input type="hidden" id="lrp-lid">
+  </div>
+</div>
+
 <script>
 // ══════════════════════════════════════════════════════════════════════════
 // THEME
@@ -1211,22 +1257,6 @@ function setCashAccounts(allAccounts){
   cSet('sw3_cash_accounts',custom);
   if(db) db.collection('appConfig').doc('cashAccounts').set({accounts:custom},{merge:false}).catch(()=>{});
 }
-async function loadNWConfig(){
-  if(!db) return;
-  try{
-    const doc=await db.collection('appConfig').doc('nwConfig').get();
-    if(doc.exists){const d=doc.data();delete d.updatedAt;cSet(NW_CFG_KEY,d);}
-  }catch(e){}
-}
-async function loadFxOverrides(){
-  if(!db) return;
-  try{
-    const doc=await db.collection('appConfig').doc('fxOverrides').get();
-    if(doc.exists&&doc.data()?.overrides){
-      cSet(FX_OVR_KEY,doc.data().overrides);
-    }
-  }catch(e){}
-}
 async function loadCashAccounts(){
   if(!db) return;
   try{
@@ -1269,12 +1299,7 @@ function getNWConfig(){
     cashAccounts:getCashAccounts(), // all accounts by default
   };
 }
-function saveNWConfig(cfg){
-  cSet(NW_CFG_KEY,cfg);
-  if(db) db.collection('appConfig').doc('nwConfig')
-    .set({...cfg,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
-    .catch(e=>console.warn('nwConfig sync failed',e));
-}
+function saveNWConfig(cfg){cSet(NW_CFG_KEY,cfg);}
 
 
 const PLATFORMS_DEFAULT = [
@@ -1622,7 +1647,7 @@ let S={
   expMonth:now.getMonth()+1,expYear:now.getFullYear(),expCat:'All',
   cashMonth:now.getMonth()+1,cashYear:now.getFullYear(),
   dashMonth:now.getMonth()+1,dashYear:now.getFullYear(),dashCurrency:'NGN',
-  txns:[],income:[],investments:{},cash:{},debtors:[],budgets:{...DEF_BUDGETS},
+  txns:[],income:[],investments:{},cash:{},debtors:[],loans:[],budgets:{...DEF_BUDGETS},
   catChart:null,trendChart:null,invChart:null,invChart2:null,nwChart:null,
   chartType:'doughnut',
   saving:false,isStale:false,lastSync:null,fbSyncVersion:null,
@@ -1640,6 +1665,7 @@ const CK={
   cash:(m,y)=>`sw3_cash_${y}_${m}`,
   xfr:(m,y)=>`sw3_xfr_${y}_${m}`,
   debtors:'sw3_debtors',
+  loans:'sw3_loans',
   budgets:(m,y)=>`sw3_budgets_${y}_${m}`,
   lastSync:'sw3_last_sync',
   fbSyncVer:'sw3_fb_sync_ver',
@@ -1723,6 +1749,7 @@ function loadFromCache(){
   S.investments=cGet(CK.inv(m,y))||{};
   S.cash=cGet(CK.cash(m,y))||{};
   S.debtors=cGet(CK.debtors)||[];
+  S.loans=cGet(CK.loans)||[];
   S.budgets=cGet(CK.budgets(m,y))||{...DEF_BUDGETS};
   S.lastSync=cGet(CK.lastSync);
   S.fbSyncVersion=cGet(CK.fbSyncVer);
@@ -1743,12 +1770,6 @@ const sid=(m,y)=>`${y}-${String(m).padStart(2,'0')}`;
 const fxKey=(m,y)=>`${y}-${String(m).padStart(2,'0')}`;
 const FX_OVR_KEY='sw3_fx_overrides';
 function getFxOverrides(){return cGet(FX_OVR_KEY)||{};}
-function _syncFxOverrides(ovr){
-  if(!db) return;
-  db.collection('appConfig').doc('fxOverrides')
-    .set({overrides:ovr,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:false})
-    .catch(e=>console.warn('fxOverrides sync failed',e));
-}
 function getFxRates(m,y){const k=fxKey(m,y);const ovr=getFxOverrides();return ovr[k]||FX_RATES[k]||{USD:1600,GBP:2050};}
 const fN=n=>n==null||isNaN(n)?'—':'₦'+Number(n).toLocaleString('en-NG',{maximumFractionDigits:0});
 // ── NUMBER INPUT FORMATTING ──────────────────────────────────────────────
@@ -1931,7 +1952,7 @@ function initFirebase(){
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadFxOverrides(),loadNWConfig()]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans()]);
 }
 
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
@@ -1942,9 +1963,6 @@ let _incListener=null;
 let _cashListener=null;
 let _logosListener=null;
 let _acctsListener=null;
-let _fxOvrListener=null;
-let _invCfgListener=null;
-let _nwCfgListener=null;
 
 function startRealtimeListeners(){
   stopRealtimeListeners();
@@ -2012,40 +2030,6 @@ function startRealtimeListeners(){
         renderCashPage();renderDashboard();
       }
     },err=>console.warn('cashAccounts listener:',err));
-
-  // FX rate overrides — real-time cross-device sync
-  if(_fxOvrListener){_fxOvrListener();_fxOvrListener=null;}
-  _fxOvrListener=db.collection('appConfig').doc('fxOverrides')
-    .onSnapshot(snap=>{
-      if(!snap.exists||snap.metadata.hasPendingWrites) return;
-      const ovr=snap.data()?.overrides;
-      if(ovr&&typeof ovr==='object'){
-        cSet(FX_OVR_KEY,ovr);
-        renderSettData();renderDashboard();
-      }
-    },err=>console.warn('fxOverrides listener:',err));
-
-  // Investment config (platforms, meta, subs) — real-time cross-device sync
-  if(_invCfgListener){_invCfgListener();_invCfgListener=null;}
-  _invCfgListener=db.collection('appConfig').doc('investments')
-    .onSnapshot(snap=>{
-      if(!snap.exists||snap.metadata.hasPendingWrites) return;
-      const d=snap.data();
-      if(d.platforms&&d.platforms.length) cSet(PLATFORMS_KEY,d.platforms);
-      if(d.invMeta&&Object.keys(d.invMeta).length) cSet('sw3_inv_meta',d.invMeta);
-      if(d.invSubs&&Object.keys(d.invSubs).length) cSet('sw3_inv_subs',d.invSubs);
-      renderInvestments();renderDashboard();
-    },err=>console.warn('investments listener:',err));
-
-  // Net worth config — real-time cross-device sync
-  if(_nwCfgListener){_nwCfgListener();_nwCfgListener=null;}
-  _nwCfgListener=db.collection('appConfig').doc('nwConfig')
-    .onSnapshot(snap=>{
-      if(!snap.exists||snap.metadata.hasPendingWrites) return;
-      const d={...snap.data()};delete d.updatedAt;
-      cSet(NW_CFG_KEY,d);
-      renderDashboard();
-    },err=>console.warn('nwConfig listener:',err));
 }
 
 function stopRealtimeListeners(){
@@ -2054,9 +2038,6 @@ function stopRealtimeListeners(){
   if(_cashListener){_cashListener();_cashListener=null;}
   if(_logosListener){_logosListener();_logosListener=null;}
   if(_acctsListener){_acctsListener();_acctsListener=null;}
-  if(_fxOvrListener){_fxOvrListener();_fxOvrListener=null;}
-  if(_invCfgListener){_invCfgListener();_invCfgListener=null;}
-  if(_nwCfgListener){_nwCfgListener();_nwCfgListener=null;}
 }
 
 async function loadTxns(m,y){
@@ -2395,7 +2376,7 @@ function renderAll(){
   const n=new Date();
   const _hdrDate=document.getElementById('hdr-date');if(_hdrDate)_hdrDate.textContent=MS[n.getMonth()].toUpperCase()+' '+n.getFullYear();
   initPeriodSelector();
-  const _rf=[['applyDashOrder',applyDashOrder],['renderDashboard',renderDashboard],['renderExpenses',renderExpenses],['renderInvestments',renderInvestments],['renderCashPage',renderCashPage],['renderDebtors',renderDebtors],['renderForecast',renderForecast],['renderSettings',renderSettings],['renderRecurringCard',renderRecurringCard]];
+  const _rf=[['applyDashOrder',applyDashOrder],['renderDashboard',renderDashboard],['renderExpenses',renderExpenses],['renderInvestments',renderInvestments],['renderCashPage',renderCashPage],['renderDebtors',renderDebtors],['renderLoans',renderLoans],['renderForecast',renderForecast],['renderSettings',renderSettings],['renderRecurringCard',renderRecurringCard]];
   _rf.forEach(([name,fn])=>{try{fn();}catch(e){console.error('renderAll: '+name+' threw',e);_showRenderErr(name,e);}});
   try{
     const lastPg=localStorage.getItem('sw3_last_page');
@@ -2448,12 +2429,8 @@ function renderDashboard(){
   const cash=S.cash;
   const _fxR=getFxRates(m,y);
   const _nwCfg=getNWConfig();
-  // NW-filtered account list (respects Settings checkboxes)
-  const _nwAccts=Array.from(new Set([...(_nwCfg.cashAccounts||[]),...getCashAccounts()].filter(a=>(_nwCfg.cashAccounts&&_nwCfg.cashAccounts.length)?_nwCfg.cashAccounts.includes(a):true)));
-  // nwCashTotal: only accounts selected in NW config (for net worth calculation)
-  const nwCashTotal=_nwAccts.reduce((s,b)=>{const v=cash[b]||0;return s+(isUSDCashAccount(b)?v*(_fxR.USD||1650):v);},0);
-  // cashTotal: ALL accounts always (for the "Cash — All accounts" display card)
-  const cashTotal=getCashAccounts().reduce((s,b)=>{const v=cash[b]||0;return s+(isUSDCashAccount(b)?v*(_fxR.USD||1650):v);},0);
+  const _nwAccts=_nwCfg.cashAccounts||getCashAccounts();
+  const cashTotal=_nwAccts.reduce((s,b)=>{const v=cash[b]||0;return s+(isUSDCashAccount(b)?v*(_fxR.USD||1650):v);},0);
   const inv=S.investments;
   const invTotal=_nwCfg.includeInvestments!==false?PLATFORMS.reduce((s,p)=>{
     const meta=getInvPlatformMeta(p.key);
@@ -2466,8 +2443,8 @@ function renderDashboard(){
     return s+bal;
   },0):0;
   const debtNW=_nwCfg.includeDebtors!==false?S.debtors.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0):0;
-  const nw=invTotal+nwCashTotal+debtNW;
-  const _nwParts=[_nwCfg.includeInvestments!==false?'Investments':null,nwCashTotal>0?'Cash':null,_nwCfg.includeDebtors!==false&&debtNW?'Debtors':null].filter(Boolean);
+  const nw=invTotal+cashTotal+debtNW;
+  const _nwParts=[_nwCfg.includeInvestments!==false?'Investments':null,_nwAccts.length?'Cash':null,_nwCfg.includeDebtors!==false&&debtNW?'Debtors':null].filter(Boolean);
   document.getElementById('dash-nw').textContent=fmtCur(nw,cur,m,y)||'—';
   document.getElementById('dash-nw-sub').innerHTML=`${_nwParts.join(' + ')} · ${MONTHS[m-1]} ${y}`+_getNWDeltaBadge(m,y);
 
@@ -5498,15 +5475,250 @@ async function removeDeb(id){if(!confirm('Remove this debtor?')) return;try{awai
 // ACCOUNTS PAGE (Cash + Investments)
 // ══════════════════════════════════════════════════════════════════════════
 function acctTab(tab, btn){
-  ['cash','invest','debtors'].forEach(t=>{const el=document.getElementById('acct-'+t);if(el)el.style.display=t===tab?'block':'none';});
+  ['cash','invest','debtors','loans'].forEach(t=>{const el=document.getElementById('acct-'+t);if(el)el.style.display=t===tab?'block':'none';});
   btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active');
   if(tab==='debtors') renderDebtors();
+  if(tab==='loans') renderLoans();
 }
 function toggleCashEdit(){
   const s=document.getElementById('cash-edit-section');
   const open=s.style.display!=='none';
   s.style.display=open?'none':'block';
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// LOANS
+// ══════════════════════════════════════════════════════════════════════════
+
+async function loadLoans(){
+  try{
+    const snap=await db.collection('loans').get();
+    if(snap&&snap.size>=0){
+      S.loans=snap.docs.map(d=>({id:d.id,...d.data()}));
+      cSet(CK.loans,S.loans);
+    }
+  }catch(e){}
+}
+
+function _populateLoanAcct(selId, selectedVal=''){
+  const sel=document.getElementById(selId);if(!sel) return;
+  const accts=getCashAccounts();
+  sel.innerHTML=`<option value="">— None / External —</option>`+
+    accts.map(a=>`<option value="${a}"${a===selectedVal?' selected':''}>${a}</option>`).join('');
+}
+
+function openLoanMod(){
+  document.getElementById('loan-mod-title').textContent='Add Loan';
+  document.getElementById('loan-save').textContent='Add Loan';
+  document.getElementById('ln-eid').value='';
+  ['ln-lender','ln-amt','ln-rate-pa','ln-fx','ln-notes'].forEach(i=>{const el=document.getElementById(i);if(el)el.value='';});
+  document.getElementById('ln-cur').value='NGN';
+  document.getElementById('ln-type').value='Personal';
+  document.getElementById('ln-start').value=todayStr();
+  document.getElementById('ln-due').value='';
+  _populateLoanAcct('ln-acct','');
+  openMod('loan-modal');
+}
+
+function openEditLoan(id){
+  const l=S.loans.find(x=>x.id===id);if(!l) return;
+  document.getElementById('loan-mod-title').textContent='Edit Loan';
+  document.getElementById('loan-save').textContent='Update Loan';
+  document.getElementById('ln-eid').value=id;
+  document.getElementById('ln-lender').value=l.lender||'';
+  document.getElementById('ln-cur').value=l.currency||'NGN';
+  document.getElementById('ln-type').value=l.loanType||'Personal';
+  document.getElementById('ln-amt').value=l.amount||'';
+  document.getElementById('ln-rate-pa').value=l.ratePA||'';
+  document.getElementById('ln-start').value=l.startDate||todayStr();
+  document.getElementById('ln-due').value=l.dueDate||'';
+  document.getElementById('ln-fx').value=l.fxRate||'';
+  document.getElementById('ln-notes').value=l.notes||'';
+  _populateLoanAcct('ln-acct', l.disbursedTo||'');
+  openMod('loan-modal');
+}
+
+async function saveLoan(){
+  if(S.saving) return;
+  const lender=document.getElementById('ln-lender').value.trim();
+  const rawAmt=document.getElementById('ln-amt').value.replace(/,/g,'');
+  const amt=parseFloat(rawAmt);
+  if(!lender||!amt||amt<=0){toast('Lender name and principal amount required');return;}
+  S.saving=true;
+  const btn=document.getElementById('loan-save');
+  btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
+  const cur=document.getElementById('ln-cur').value;
+  const fxIn=parseFloat(document.getElementById('ln-fx').value);
+  const fxRate=isNaN(fxIn)||fxIn<=0?(getFxRates(S.expMonth,S.expYear)[cur]||1):fxIn;
+  const amtNGN=cur==='NGN'?amt:Math.round(amt*fxRate);
+  const eid=document.getElementById('ln-eid').value;
+  const disbAcct=document.getElementById('ln-acct').value||'';
+  const startDate=document.getElementById('ln-start').value||todayStr();
+  const data={
+    lender,
+    currency:cur,
+    amount:amt,
+    amtNGN,
+    fxRate,
+    loanType:document.getElementById('ln-type').value,
+    ratePA:parseFloat(document.getElementById('ln-rate-pa').value)||0,
+    startDate,
+    dueDate:document.getElementById('ln-due').value||'',
+    notes:document.getElementById('ln-notes').value||'',
+    disbursedTo:disbAcct,
+    repaid:eid?(S.loans.find(x=>x.id===eid)?.repaid||0):0,
+    repayLog:eid?(S.loans.find(x=>x.id===eid)?.repayLog||[]):[],
+    status:'active',
+  };
+  // Mark settled if fully repaid
+  if(data.repaid>=amtNGN) data.status='settled';
+  try{
+    if(eid){
+      await db.collection('loans').doc(eid).update(data);
+      toast('Loan updated');
+    } else {
+      data.createdAt=firebase.firestore.FieldValue.serverTimestamp();
+      const ref=await db.collection('loans').add(data);
+      // Credit the selected cash account with the loan proceeds
+      if(disbAcct){
+        const d=new Date(startDate);
+        const lm=d.getMonth()+1,ly=d.getFullYear();
+        _adjustCash(disbAcct, amtNGN, lm, ly, 'loan-proceeds', ref.id);
+      }
+      toast('Loan recorded — account credited');
+    }
+    haptic([8,40,8]);setSyncStatus('synced');
+    closeMod('loan-modal');
+    await loadLoans();renderLoans();
+  }catch(e){toast('Error saving loan');setSyncStatus('error');}
+  finally{S.saving=false;btn.textContent=eid?'Update Loan':'Add Loan';btn.disabled=false;}
+}
+
+async function removeLoan(id){
+  if(!confirm('Remove this loan record? This does not reverse any cash entries.')) return;
+  try{
+    await db.collection('loans').doc(id).delete();
+    toast('Loan removed');
+    await loadLoans();renderLoans();
+  }catch(e){toast('Error removing loan');}
+}
+
+function openLoanRepay(id){
+  document.getElementById('lrp-lid').value=id;
+  document.getElementById('lrp-amt').value='';
+  document.getElementById('lrp-notes').value='';
+  document.getElementById('lrp-date').value=todayStr();
+  _populateLoanAcct('lrp-acct','');
+  openMod('loan-repay-modal');
+}
+
+async function saveLoanRepayment(){
+  if(S.saving) return;
+  const id=document.getElementById('lrp-lid').value;
+  const rawAmt=document.getElementById('lrp-amt').value.replace(/,/g,'');
+  const amt=parseFloat(rawAmt);
+  if(!id||!amt||amt<=0){toast('Amount required');return;}
+  const loan=S.loans.find(x=>x.id===id);
+  if(!loan){toast('Loan not found');return;}
+  S.saving=true;setSyncStatus('syncing');
+  const deductAcct=document.getElementById('lrp-acct').value||'';
+  const rpDate=document.getElementById('lrp-date').value||todayStr();
+  const rpNotes=document.getElementById('lrp-notes').value||'';
+  // The repayment amount is always in NGN (like debtor payments)
+  const newRepaid=(loan.repaid||0)+amt;
+  const outstanding=Math.max(0,(loan.amtNGN||loan.amount||0)-newRepaid);
+  const newLog=[...(loan.repayLog||[]),{date:rpDate,amount:amt,notes:rpNotes,account:deductAcct}];
+  const update={repaid:newRepaid,repayLog:newLog,status:outstanding<=0?'settled':'active'};
+  try{
+    await db.collection('loans').doc(id).update(update);
+    // Deduct from cash account
+    if(deductAcct){
+      const d=new Date(rpDate);
+      const lm=d.getMonth()+1,ly=d.getFullYear();
+      _adjustCash(deductAcct, -amt, lm, ly, 'loan-repayment', id);
+    }
+    toast('Repayment recorded');haptic([8,40,8]);setSyncStatus('synced');
+    closeMod('loan-repay-modal');
+    await loadLoans();renderLoans();
+  }catch(e){toast('Error recording repayment');setSyncStatus('error');}
+  finally{S.saving=false;}
+}
+
+function toggleLoanLog(id){
+  const el=document.getElementById('loan-log-'+id);
+  if(el) el.style.display=el.style.display==='none'?'block':'none';
+}
+
+function renderLoans(){
+  const loans=S.loans;
+  const cur=S.dashCurrency,m=S.expMonth,y=S.expYear;
+  const _lstats=document.getElementById('loan-stats');
+  const _llist=document.getElementById('loan-list');
+  if(!_lstats||!_llist) return;
+
+  const totalBorrowed=loans.reduce((s,l)=>s+(l.amtNGN||l.amount||0),0);
+  const totalOutstanding=loans.filter(l=>l.status!=='settled')
+    .reduce((s,l)=>s+Math.max(0,(l.amtNGN||l.amount||0)-(l.repaid||0)),0);
+  const activeCount=loans.filter(l=>l.status!=='settled').length;
+
+  _lstats.innerHTML=`
+    <div class="card card-sm" style="margin-bottom:0">
+      <div class="clabel">Total Borrowed</div>
+      <div class="cval-sm">${fmtCur(totalBorrowed,cur,m,y)}</div>
+    </div>
+    <div class="card card-sm" style="margin-bottom:0">
+      <div class="clabel">Outstanding</div>
+      <div class="cval-sm" style="color:var(--red)">${fmtCur(totalOutstanding,cur,m,y)}</div>
+    </div>`;
+
+  if(!loans.length){
+    _llist.innerHTML='<div class="empty"><div class="empty-i">🏦</div>No loans recorded yet</div>';
+    return;
+  }
+
+  // Sort: active first, then settled; within each group newest first
+  const sorted=[...loans].sort((a,b)=>{
+    if(a.status==='settled'&&b.status!=='settled') return 1;
+    if(a.status!=='settled'&&b.status==='settled') return -1;
+    return (b.startDate||'')>(a.startDate||'')?1:-1;
+  });
+
+  _llist.innerHTML=sorted.map(l=>{
+    const principal=l.amtNGN||l.amount||0;
+    const repaid=l.repaid||0;
+    const outstanding=Math.max(0,principal-repaid);
+    const settled=l.status==='settled'||outstanding<=0;
+    const pct=principal>0?Math.min((repaid/principal)*100,100):0;
+    const disbTo=l.disbursedTo?`<span style="color:var(--text2)"> → ${esc(l.disbursedTo)}</span>`:'';
+    const rateStr=l.ratePA?` · ${l.ratePA}% p.a.`:'';
+    const dueStr=l.dueDate?` · Due ${fmtDate(l.dueDate)}`:'';
+    return`<div class="dc" style="${settled?'opacity:0.5':''}">
+      <div class="dc-top">
+        <div>
+          <div class="dc-name">${esc(l.lender)}</div>
+          <div class="dc-sub">${esc(l.loanType||'Loan')} · ${l.currency} ${fNum(l.amount||0)}${rateStr}${dueStr}</div>
+          <div class="dc-sub" style="margin-top:2px">${l.startDate?fmtDate(l.startDate):''}${disbTo}</div>
+        </div>
+        <div class="badge ${settled?'bg':'br'}">${settled?'Settled':fmtCur(outstanding,cur,m,y)+' left'}</div>
+      </div>
+      ${!settled?`<div class="prog" style="margin-top:8px"><div class="pf ok" style="width:${pct.toFixed(1)}%"></div></div>
+      <div style="font-size:0.6rem;color:var(--text3);font-family:var(--mono);margin-top:3px">${pct.toFixed(0)}% repaid · ${fmtCur(repaid,cur,m,y)} of ${fmtCur(principal,cur,m,y)}</div>`:''}
+      ${l.notes?`<div style="font-size:0.65rem;color:var(--text2);margin-top:5px">${esc(l.notes)}</div>`:''}
+      <div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">
+        ${!settled?`<button class="btn btn-g btn-sm" onclick="openLoanRepay('${l.id}')">Record Repayment</button>`:''}
+        ${(l.repayLog&&l.repayLog.length)?`<button class="btn btn-g btn-sm" onclick="toggleLoanLog('${l.id}')">History (${l.repayLog.length})</button>`:''}
+        <button class="btn btn-g btn-sm" onclick="openEditLoan('${l.id}')">Edit</button>
+        <button class="btn btn-d btn-sm" onclick="removeLoan('${l.id}')">Remove</button>
+      </div>
+      ${(l.repayLog&&l.repayLog.length)?`<div id="loan-log-${l.id}" style="display:none;margin-top:8px;background:var(--bg2);border-radius:6px;padding:8px 10px">
+        <div style="font-size:0.6rem;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">Repayment Log</div>
+        ${[...l.repayLog].reverse().map(p=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:0.68rem">
+          <span style="color:var(--text2)">${fmtDate(p.date)}${p.account?' · '+esc(p.account):''}</span>
+          <span style="font-family:var(--mono);color:var(--red)">-${fN(p.amount)}</span>
+        </div>`).join('')}
+      </div>`:''}</div>`
+  }).join('');
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -6744,7 +6956,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.85</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.85: Fixed onclick attribute breakage on cash drill-down rows (JSON.stringify emitted double quotes inside double-quoted attribute). FX rate overrides now sync across devices (Firestore write+load+listen trio on appConfig/fxOverrides). Investment config (platforms/meta/subs) now has a real-time onSnapshot listener completing its sync trio. Dashboard "Cash" card total now always sums all accounts regardless of NW config filter (NW net worth calc uses filtered nwCashTotal separately). New cash accounts now appear pre-checked in the NW config settings and are included in all totals immediately on add. NW config syncs across devices via appConfig/nwConfig.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.86</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.86: Fixed Exchange Rates settings only listing months present in the hardcoded FX_RATES table (which stopped at May 2026), so the current month and any future month had no editable row. The list now always includes the real-world current month plus the next 11 months ahead, with the current month highlighted, so rates can always be set as new months arrive.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -6798,7 +7010,6 @@ function clearFxOverride(k){
   const ovr=getFxOverrides();
   delete ovr[k];
   cSet(FX_OVR_KEY,ovr);
-  _syncFxOverrides(ovr);
   toast(`Override removed for ${k}`);
   renderSettData();
   renderAll();
@@ -6806,7 +7017,7 @@ function clearFxOverride(k){
 function renderNWConfigCard(){
   const cfg=getNWConfig();
   const allAccts=getCashAccounts();
-  const selAccts=cfg.cashAccounts?Array.from(new Set([...allAccts.filter(a=>!cfg.cashAccounts.length||cfg.cashAccounts.includes(a)),...cfg.cashAccounts])):allAccts;
+  const selAccts=cfg.cashAccounts||allAccts;
   return`
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Net Worth Card</div>
@@ -6860,8 +7071,17 @@ function saveNWConfigFromUI(){
 }
 function renderFxCard(){
   const ovr=getFxOverrides();
-  // Build the full month list from FX_RATES keys + any override-only months, sorted
-  const allKeys=[...new Set([...Object.keys(FX_RATES),...Object.keys(ovr)])].sort();
+  // Build the full month list: FX_RATES keys + any override-only months +
+  // the real-world current month and the next 11 months ahead, so the
+  // current month and any month we move into is always editable here
+  // even before a built-in or override entry exists for it.
+  const _fxNow=new Date();
+  const _fxFutureKeys=[];
+  for(let i=0;i<12;i++){
+    const fm=_fxNow.getMonth()+i,fy=_fxNow.getFullYear()+Math.floor(fm/12);
+    _fxFutureKeys.push(fxKey((fm%12)+1,fy));
+  }
+  const allKeys=[...new Set([...Object.keys(FX_RATES),...Object.keys(ovr),..._fxFutureKeys])].sort();
   const m=S.dashMonth,y=S.dashYear;
   const cur=getFxRates(m,y);
   const rows=allKeys.map(k=>{
@@ -6870,8 +7090,9 @@ function renderFxCard(){
     const usd=override.USD??base.USD??'';
     const gbp=override.GBP??base.GBP??'';
     const isOverridden=!!(override.USD||override.GBP);
-    return`<div style="display:grid;grid-template-columns:80px 1fr 1fr auto;gap:6px;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)">
-      <span style="font-family:var(--mono);font-size:0.72rem;color:${isOverridden?'var(--accent)':'var(--text2)'}">${k}${isOverridden?' ✎':''}</span>
+    const isCurrentMonth=(k===fxKey(m,y));
+    return`<div style="display:grid;grid-template-columns:80px 1fr 1fr auto;gap:6px;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);${isCurrentMonth?'background:var(--bg2);border-radius:6px':''}">
+      <span style="font-family:var(--mono);font-size:0.72rem;color:${isOverridden?'var(--accent)':isCurrentMonth?'var(--blue)':'var(--text2)'};font-weight:${isCurrentMonth?'700':'400'}">${k}${isCurrentMonth?' ●':''}${isOverridden?' ✎':''}</span>
       <input class="ifield" type="text" id="fx-usd-${k}" value="${usd}" placeholder="USD→₦" style="font-size:0.74rem;padding:4px 7px">
       <input class="ifield" type="text" id="fx-gbp-${k}" value="${gbp}" placeholder="GBP→₦" style="font-size:0.74rem;padding:4px 7px">
       ${isOverridden?`<button class="btn btn-g btn-sm" style="padding:2px 6px;font-size:0.64rem" onclick="clearFxOverride('${k}')">✕</button>`:`<span></span>`}
@@ -6895,7 +7116,13 @@ function renderFxCard(){
     </div>`;
 }
 function saveAllFxOverrides(){
-  const allKeys=[...new Set([...Object.keys(FX_RATES),...Object.keys(getFxOverrides())])].sort();
+  const _fxNow=new Date();
+  const _fxFutureKeys=[];
+  for(let i=0;i<12;i++){
+    const fm=_fxNow.getMonth()+i,fy=_fxNow.getFullYear()+Math.floor(fm/12);
+    _fxFutureKeys.push(fxKey((fm%12)+1,fy));
+  }
+  const allKeys=[...new Set([...Object.keys(FX_RATES),...Object.keys(getFxOverrides()),..._fxFutureKeys])].sort();
   const ovr=getFxOverrides();
   allKeys.forEach(k=>{
     const usdEl=document.getElementById('fx-usd-'+k);
@@ -6913,14 +7140,12 @@ function saveAllFxOverrides(){
     }
   });
   cSet(FX_OVR_KEY,ovr);
-  _syncFxOverrides(ovr);
   toast('Exchange rates saved');
   renderSettData();renderDashboard();
 }
 function clearAllFxOverrides(){
   if(!confirm('Clear all custom FX rate overrides and revert to built-in rates?')) return;
   cSet(FX_OVR_KEY,{});
-  _syncFxOverrides({});
   toast('All overrides cleared');
   renderSettData();renderDashboard();
 }
@@ -6996,7 +7221,7 @@ function drillDown(type){
     title=`Net Worth — ${MONTHS[m-1]} ${y}`;
     const inv=S.investments,cash=S.cash;
     const _nwCfg=getNWConfig();
-    const _nwAccts=Array.from(new Set([...(_nwCfg.cashAccounts||[]),...getCashAccounts()].filter(a=>(_nwCfg.cashAccounts&&_nwCfg.cashAccounts.length)?_nwCfg.cashAccounts.includes(a):true)));
+    const _nwAccts=_nwCfg.cashAccounts||getCashAccounts();
     const _fxRNW=getFxRates(m,y);
     const invTotal=_nwCfg.includeInvestments!==false?PLATFORMS.reduce((s,p)=>{
       const meta=getInvPlatformMeta(p.key);
@@ -7061,7 +7286,7 @@ function drillDown(type){
       } else {
         disp=fmtCur(v,cur,m,y);
       }
-      return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="drillDownAccount('${b.replace(/'/g,"\\'")}')"><span style="font-size:0.78rem;color:var(--text2)">${esc(b)} <span style="font-size:0.6rem;color:var(--text3)">›</span></span><span style="font-family:var(--mono);font-size:0.82rem;color:var(--blue)">${disp}</span></div>`;
+      return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="drillDownAccount(${JSON.stringify(b)})"><span style="font-size:0.78rem;color:var(--text2)">${esc(b)} <span style="font-size:0.6rem;color:var(--text3)">›</span></span><span style="font-family:var(--mono);font-size:0.82rem;color:var(--blue)">${disp}</span></div>`;
     }).join('');
     body+=`<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700"><span>Total</span><span style="font-family:var(--mono);color:var(--blue)">${fmtCur(total,cur,m,y)}</span></div>`;
   }
@@ -7466,7 +7691,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.85';
+const APP_VERSION='v3.14.86';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
