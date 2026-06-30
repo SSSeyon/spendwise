@@ -416,7 +416,7 @@ datalist option{background:var(--bg2);color:var(--text)}
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
       <span id="oq-badge" style="display:none;margin-left:4px;font-size:0.58rem;color:var(--gold);font-family:var(--mono)"></span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.86</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.87</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1257,6 +1257,15 @@ function setCashAccounts(allAccounts){
   cSet('sw3_cash_accounts',custom);
   if(db) db.collection('appConfig').doc('cashAccounts').set({accounts:custom},{merge:false}).catch(()=>{});
 }
+async function loadFxOverrides(){
+  if(!db) return;
+  try{
+    const doc=await db.collection('appConfig').doc('fxOverrides').get();
+    if(doc.exists&&doc.data()?.overrides){
+      cSet(FX_OVR_KEY,doc.data().overrides);
+    }
+  }catch(e){}
+}
 async function loadCashAccounts(){
   if(!db) return;
   try{
@@ -1770,6 +1779,12 @@ const sid=(m,y)=>`${y}-${String(m).padStart(2,'0')}`;
 const fxKey=(m,y)=>`${y}-${String(m).padStart(2,'0')}`;
 const FX_OVR_KEY='sw3_fx_overrides';
 function getFxOverrides(){return cGet(FX_OVR_KEY)||{};}
+function _syncFxOverrides(ovr){
+  if(!db) return;
+  db.collection('appConfig').doc('fxOverrides')
+    .set({overrides:ovr,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:false})
+    .catch(e=>console.warn('fxOverrides sync failed',e));
+}
 function getFxRates(m,y){const k=fxKey(m,y);const ovr=getFxOverrides();return ovr[k]||FX_RATES[k]||{USD:1600,GBP:2050};}
 const fN=n=>n==null||isNaN(n)?'—':'₦'+Number(n).toLocaleString('en-NG',{maximumFractionDigits:0});
 // ── NUMBER INPUT FORMATTING ──────────────────────────────────────────────
@@ -1952,7 +1967,7 @@ function initFirebase(){
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans()]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides()]);
 }
 
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
@@ -1963,6 +1978,7 @@ let _incListener=null;
 let _cashListener=null;
 let _logosListener=null;
 let _acctsListener=null;
+let _fxOvrListener=null;
 
 function startRealtimeListeners(){
   stopRealtimeListeners();
@@ -2030,6 +2046,18 @@ function startRealtimeListeners(){
         renderCashPage();renderDashboard();
       }
     },err=>console.warn('cashAccounts listener:',err));
+
+  // FX rate overrides — real-time cross-device sync
+  if(_fxOvrListener){_fxOvrListener();_fxOvrListener=null;}
+  _fxOvrListener=db.collection('appConfig').doc('fxOverrides')
+    .onSnapshot(snap=>{
+      if(!snap.exists||snap.metadata.hasPendingWrites) return;
+      const ovr=snap.data()?.overrides;
+      if(ovr&&typeof ovr==='object'){
+        cSet(FX_OVR_KEY,ovr);
+        renderSettData();renderDashboard();
+      }
+    },err=>console.warn('fxOverrides listener:',err));
 }
 
 function stopRealtimeListeners(){
@@ -2038,6 +2066,7 @@ function stopRealtimeListeners(){
   if(_cashListener){_cashListener();_cashListener=null;}
   if(_logosListener){_logosListener();_logosListener=null;}
   if(_acctsListener){_acctsListener();_acctsListener=null;}
+  if(_fxOvrListener){_fxOvrListener();_fxOvrListener=null;}
 }
 
 async function loadTxns(m,y){
@@ -6956,7 +6985,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.86</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.86: Fixed Exchange Rates settings only listing months present in the hardcoded FX_RATES table (which stopped at May 2026), so the current month and any future month had no editable row. The list now always includes the real-world current month plus the next 11 months ahead, with the current month highlighted, so rates can always be set as new months arrive.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.87</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.87: FX rate overrides now sync across devices. Saving, clearing a single month, or clearing all overrides now mirrors to Firestore (appConfig/fxOverrides), loads on init, and updates live via a real-time listener on other devices — matching the same pattern already used for cash accounts and logos.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7010,6 +7039,7 @@ function clearFxOverride(k){
   const ovr=getFxOverrides();
   delete ovr[k];
   cSet(FX_OVR_KEY,ovr);
+  _syncFxOverrides(ovr);
   toast(`Override removed for ${k}`);
   renderSettData();
   renderAll();
@@ -7140,12 +7170,14 @@ function saveAllFxOverrides(){
     }
   });
   cSet(FX_OVR_KEY,ovr);
+  _syncFxOverrides(ovr);
   toast('Exchange rates saved');
   renderSettData();renderDashboard();
 }
 function clearAllFxOverrides(){
   if(!confirm('Clear all custom FX rate overrides and revert to built-in rates?')) return;
   cSet(FX_OVR_KEY,{});
+  _syncFxOverrides({});
   toast('All overrides cleared');
   renderSettData();renderDashboard();
 }
@@ -7691,7 +7723,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.86';
+const APP_VERSION='v3.14.87';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
