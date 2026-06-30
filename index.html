@@ -416,7 +416,7 @@ datalist option{background:var(--bg2);color:var(--text)}
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
       <span id="oq-badge" style="display:none;margin-left:4px;font-size:0.58rem;color:var(--gold);font-family:var(--mono)"></span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.87</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.88</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -2132,9 +2132,7 @@ async function loadCashData(m,y){
     const localCash=cGet(CK.cash(m,y))||{};
     const doc=await db.collection('cashBalances').doc(sid(m,y)).get();
     if(doc.exists&&doc.data()){
-      // Start from the authoritative remote doc (other devices' atomic increments
-      // are already reflected here), then let ONLY in-flight local fields win so
-      // we don't momentarily show a stale value for a write we just made.
+      // Authoritative remote doc exists — merge with any locally in-flight fields.
       const remote=doc.data();
       const merged={...remote};
       Object.keys(localCash).forEach(k=>{
@@ -2142,12 +2140,37 @@ async function loadCashData(m,y){
       });
       S.cash=merged;cSet(CK.cash(m,y),merged);return;
     }
-    if(Object.keys(localCash).length){S.cash=localCash;return;}
-    const snap=await db.collection('cashBalances').orderBy('year','desc').orderBy('month','desc').limit(1).get();
-    if(!snap.empty){
-      const merged={...snap.docs[0].data(),...localCash};
-      S.cash=merged;cSet(CK.cash(m,y),merged);
+    // No doc for this month yet — carry forward the closing balance from the
+    // immediately prior month so FieldValue.increment() in _adjustCash starts
+    // from the correct base rather than zero.
+    const prevM=m===1?12:m-1,prevY=m===1?y-1:y;
+    let prevCash=null;
+    try{
+      const prevDoc=await db.collection('cashBalances').doc(sid(prevM,prevY)).get();
+      if(prevDoc.exists) prevCash={...prevDoc.data()};
+    }catch(e){}
+    // Fall back to local cache for the previous month if Firestore failed.
+    if(!prevCash||!Object.keys(prevCash).length) prevCash=cGet(CK.cash(prevM,prevY))||{};
+    // Strip month/year meta fields — only carry account balances.
+    const seed={};
+    Object.keys(prevCash).forEach(k=>{if(k!=='month'&&k!=='year') seed[k]=prevCash[k];});
+    if(Object.keys(seed).length){
+      // Seed doc for this month — allows FieldValue.increment to start correctly.
+      // Only do this for months up to and including the current real month
+      // to avoid accidentally seeding future months.
+      const now=new Date();
+      const isFuture=(y>now.getFullYear())||(y===now.getFullYear()&&m>now.getMonth()+1);
+      if(!isFuture){
+        try{
+          await db.collection('cashBalances').doc(sid(m,y))
+            .set({...seed,month:m,year:y});
+        }catch(e){}
+      }
+      const merged={...seed,...localCash};
+      S.cash=merged;cSet(CK.cash(m,y),merged);return;
     }
+    // Absolute fallback — local cache only (offline path).
+    if(Object.keys(localCash).length){S.cash=localCash;return;}
   }catch(e){}
 }
 
@@ -5101,7 +5124,20 @@ function saveCashInterest(){
   renderCashPage();renderDashboard();
 }
 async function changeCashMonth(m){
-  S.cashMonth=m;const cached=cGet(CK.cash(m,S.cashYear));if(cached) S.cash=cached;renderCashPage();
+  S.cashMonth=m;
+  const cached=cGet(CK.cash(m,S.cashYear));
+  if(cached&&Object.keys(cached).length){
+    S.cash=cached;
+  } else {
+    // No cache for this month — preload from previous month's closing balance
+    // so the display is not blank while loadCashData seeds the new month doc.
+    const prevM=m===1?12:m-1,prevY=m===1?S.cashYear-1:S.cashYear;
+    const prevCached=cGet(CK.cash(prevM,prevY))||{};
+    const seed={};
+    Object.keys(prevCached).forEach(k=>{if(k!=='month'&&k!=='year') seed[k]=prevCached[k];});
+    if(Object.keys(seed).length) S.cash=seed;
+  }
+  renderCashPage();
   if(db&&navigator.onLine){loadCashData(m,S.cashYear).then(()=>{if(S.cashMonth===m)renderCashPage();}).catch(()=>{});}
 }
 async function saveCash(){
@@ -6985,7 +7021,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.87</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.87: FX rate overrides now sync across devices. Saving, clearing a single month, or clearing all overrides now mirrors to Firestore (appConfig/fxOverrides), loads on init, and updates live via a real-time listener on other devices — matching the same pattern already used for cash accounts and logos.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.88</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.88: Cash carry-forward on month transition. When entering a month with no existing balance doc, loadCashData now fetches the previous month's closing balance from Firestore and writes it as the seed doc for the new month, so FieldValue.increment() in _adjustCash starts from the correct base instead of zero. changeCashMonth also pre-shows the previous month's balance while the async seed runs, preventing a blank screen.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7723,7 +7759,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.87';
+const APP_VERSION='v3.14.88';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
