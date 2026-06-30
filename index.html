@@ -416,7 +416,7 @@ datalist option{background:var(--bg2);color:var(--text)}
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
       <span id="oq-badge" style="display:none;margin-left:4px;font-size:0.58rem;color:var(--gold);font-family:var(--mono)"></span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.88</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v3.14.89</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -2131,45 +2131,57 @@ async function loadCashData(m,y){
   try{
     const localCash=cGet(CK.cash(m,y))||{};
     const doc=await db.collection('cashBalances').doc(sid(m,y)).get();
-    if(doc.exists&&doc.data()){
-      // Authoritative remote doc exists — merge with any locally in-flight fields.
-      const remote=doc.data();
-      const merged={...remote};
-      Object.keys(localCash).forEach(k=>{
-        if(_isCashDirty(m,y,k)) merged[k]=localCash[k];
-      });
-      S.cash=merged;cSet(CK.cash(m,y),merged);return;
-    }
-    // No doc for this month yet — carry forward the closing balance from the
-    // immediately prior month so FieldValue.increment() in _adjustCash starts
-    // from the correct base rather than zero.
+
+    // Helper: fetch previous month's closing balances from Firestore then cache.
     const prevM=m===1?12:m-1,prevY=m===1?y-1:y;
-    let prevCash=null;
-    try{
-      const prevDoc=await db.collection('cashBalances').doc(sid(prevM,prevY)).get();
-      if(prevDoc.exists) prevCash={...prevDoc.data()};
-    }catch(e){}
-    // Fall back to local cache for the previous month if Firestore failed.
-    if(!prevCash||!Object.keys(prevCash).length) prevCash=cGet(CK.cash(prevM,prevY))||{};
-    // Strip month/year meta fields — only carry account balances.
-    const seed={};
-    Object.keys(prevCash).forEach(k=>{if(k!=='month'&&k!=='year') seed[k]=prevCash[k];});
-    if(Object.keys(seed).length){
-      // Seed doc for this month — allows FieldValue.increment to start correctly.
-      // Only do this for months up to and including the current real month
-      // to avoid accidentally seeding future months.
-      const now=new Date();
-      const isFuture=(y>now.getFullYear())||(y===now.getFullYear()&&m>now.getMonth()+1);
-      if(!isFuture){
-        try{
-          await db.collection('cashBalances').doc(sid(m,y))
-            .set({...seed,month:m,year:y});
-        }catch(e){}
+    async function _getPrevCash(){
+      let p=null;
+      try{const pd=await db.collection('cashBalances').doc(sid(prevM,prevY)).get();if(pd.exists)p={...pd.data()};}catch(e){}
+      if(!p||!Object.keys(p).length) p=cGet(CK.cash(prevM,prevY))||{};
+      // Strip metadata fields — balances only.
+      const out={};Object.keys(p).forEach(k=>{if(k!=='month'&&k!=='year'&&k!=='updatedAt')out[k]=p[k];});
+      return out;
+    }
+
+    // Guard: only seed/repair for months up to the current real month.
+    const _now=new Date();
+    const isFutureMonth=(y>_now.getFullYear())||(y===_now.getFullYear()&&m>_now.getMonth()+1);
+
+    if(doc.exists&&doc.data()){
+      const remote={...doc.data()};
+      // Detect uninitialised new-month doc: created by FieldValue.increment on an
+      // empty doc (old behaviour) before carry-forward logic was deployed.
+      // Symptom: every cash account is zero or missing while prev month was non-zero.
+      const accts=getCashAccounts();
+      const remoteTotal=accts.reduce((s,b)=>s+Math.abs(remote[b]||0),0);
+      if(!isFutureMonth&&remoteTotal===0){
+        // Fetch previous month to check if there were real closing balances.
+        const prev=await _getPrevCash();
+        const prevTotal=accts.reduce((s,b)=>s+Math.abs(prev[b]||0),0);
+        if(prevTotal>0){
+          // Repair: merge prev closing into current doc for any zero/missing account.
+          const repaired={...remote,month:m,year:y};
+          accts.forEach(b=>{if(!(remote[b]>0)&&prev[b]>0) repaired[b]=prev[b];});
+          try{await db.collection('cashBalances').doc(sid(m,y)).set(repaired,{merge:true});}catch(e){}
+          S.cash=repaired;cSet(CK.cash(m,y),repaired);return;
+        }
       }
-      const merged={...seed,...localCash};
+      // Normal path: authoritative remote doc — let in-flight local fields win.
+      const merged={...remote};
+      Object.keys(localCash).forEach(k=>{if(_isCashDirty(m,y,k)) merged[k]=localCash[k];});
       S.cash=merged;cSet(CK.cash(m,y),merged);return;
     }
-    // Absolute fallback — local cache only (offline path).
+
+    // No doc at all for this month — seed from previous month's closing balance.
+    if(!isFutureMonth){
+      const prev=await _getPrevCash();
+      if(Object.keys(prev).length){
+        const seed={...prev,month:m,year:y};
+        try{await db.collection('cashBalances').doc(sid(m,y)).set(seed);}catch(e){}
+        S.cash={...prev};cSet(CK.cash(m,y),{...prev,month:m,year:y});return;
+      }
+    }
+    // Absolute fallback — local cache only (offline / no prior month path).
     if(Object.keys(localCash).length){S.cash=localCash;return;}
   }catch(e){}
 }
@@ -5126,11 +5138,14 @@ function saveCashInterest(){
 async function changeCashMonth(m){
   S.cashMonth=m;
   const cached=cGet(CK.cash(m,S.cashYear));
-  if(cached&&Object.keys(cached).length){
+  const accts=getCashAccounts();
+  const cachedTotal=cached?accts.reduce((s,b)=>s+Math.abs(cached[b]||0),0):0;
+  if(cached&&cachedTotal>0){
+    // Cache has real balances — show immediately.
     S.cash=cached;
   } else {
-    // No cache for this month — preload from previous month's closing balance
-    // so the display is not blank while loadCashData seeds the new month doc.
+    // Cache is empty or all-zero — show prev month's closing balance as a
+    // placeholder while loadCashData runs the seed/repair against Firestore.
     const prevM=m===1?12:m-1,prevY=m===1?S.cashYear-1:S.cashYear;
     const prevCached=cGet(CK.cash(prevM,prevY))||{};
     const seed={};
@@ -7021,7 +7036,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.88</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.88: Cash carry-forward on month transition. When entering a month with no existing balance doc, loadCashData now fetches the previous month's closing balance from Firestore and writes it as the seed doc for the new month, so FieldValue.increment() in _adjustCash starts from the correct base instead of zero. changeCashMonth also pre-shows the previous month's balance while the async seed runs, preventing a blank screen.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v3.14.89</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.14.89: Fixed zero cash balances on month transition. loadCashData now detects and repairs an uninitialised new-month doc (created with zeros by old code before this fix) by fetching the previous month's closing balance from Firestore and merging it in for any zero/missing account. Also handles the case where no doc exists yet by seeding from prev month. changeCashMonth pre-shows prev month balances as a placeholder while the async repair runs.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7759,7 +7774,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v3.14.88';
+const APP_VERSION='v3.14.89';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
