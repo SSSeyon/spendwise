@@ -1,10 +1,12 @@
 // SpendWise Service Worker
 // Cache-first for static assets, network-only for Firebase/Firestore
-const CACHE = 'spendwise-v6';
+const CACHE = 'spendwise-v7';
 
 const STATIC = [
   './',
   './index.html',
+  './app.js',
+  './styles.css',
   './manifest.json',
   'https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;500;600;700;800&display=swap',
   'https://cdn.jsdelivr.net/npm/chart.js',
