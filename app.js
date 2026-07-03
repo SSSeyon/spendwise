@@ -6774,7 +6774,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.1.4</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.1.4: App Info now shows only the current version's release note instead of the full changelog history.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.1.5</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.1.5: Fixed an update loop where the app kept prompting to update because a fresh index.html loaded a stale cached app.js. App scripts are now version-tagged and the service worker fetches the page shell network-first, so updates apply in one refresh and header/App Info versions always match.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -6970,16 +6970,24 @@ function clearAllFxOverrides(){
   toast('All overrides cleared');
   renderSettData();renderDashboard();
 }
-function forceHardRefresh(){
-  if('serviceWorker' in navigator){
-    navigator.serviceWorker.getRegistrations().then(regs=>{
-      Promise.all(regs.map(r=>r.unregister())).then(()=>{
-        caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).then(()=>window.location.reload(true));
-      });
-    });
-  } else {
-    window.location.reload(true);
-  }
+async function forceHardRefresh(){
+  try{
+    if('serviceWorker' in navigator){
+      const regs=await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r=>r.unregister()));
+    }
+    if(window.caches){
+      const keys=await caches.keys();
+      await Promise.all(keys.map(k=>caches.delete(k)));
+    }
+    // location.reload() does NOT bypass the browser's HTTP cache, so a stale
+    // index.html (and the app.js it points to) can survive an SW+cache wipe
+    // and re-trigger the update banner forever. Force the entry point to
+    // refetch from the server first; the fresh index.html then references the
+    // current ?v= app.js/styles.css, breaking the loop in a single reload.
+    try{await fetch('./index.html',{cache:'reload'});}catch(e){}
+  }catch(e){}
+  window.location.reload();
 }
 async function forceSyncNow(){
   if(!db||!navigator.onLine){toast('Not connected');return;}
@@ -7512,7 +7520,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.1.4';
+const APP_VERSION='v4.1.5';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
