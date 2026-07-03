@@ -1,6 +1,6 @@
 // SpendWise Service Worker
 // Cache-first for static assets, network-only for Firebase/Firestore
-const CACHE = 'spendwise-v8';
+const CACHE = 'spendwise-v9';
 
 const STATIC = [
   './',
