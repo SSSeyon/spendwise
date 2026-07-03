@@ -932,6 +932,7 @@ function initFirebase(){
       cSet(CK.lastSync,Date.now());setSyncStatus('synced');hideStaleBar();renderAll();startRealtimeListeners();
       _checkMonthEndClose(); // fire-and-forget: freezes any months that closed since the app was last opened
       _prefetchHistoryMonths(); // fire-and-forget: pulls prior months so smart insights have history on this device
+      _healCashLedgers(); // fire-and-forget: pushes any ledger entries stranded locally on this device up to Firestore
     }catch(e){console.error(e);setSyncStatus('error');}
   })();
 }
@@ -3365,6 +3366,45 @@ function _logCashLedger(bank, delta, m, y, source, ref){
       },{merge:true}).catch(()=>{});
     }
   }catch(e){}
+}
+
+// Push cash-ledger entries that exist locally but not in Firestore.
+// The per-entry write above is fire-and-forget with no retry, so an entry made
+// while offline (or during a transient write failure) can end up stranded in
+// one device's localStorage — visible in that device's balance audit but
+// invisible everywhere else, because the balance itself DID sync (atomic
+// increment + ripple queue) while its ledger explanation did not. This
+// reconciles local → Firestore so stranded entries propagate. arrayUnion
+// dedupes on exact match, so entries that already synced are no-ops.
+// Returns the number of entries pushed.
+async function _syncCashLedgerUp(m,y){
+  if(!db||!navigator.onLine) return 0;
+  const local=cGet(`sw3_cash_ledger_${y}_${m}`)||[];
+  if(!local.length) return 0;
+  let remote=[];
+  try{const d=await db.collection('cashLedger').doc(sid(m,y)).get();if(d.exists&&Array.isArray(d.data().entries))remote=d.data().entries;}catch(e){return 0;}
+  const seen=new Set(remote.map(e=>`${e.ts}|${e.bank}|${e.delta}|${e.source}`));
+  const missing=local.filter(e=>!seen.has(`${e.ts}|${e.bank}|${e.delta}|${e.source}`));
+  if(!missing.length) return 0;
+  try{
+    await db.collection('cashLedger').doc(sid(m,y)).set({
+      month:m, year:y,
+      entries: firebase.firestore.FieldValue.arrayUnion(...missing)
+    },{merge:true});
+    return missing.length;
+  }catch(e){return 0;}
+}
+
+// Reconcile the ledger for the current + several recent months on app open,
+// so a device that stranded entries heals automatically without the user
+// having to open the audit.
+async function _healCashLedgers(){
+  if(!db||!navigator.onLine) return;
+  const seen=new Set();
+  for(const {m,y} of _prevMonthsList(S.expMonth+1,S.expYear,7)){ // current month + 6 prior
+    const k=`${y}-${m}`; if(seen.has(k))continue; seen.add(k);
+    try{await _syncCashLedgerUp(m,y);}catch(e){}
+  }
 }
 
 // Walk back up to 12 months to find the most recent month with real closing
@@ -6323,6 +6363,10 @@ async function runBalanceAudit(){
   const m=S.dashMonth,y=S.dashYear;
   const out=document.getElementById('audit-result');
   if(out)out.innerHTML='<div class="csub">Auditing '+MONTHS[m-1]+' '+y+'…</div>';
+  // Push any locally-stranded ledger entries up first, so running the audit on
+  // the device that HAS the entry (e.g. the phone) propagates it to Firestore
+  // for every other device.
+  try{await _syncCashLedgerUp(m,y);}catch(e){}
   const prevM=m===1?12:m-1,prevY=m===1?y-1:y;
   async function fetchMonth(col){
     try{const s=await db.collection(col).where('year','==',y).where('month','==',m).get();return s.docs.map(d=>({...d.data(),id:d.id}));}
@@ -6730,7 +6774,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.1.2</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.1.2: Balance audit now includes loan proceeds/repayments, debtor disbursements/adjustments and investment liquidations (pulled from the cash ledger). Previously these cash flows were ignored, so the computed balance was wrong and reconciled accounts showed false gaps. v4.1.1: Reverted the version label to lowercase (v4.1.1) so the in-app update banner detects new releases again — the capital-V format silently broke update detection on already-installed devices. Added .nojekyll so GitHub Pages serves files as-is. V4.1.0: Smart insights — overspend projections now learn from up to 6 months of your spending history instead of assuming every purchase repeats daily. Categories bought a few times a month (fuel, school fees) are held at their typical monthly total; routine categories are paced against how much of the month's spend usually lands by today's date. New Insights tab in Analytics with the month outlook, narrative insights (including positive ones) and per-category projections showing the method behind each number. Redesigned notification panel: severity accent bars, tinted icon chips, and expanding an alert now reveals the reasoning behind it instead of repeating the summary; fixed warn-type alerts rendering with a solid yellow background. Prior months are prefetched in the background so insights work on any device. V4.0.0: split the single-file app into index.html + app.js + styles.css; new Vx.x.x version format.</div><div style="color:var(--text3);margin-top:4px">v3.15.0: Cash carry-forward now applies to backdated and future-dated postings — a month is seeded from the prior closing balance the moment anything is posted into it (not just when opened), and every cash delta ripples forward into any later month that already exists, so earlier edits keep later balances correct automatically. Completed cross-device sync for net worth config, recurring transactions, custom categories, investment config, debtors, loans and the cash movement ledger (previously local-only or listener-less); budgets now always refresh from Firestore; realtime listeners follow the month you're viewing instead of staying pinned to the boot month. Fixed a broken drill-down click (JSON.stringify in an onclick attribute), the USD Cash repair re-running on new devices, a failed recurring post still advancing its schedule, and stale-month investment data being cached under the wrong month. Full backup/restore now covers loans, transfers, budgets, config and the ledger. Added: automatic month-end close (freezes a closed month's totals), optional budget rollover, global cross-month search, optional cash reversal on debtor/loan edits, an accrued-interest estimate on loans, and an offline queue for new debtors and loans.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.1.3</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.1.3: Fixed cash-ledger sync gap — loan/debtor/investment ledger entries created while offline (or on a failed write) could stay stranded on one device, so the balance synced but its audit explanation didn't. The app now reconciles local ledger entries up to Firestore on open and when running the audit. v4.1.2: Balance audit now includes loan proceeds/repayments, debtor disbursements/adjustments and investment liquidations (pulled from the cash ledger). Previously these cash flows were ignored, so the computed balance was wrong and reconciled accounts showed false gaps. v4.1.1: Reverted the version label to lowercase (v4.1.1) so the in-app update banner detects new releases again — the capital-V format silently broke update detection on already-installed devices. Added .nojekyll so GitHub Pages serves files as-is. V4.1.0: Smart insights — overspend projections now learn from up to 6 months of your spending history instead of assuming every purchase repeats daily. Categories bought a few times a month (fuel, school fees) are held at their typical monthly total; routine categories are paced against how much of the month's spend usually lands by today's date. New Insights tab in Analytics with the month outlook, narrative insights (including positive ones) and per-category projections showing the method behind each number. Redesigned notification panel: severity accent bars, tinted icon chips, and expanding an alert now reveals the reasoning behind it instead of repeating the summary; fixed warn-type alerts rendering with a solid yellow background. Prior months are prefetched in the background so insights work on any device. V4.0.0: split the single-file app into index.html + app.js + styles.css; new Vx.x.x version format.</div><div style="color:var(--text3);margin-top:4px">v3.15.0: Cash carry-forward now applies to backdated and future-dated postings — a month is seeded from the prior closing balance the moment anything is posted into it (not just when opened), and every cash delta ripples forward into any later month that already exists, so earlier edits keep later balances correct automatically. Completed cross-device sync for net worth config, recurring transactions, custom categories, investment config, debtors, loans and the cash movement ledger (previously local-only or listener-less); budgets now always refresh from Firestore; realtime listeners follow the month you're viewing instead of staying pinned to the boot month. Fixed a broken drill-down click (JSON.stringify in an onclick attribute), the USD Cash repair re-running on new devices, a failed recurring post still advancing its schedule, and stale-month investment data being cached under the wrong month. Full backup/restore now covers loans, transfers, budgets, config and the ledger. Added: automatic month-end close (freezes a closed month's totals), optional budget rollover, global cross-month search, optional cash reversal on debtor/loan edits, an accrued-interest estimate on loans, and an offline queue for new debtors and loans.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7468,7 +7512,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.1.2';
+const APP_VERSION='v4.1.3';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
