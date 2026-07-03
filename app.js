@@ -931,6 +931,7 @@ function initFirebase(){
       S.debtors=cGet(CK.debtors)||S.debtors;
       cSet(CK.lastSync,Date.now());setSyncStatus('synced');hideStaleBar();renderAll();startRealtimeListeners();
       _checkMonthEndClose(); // fire-and-forget: freezes any months that closed since the app was last opened
+      _prefetchHistoryMonths(); // fire-and-forget: pulls prior months so smart insights have history on this device
     }catch(e){console.error(e);setSyncStatus('error');}
   })();
 }
@@ -1136,6 +1137,25 @@ async function loadTxns(m,y){
       if(S.expMonth===m&&S.expYear===y) S.txns=fresh;
     }
   }catch(e){/* keep local */}
+}
+
+// Background prefetch of prior months' transactions so the smart-insights
+// engine has history to learn from on any device, not just ones where the
+// user has browsed back through old months. Skips months already cached.
+async function _prefetchHistoryMonths(){
+  if(!db||!navigator.onLine) return;
+  let fetched=0;
+  for(const {m:mm,y:yy} of _prevMonthsList(S.expMonth,S.expYear,6)){
+    if(Array.isArray(cGet(CK.txns(mm,yy)))) continue;
+    try{
+      const snap=await db.collection('transactions').where('year','==',yy).where('month','==',mm).get();
+      // Apply the same category renames the one-time local migrations do,
+      // since those already ran before these months were cached
+      cSet(CK.txns(mm,yy),snap.docs.map(d=>{const t={id:d.id,...d.data()};if(t.category==='Energy')t.category='Fuel';if(t.category==='Fife')t.category='Kids';return t;}));
+      fetched++;
+    }catch(e){/* offline or rules — insights degrade gracefully */}
+  }
+  if(fetched){try{renderDashAlerts();renderProjInsights();}catch(e){}}
 }
 
 async function loadIncome(m,y){
@@ -2069,7 +2089,7 @@ function closeNotifPanel(){
 let _currentAlerts = [];
 let _dismissedIds = new Set(JSON.parse(localStorage.getItem('sw3_dismissed_notifs')||'[]'));
 
-function _alertId(a){ return a.type+'|'+a.title; }
+function _alertId(a){ return a.key||(a.type+'|'+a.title); }
 
 function updateNotifPanel(alerts){
   // Filter out dismissed
@@ -2085,12 +2105,17 @@ function updateNotifPanel(alerts){
   _pushDeviceNotifs(alerts);
 }
 
+const _NOTIF_ORDER={danger:0,warn:1,info:2,good:3};
 function _renderNotifList(){
   const list=document.getElementById('notif-list');
   if(!list) return;
   if(!_currentAlerts.length){list.innerHTML='<div class="notif-empty">✓ No alerts right now</div>';return;}
-  list.innerHTML=_currentAlerts.map((a,i)=>`
-    <div class="notif-item ${a.type}" id="nitem-${i}" onclick="toggleNotifDetail(${i})">
+  _currentAlerts.sort((a,b)=>(_NOTIF_ORDER[a.type]??2)-(_NOTIF_ORDER[b.type]??2));
+  list.innerHTML=_currentAlerts.map((a,i)=>{
+    // Expanding only earns its tap when there's genuinely more to show
+    const hasDetail=!!(a.why||a.link);
+    return`
+    <div class="notif-item n-${a.type}" id="nitem-${i}" ${hasDetail?`onclick="toggleNotifDetail(${i})"`:''}>
       <div class="notif-swipe-bg">✕</div>
       <div class="notif-item-row">
         <div class="notif-item-icon">${a.icon}</div>
@@ -2099,11 +2124,12 @@ function _renderNotifList(){
             <div class="notif-item-title" style="flex:1">${a.title}</div>
             <span class="notif-dismiss-btn" onclick="event.stopPropagation();dismissNotif(${i})">✕</span>
           </div>
-          <div class="notif-item-sub">${a.sub.split('·')[0].trim()}</div>
-          <div class="notif-item-detail">${a.sub}${a.link?`<br><span style="cursor:pointer;color:var(--accent);font-weight:600;text-decoration:underline" onclick="event.stopPropagation();closeNotifPanel();${a.link.fn}">${a.link.label}</span>`:''}</div>
+          <div class="notif-item-sub">${a.sub}</div>
+          ${hasDetail?`<div class="notif-item-detail">${a.why?`<div class="notif-why">💭 ${a.why}</div>`:''}${a.link?`<span style="cursor:pointer;color:var(--accent);font-weight:600;text-decoration:underline" onclick="event.stopPropagation();closeNotifPanel();${a.link.fn}">${a.link.label}</span>`:''}</div>
+          <div class="notif-caret">▾ why</div>`:''}
         </div>
       </div>
-    </div>`).join('');
+    </div>`;}).join('');
   // Attach swipe listeners after render
   _currentAlerts.forEach((_,i)=>_attachNotifSwipe(i));
 }
@@ -2360,54 +2386,195 @@ function toggleCollapsible(bodyId, hdrId){
 }
 
 // ── SMART DASHBOARD ALERTS ─────────────────────────────────────────────────
-function renderDashAlerts(){
-  const el=document.getElementById('dash-alerts');
-  if(!el) return;
-  const alerts=[];
+// ══════════════════════════════════════════════════════════════════════════
+// SMART INSIGHTS ENGINE
+// Learns each category's rhythm from cached history (up to 6 prior months)
+// so projections respect cadence: one Fuel top-up on the 1st is a top-up,
+// not a new daily habit. Episodic categories (few purchases/month) are held
+// at their typical monthly total; routine categories are paced against the
+// fraction of the month's spend that history says lands by today's date.
+// ══════════════════════════════════════════════════════════════════════════
+function _median(a){if(!a||!a.length)return 0;const s=[...a].sort((x,y)=>x-y);const mid=Math.floor(s.length/2);return s.length%2?s[mid]:(s[mid-1]+s[mid])/2;}
+function _prevMonthsList(m,y,n){
+  const out=[];let mm=m,yy=y;
+  for(let i=0;i<n;i++){mm--;if(mm<1){mm=12;yy--;}out.push({m:mm,y:yy});}
+  return out;
+}
+// Scan cached prior months once. For each category: monthly totals & counts
+// (zero-padded for months where it didn't appear, so medians reflect true
+// frequency) and the fraction of each month's total spent by day `day`.
+function _spendHistoryStats(m,y,day){
+  const cats={};let monthsScanned=0;
+  _prevMonthsList(m,y,6).forEach(({m:mm,y:yy})=>{
+    const txns=cGet(CK.txns(mm,yy));
+    if(!Array.isArray(txns)||!txns.length) return;
+    monthsScanned++;
+    const cutoff=Math.min(day,new Date(yy,mm,0).getDate());
+    const byCat={};
+    txns.forEach(t=>{
+      if(!t||!t.amount) return;
+      const c=t.category||'Other';
+      const d=parseInt(String(t.date||'').slice(8,10),10)||1;
+      byCat[c]=byCat[c]||{total:0,count:0,early:0};
+      byCat[c].total+=t.amount;byCat[c].count++;
+      if(d<=cutoff) byCat[c].early+=t.amount;
+    });
+    Object.entries(byCat).forEach(([c,v])=>{
+      cats[c]=cats[c]||{totals:[],counts:[],fracs:[],monthsPresent:0};
+      cats[c].totals.push(v.total);cats[c].counts.push(v.count);
+      cats[c].fracs.push(v.total>0?v.early/v.total:0);
+      cats[c].monthsPresent++;
+    });
+  });
+  Object.values(cats).forEach(s=>{while(s.totals.length<monthsScanned){s.totals.push(0);s.counts.push(0);}});
+  return {monthsScanned,cats};
+}
+// Returns {alerts, insights, catProj, totalProj, totalBudget, monthsUsed}.
+// `alerts` feed the notification bell; `insights` (superset with positive /
+// contextual reads) feed the Analytics → Insights tab. Every item carries a
+// `why` — the reasoning shown when expanded — and a month-scoped `key` so a
+// dismissed alert stays dismissed for that month even as amounts move.
+function computeSmartInsights(){
   const now=new Date();
-  const m=now.getMonth()+1,y=now.getFullYear();
-  const isCurrentMonth=(S.dashMonth===m&&S.dashYear===y);
+  const m=now.getMonth()+1,y=now.getFullYear(),day=now.getDate();
+  const daysInMonth=new Date(y,m,0).getDate(),daysLeft=daysInMonth-day;
+  const mk=`${y}-${m}`;
+  const txns=(S.expMonth===m&&S.expYear===y)?S.txns:(cGet(CK.txns(m,y))||[]);
+  const B=(S.expMonth===m&&S.expYear===y)?S.budgets:(cGet(CK.budgets(m,y))||S.budgets||{});
+  const hist=_spendHistoryStats(m,y,day);
+  const nMonths=hist.monthsScanned;
+  const out={alerts:[],insights:[],catProj:{},totalProj:0,totalBudget:Object.values(B).reduce((s,v)=>s+(v||0),0),monthsUsed:nMonths};
 
-  // 1) Predictive spend alert (only meaningful for current month)
-  if(isCurrentMonth){
-    const budgTotal=Object.values(S.budgets).reduce((s,v)=>s+(v||0),0);
-    const spent=S.txns.reduce((s,t)=>s+(t.amount||0),0);
-    if(budgTotal>0&&spent>0){
-      const dayOfMonth=now.getDate();
-      const daysInMonth=new Date(y,m,0).getDate();
-      const daysLeft=daysInMonth-dayOfMonth;
-      const dailyRate=spent/dayOfMonth;
-      const projectedTotal=Math.round(dailyRate*daysInMonth);
-      const projectedOverspend=projectedTotal-budgTotal;
-      const pct=Math.round((projectedTotal/budgTotal)*100);
-      if(pct>=90){
-        const isOver=projectedTotal>budgTotal;
-        alerts.push({
-          type:isOver?'danger':'warn',
-          icon:isOver?'🔴':'⚠️',
-          title:isOver?`On track to overspend by ${fN(projectedOverspend)}`:`Approaching budget limit (${pct}%)`,
-          sub:`At ₦${Math.round(dailyRate).toLocaleString()}/day, projected spend is ${fN(projectedTotal)} vs ₦${fN(budgTotal)} budget · ${daysLeft} days left`
-        });
+  const catSpend={},catCount={};
+  txns.forEach(t=>{if(!t||!t.amount)return;const c=t.category||'Other';catSpend[c]=(catSpend[c]||0)+t.amount;catCount[c]=(catCount[c]||0)+1;});
+
+  // ── Per-category projections ──
+  new Set([...Object.keys(catSpend),...Object.keys(hist.cats)]).forEach(cat=>{
+    const spent=catSpend[cat]||0;
+    const h=hist.cats[cat];
+    let proj,method,typTotal=0,typCount=0,frac=0;
+    if(h&&h.monthsPresent>=2){
+      typTotal=Math.round(_median(h.totals));typCount=_median(h.counts);
+      if(typCount<=4){
+        // Episodic (fuel top-ups, school fees): expect the typical monthly
+        // total, never a per-day multiple of an early one-off purchase.
+        proj=Math.max(spent,typTotal);method='episodic';
+      }else{
+        frac=Math.min(1,Math.max(0.10,_median(h.fracs.filter(f=>f>0))||day/daysInMonth));
+        proj=Math.max(spent,Math.round(spent/frac));
+        if(typTotal>0) proj=Math.max(spent,Math.round(proj*0.65+typTotal*0.35));
+        method='paced';
       }
-      // Per-category alerts
-      const catSpend={};
-      S.txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+(t.amount||0);});
-      Object.entries(catSpend).forEach(([cat,catSpent])=>{
-        const catBudg=S.budgets[ck(cat)]||0;
-        if(!catBudg) return;
-        const catProj=Math.round((catSpent/dayOfMonth)*daysInMonth);
-        const catPct=Math.round((catProj/catBudg)*100);
-        if(catPct>=110){
-          alerts.push({
-            type:'warn',
-            icon: CAT_ICONS[cat]||'📊',
-            title:`${cat} — projected overspend`,
-            sub:`Projected ${fN(catProj)} vs ${fN(catBudg)} budget (${catPct}%)`
-          });
+    }else{
+      // Not enough history — plain pro-rata, and only after the first week
+      // so day-1 purchases can't manufacture a fake overspend.
+      proj=day>=7?Math.round(spent/day*daysInMonth):spent;method='linear';
+    }
+    out.catProj[cat]={spent,proj,method,typTotal,typCount,frac,count:catCount[cat]||0,budget:B[ck(cat)]||0};
+    out.totalProj+=proj;
+  });
+
+  // ── Total-budget outlook ──
+  const spentTotal=txns.reduce((s,t)=>s+(t.amount||0),0);
+  if(out.totalBudget>0&&spentTotal>0){
+    const pct=Math.round(out.totalProj/out.totalBudget*100);
+    const histNote=nMonths>=2
+      ?`Based on ${nMonths} months of your history: routine categories are paced against how much of the month's spend usually lands by day ${day}; one-off categories are held at their typical monthly total instead of being multiplied per day.`
+      :`Less than 2 months of history is cached on this device, so this is a simple pro-rata estimate — it gets smarter as history builds.`;
+    if(pct>=110){
+      out.alerts.push({type:'danger',icon:'🔴',key:`proj-total-${mk}`,
+        title:`Heading over budget — projected ${fN(out.totalProj)}`,
+        sub:`${fN(spentTotal)} spent by day ${day} · budget ${fN(out.totalBudget)} · ${daysLeft}d left`,
+        why:histNote});
+    }else if(pct>=90){
+      out.alerts.push({type:'warn',icon:'⚠️',key:`proj-total-${mk}`,
+        title:`Cutting it close — projected ${pct}% of budget`,
+        sub:`Projected ${fN(out.totalProj)} vs ${fN(out.totalBudget)} · ${daysLeft}d left`,
+        why:histNote});
+    }else{
+      out.insights.push({type:'good',icon:'✅',key:`proj-total-${mk}`,
+        title:`On track — projected ${pct}% of budget`,
+        sub:`Projected ${fN(out.totalProj)} vs ${fN(out.totalBudget)} · ${fN(Math.max(0,out.totalBudget-out.totalProj))} headroom`,
+        why:histNote});
+    }
+  }
+
+  // ── Per-category stories ──
+  Object.entries(out.catProj).forEach(([cat,p])=>{
+    const icon=CAT_ICONS[cat]||'📊';
+    const key=`cat-${ck(cat)}-${mk}`;
+    // Already over budget — a fact, not a projection.
+    if(p.budget>0&&p.spent>p.budget){
+      out.alerts.push({type:'danger',icon,key,
+        title:`${cat} is over budget`,
+        sub:`${fN(p.spent)} spent vs ${fN(p.budget)} budget`,
+        why:p.typTotal>0?`Your typical ${cat} month is ${fN(p.typTotal)}. With ${daysLeft} days left, expect roughly ${fN(Math.max(0,p.proj-p.spent))} more based on your usual pattern.`:`No history yet for ${cat} — the overage is measured against this month's budget only.`});
+      return;
+    }
+    // Projected overspend — only when the method has something to stand on.
+    if(p.budget>0&&p.proj>p.budget*1.1&&p.spent>0&&(p.method!=='linear'||day>=7)){
+      const why=p.method==='episodic'
+        ?`You've made ${p.count} ${cat} purchase${p.count===1?'':'s'} this month; historically you make ~${Math.round(p.typCount)}/month totalling ${fN(p.typTotal)}. This is NOT extrapolated daily — the projection assumes your normal purchase rhythm, and it still lands over budget.`
+        :p.method==='paced'
+        ?`By day ${day} you've usually spent ${Math.round(p.frac*100)}% of your monthly ${cat} total. Scaling this month's ${fN(p.spent)} by that curve projects ${fN(p.proj)} vs ${fN(p.budget)} budget.`
+        :`Simple pro-rata (limited history for ${cat}): ${fN(p.spent)} over ${day} days extends to ${fN(p.proj)}.`;
+      out.alerts.push({type:'warn',icon,key,
+        title:`${cat} pacing over budget`,
+        sub:`Projected ${fN(p.proj)} vs ${fN(p.budget)} (${Math.round(p.proj/p.budget*100)}%)`,
+        why});
+      return;
+    }
+    // Episodic anomaly — unusually heavy month vs typical, budget or not.
+    if(p.method==='episodic'&&p.typTotal>0&&p.spent>p.typTotal*1.3&&(p.spent-p.typTotal)>Math.max(5000,p.typTotal*0.3)){
+      out.alerts.push({type:'warn',icon,key:`anom-${ck(cat)}-${mk}`,
+        title:`${cat} unusually high this month`,
+        sub:`${fN(p.spent)} so far vs typical ${fN(p.typTotal)}/month`,
+        why:`Over the last ${nMonths} months your median ${cat} month was ${fN(p.typTotal)} across ~${Math.round(p.typCount)} purchase${Math.round(p.typCount)===1?'':'s'}. This month is already ${Math.round((p.spent/p.typTotal-1)*100)}% above that — worth a look, though it may be a known one-off.`});
+      return;
+    }
+    // Positive / contextual reads → Analytics insights only (no alert noise).
+    if(p.method==='episodic'&&p.spent>0&&p.typTotal>0&&p.spent<=p.typTotal*1.15&&p.count<=Math.ceil(p.typCount)){
+      out.insights.push({type:'info',icon,key,
+        title:`${cat}: normal rhythm`,
+        sub:`${p.count} purchase${p.count===1?'':'s'} (${fN(p.spent)}) · typical month: ~${Math.round(p.typCount)} totalling ${fN(p.typTotal)}`,
+        why:`${cat} isn't a daily expense for you — history shows ~${Math.round(p.typCount)} purchase${Math.round(p.typCount)===1?'':'s'}/month. Expect roughly ${fN(Math.max(0,p.typTotal-p.spent))} more this month if the pattern holds.`});
+    }else if(p.method==='paced'&&p.budget>0&&day>=10&&p.proj<=p.budget*0.85&&p.spent>0){
+      out.insights.push({type:'good',icon,key,
+        title:`${cat} running under budget`,
+        sub:`Projected ${fN(p.proj)} vs ${fN(p.budget)} — about ${fN(p.budget-p.proj)} headroom`,
+        why:`You've spent ${fN(p.spent)} by day ${day}; historically that's ${Math.round(p.frac*100)}% of the month done, so finishing near ${fN(p.proj)} would beat your ${fN(p.budget)} budget.`});
+    }
+  });
+
+  // ── Share-shift: where is this month's money going vs usual? ──
+  if(nMonths>=2&&spentTotal>0){
+    const typSum=Object.values(out.catProj).reduce((s,p)=>s+p.typTotal,0);
+    if(typSum>0){
+      Object.entries(out.catProj).forEach(([cat,p])=>{
+        const shareNow=p.spent/spentTotal,shareTyp=p.typTotal/typSum;
+        if(p.spent>10000&&shareTyp>0&&shareNow>shareTyp*1.5&&shareNow-shareTyp>0.08){
+          out.insights.push({type:'info',icon:CAT_ICONS[cat]||'📊',key:`share-${ck(cat)}-${mk}`,
+            title:`${cat} is dominating this month`,
+            sub:`${Math.round(shareNow*100)}% of spend so far — usually ~${Math.round(shareTyp*100)}%`,
+            why:`Historically ${cat} takes about ${Math.round(shareTyp*100)}% of your monthly spending; this month it's at ${Math.round(shareNow*100)}% (${fN(p.spent)} of ${fN(spentTotal)}).`});
         }
       });
     }
   }
+  // Alerts are also insights — Analytics shows the full picture.
+  out.insights=[...out.alerts,...out.insights];
+  return out;
+}
+
+function renderDashAlerts(){
+  const el=document.getElementById('dash-alerts');
+  if(!el) return;
+  const now=new Date();
+  const m=now.getMonth()+1,y=now.getFullYear();
+  const isCurrentMonth=(S.dashMonth===m&&S.dashYear===y);
+
+  // 1) Smart spend alerts (history-aware; only meaningful for current month)
+  const alerts=isCurrentMonth?computeSmartInsights().alerts.slice():[];
 
   // 2) Upcoming recurring payments (due this month, not yet posted)
   const recurring=getRecurring().filter(r=>isDueThisMonth(r.nextRun)&&r.type==='expense');
@@ -5375,12 +5542,65 @@ function renderCashFlowChart(){
 // ══════════════════════════════════════════════════════════════════════════
 // FORECAST — Treasury, Net Worth, Analytics, History, Fixed Bills
 // ══════════════════════════════════════════════════════════════════════════
-function renderForecast(){renderProjTreasury();renderProjHistory();renderProjObligations();renderProjFees();}
+function renderForecast(){renderProjInsights();renderProjTreasury();renderProjHistory();renderProjObligations();renderProjFees();}
 function projTab(tab,btn){
-  ['treasury','history','obligations'].forEach(t=>{
+  ['insights','treasury','history','obligations'].forEach(t=>{
     const el=document.getElementById('proj-'+t);if(el)el.style.display=t===tab?'block':'none';
   });
   btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');
+}
+
+// ── ANALYTICS: INSIGHTS TAB ──────────────────────────────────────────────
+// Full read of the smart-insights engine: month outlook, per-category
+// projections with the method that produced them, and narrative insights
+// (including the positive ones the notification bell deliberately skips).
+function renderProjInsights(){
+  const el=document.getElementById('proj-insights');if(!el)return;
+  const now=new Date();
+  const m=now.getMonth()+1,y=now.getFullYear(),day=now.getDate();
+  const daysInMonth=new Date(y,m,0).getDate();
+  const R=computeSmartInsights();
+
+  // 1) Month outlook header card
+  const pct=R.totalBudget>0?Math.round(R.totalProj/R.totalBudget*100):0;
+  const barColor=pct>=110?'var(--red)':pct>=90?'var(--gold)':'var(--accent)';
+  let html=`<div class="card">
+    <div class="clabel">Month Outlook — ${MONTHS[m-1]} ${y} · Day ${day}/${daysInMonth}</div>
+    <div class="cval" style="color:${barColor}">${R.totalProj?fN(R.totalProj):'—'}<span style="font-size:0.7rem;color:var(--text2);font-weight:400"> projected${R.totalBudget?` · ${pct}% of ${fN(R.totalBudget)} budget`:''}</span></div>
+    ${R.totalBudget?`<div class="prog" style="margin-top:8px"><div class="pf ${pct>=110?'over':pct>=90?'warn':'ok'}" style="width:${Math.min(100,pct)}%"></div></div>`:''}
+    <div class="csub" style="margin-top:8px">${R.monthsUsed>=2
+      ?`Projections learn from ${R.monthsUsed} months of your history: categories you buy a few times a month (fuel, fees) are held at their typical total — never multiplied per day — while routine spending is paced against your usual curve for day ${day}.`
+      :`Only ${R.monthsUsed} month${R.monthsUsed===1?'':'s'} of history cached on this device — projections fall back to simple pro-rata and sharpen as history builds.`}</div>
+  </div>`;
+
+  // 2) Narrative insight cards
+  const order={danger:0,warn:1,info:2,good:3};
+  const insights=[...R.insights].sort((a,b)=>(order[a.type]??2)-(order[b.type]??2)).slice(0,10);
+  if(insights.length){
+    html+=`<div class="card"><div class="clabel">Insights</div>`+insights.map(a=>`
+      <div class="ins-card i-${a.type}">
+        <div class="ins-icon">${a.icon}</div>
+        <div style="flex:1;min-width:0">
+          <div class="ins-title">${a.title}</div>
+          <div class="ins-sub">${a.sub}</div>
+          ${a.why?`<div class="ins-why">${a.why}</div>`:''}
+        </div>
+      </div>`).join('')+`</div>`;
+  }
+
+  // 3) Category projection table — how each number was reached
+  const rows=Object.entries(R.catProj).filter(([,p])=>p.proj>0||p.spent>0)
+    .sort((a,b)=>b[1].proj-a[1].proj).slice(0,10);
+  if(rows.length){
+    const METHOD_LABEL={episodic:'typical total',paced:'your pace curve',linear:'pro-rata'};
+    html+=`<div class="card"><div class="clabel">Category Projections</div>`+rows.map(([cat,p])=>{
+      const st=p.budget>0?(p.proj>p.budget*1.1?'var(--red)':p.proj>p.budget*0.9?'var(--gold)':'var(--accent)'):'var(--text)';
+      return`<div class="pjrow">
+        <span class="pjlabel" style="min-width:0"><span style="margin-right:5px">${CAT_ICONS[cat]||'📊'}</span>${cat}<span class="ins-method">${METHOD_LABEL[p.method]||''}</span></span>
+        <span class="pjval" style="text-align:right"><span style="color:var(--text2)">${fN(p.spent)}</span> → <span style="color:${st}">${fN(p.proj)}</span>${p.budget?`<span style="color:var(--text3);font-size:0.66rem"> / ${fN(p.budget)}</span>`:''}</span>
+      </div>`;}).join('')+`<div class="csub" style="margin-top:8px">spent → projected / budget. "Typical total" = median of your last ${R.monthsUsed} months for categories bought ≤4×/month; "pace curve" = scaled by how much of the month's spend usually lands by day ${day}.</div></div>`;
+  }
+  el.innerHTML=html;
 }
 
 function renderProjTreasury(){
@@ -6492,7 +6712,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: V4.0.0</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v3.15.0: Cash carry-forward now applies to backdated and future-dated postings — a month is seeded from the prior closing balance the moment anything is posted into it (not just when opened), and every cash delta ripples forward into any later month that already exists, so earlier edits keep later balances correct automatically. Completed cross-device sync for net worth config, recurring transactions, custom categories, investment config, debtors, loans and the cash movement ledger (previously local-only or listener-less); budgets now always refresh from Firestore; realtime listeners follow the month you're viewing instead of staying pinned to the boot month. Fixed a broken drill-down click (JSON.stringify in an onclick attribute), the USD Cash repair re-running on new devices, a failed recurring post still advancing its schedule, and stale-month investment data being cached under the wrong month. Full backup/restore now covers loans, transfers, budgets, config and the ledger. Added: automatic month-end close (freezes a closed month's totals), optional budget rollover, global cross-month search, optional cash reversal on debtor/loan edits, an accrued-interest estimate on loans, and an offline queue for new debtors and loans.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: V4.1.0</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">V4.1.0: Smart insights — overspend projections now learn from up to 6 months of your spending history instead of assuming every purchase repeats daily. Categories bought a few times a month (fuel, school fees) are held at their typical monthly total; routine categories are paced against how much of the month's spend usually lands by today's date. New Insights tab in Analytics with the month outlook, narrative insights (including positive ones) and per-category projections showing the method behind each number. Redesigned notification panel: severity accent bars, tinted icon chips, and expanding an alert now reveals the reasoning behind it instead of repeating the summary; fixed warn-type alerts rendering with a solid yellow background. Prior months are prefetched in the background so insights work on any device. V4.0.0: split the single-file app into index.html + app.js + styles.css; new Vx.x.x version format.</div><div style="color:var(--text3);margin-top:4px">v3.15.0: Cash carry-forward now applies to backdated and future-dated postings — a month is seeded from the prior closing balance the moment anything is posted into it (not just when opened), and every cash delta ripples forward into any later month that already exists, so earlier edits keep later balances correct automatically. Completed cross-device sync for net worth config, recurring transactions, custom categories, investment config, debtors, loans and the cash movement ledger (previously local-only or listener-less); budgets now always refresh from Firestore; realtime listeners follow the month you're viewing instead of staying pinned to the boot month. Fixed a broken drill-down click (JSON.stringify in an onclick attribute), the USD Cash repair re-running on new devices, a failed recurring post still advancing its schedule, and stale-month investment data being cached under the wrong month. Full backup/restore now covers loans, transfers, budgets, config and the ledger. Added: automatic month-end close (freezes a closed month's totals), optional budget rollover, global cross-month search, optional cash reversal on debtor/loan edits, an accrued-interest estimate on loans, and an offline queue for new debtors and loans.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7230,7 +7450,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='V4.0.0';
+const APP_VERSION='V4.1.0';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
