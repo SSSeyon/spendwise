@@ -1,7 +1,7 @@
 // SpendWise Service Worker
 // Network-first (revalidated) for the HTML shell so the version pointer is
 // never stale; cache-first for version-queried assets and CDN libs.
-const CACHE = 'spendwise-v14';
+const CACHE = 'spendwise-v15';
 
 // Only truly-static, rarely-changing assets are pre-cached. index.html,
 // app.js and styles.css are intentionally NOT pre-cached here: index.html is

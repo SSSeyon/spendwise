@@ -939,7 +939,7 @@ function initFirebase(){
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats()]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadAiChat()]);
 }
 
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
@@ -957,6 +957,7 @@ let _recurListener=null;
 let _catsListener=null;
 let _debListener=null;
 let _loanListener=null;
+let _aiChatListener=null;
 
 function startRealtimeListeners(){
   stopRealtimeListeners();
@@ -1109,6 +1110,22 @@ function startRealtimeListeners(){
     cSet(CK.loans,S.loans);
     renderLoans();
   },err=>console.warn('loans listener:',err));
+
+  // AI chat history — real-time cross-device sync. Refill the SAME array in
+  // place (never reassign) so an in-flight aiAsk() keeps its reference. Preserve
+  // whatever the user is mid-typing across the re-render.
+  if(_aiChatListener){_aiChatListener();_aiChatListener=null;}
+  _aiChatListener=db.collection('appConfig').doc('aiChat')
+    .onSnapshot(snap=>{
+      if(!snap.exists||snap.metadata.hasPendingWrites) return;
+      const arr=snap.data()?.list;
+      if(!Array.isArray(arr)) return;
+      const c=_aiChat();c.length=0;Array.prototype.push.apply(c,arr);
+      cSet(AI_CHAT_LS,c);
+      const draft=(document.getElementById('ai-input')||{}).value;
+      renderProjAI();
+      const inp=document.getElementById('ai-input');if(inp&&draft)inp.value=draft;
+    },err=>console.warn('aiChat listener:',err));
 }
 
 function stopRealtimeListeners(){
@@ -1124,6 +1141,7 @@ function stopRealtimeListeners(){
   if(_catsListener){_catsListener();_catsListener=null;}
   if(_debListener){_debListener();_debListener=null;}
   if(_loanListener){_loanListener();_loanListener=null;}
+  if(_aiChatListener){_aiChatListener();_aiChatListener=null;}
 }
 
 async function loadTxns(m,y){
@@ -6775,7 +6793,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.2.1</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.2.1: AI reports no longer cut off mid-sentence — long deep-dive answers now finish in full, and the answer length cap was raised.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.2.2</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.2.2: Your AI conversation now syncs across all your devices, and Clear deletes it everywhere. (The Gemini API key still stays only on each device.)</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7521,7 +7539,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.2.1';
+const APP_VERSION='v4.2.2';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
@@ -8000,7 +8018,23 @@ function _aiKey(){return cGet('sw3_gemini_key')||'';}
 function _aiChat(){if(!S.aiChat)S.aiChat=cGet(AI_CHAT_LS)||[];return S.aiChat;}
 // Trim IN PLACE — reassigning S.aiChat would orphan the array reference that
 // an in-flight aiAsk() still holds, silently discarding the model's reply.
-function _aiSaveChat(){const c=_aiChat();if(c.length>40)c.splice(0,c.length-40);cSet(AI_CHAT_LS,c);}
+// The trimmed list is mirrored to Firestore (appConfig/aiChat) so the
+// conversation follows the user across devices; the API key never is.
+function _aiSaveChat(){
+  const c=_aiChat();if(c.length>40)c.splice(0,c.length-40);cSet(AI_CHAT_LS,c);
+  if(db)db.collection('appConfig').doc('aiChat')
+    .set({list:c,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .catch(e=>console.warn('AI chat sync failed',e));
+}
+// Pull the cloud copy into this device on startup (called from syncAll).
+async function loadAiChat(){
+  if(!db)return;
+  try{
+    const doc=await db.collection('appConfig').doc('aiChat').get();
+    const arr=doc.exists?doc.data()?.list:null;
+    if(Array.isArray(arr)){cSet(AI_CHAT_LS,arr);S.aiChat=arr;}
+  }catch(e){}
+}
 
 function renderProjAI(){
   const el=document.getElementById('proj-ai');if(!el)return;
@@ -8060,8 +8094,11 @@ function aiChangeKey(){
   renderProjAI();
 }
 function aiClearChat(){
-  if(_aiChat().length&&!confirm('Clear this AI conversation?'))return;
-  S.aiChat=[];_aiSaveChat();renderProjAI();
+  const c=_aiChat();
+  if(c.length&&!confirm('Delete this AI conversation on all your devices?'))return;
+  // Empty IN PLACE (keep the reference), then _aiSaveChat writes the empty
+  // list to Firestore so every other device clears it too.
+  c.length=0;_aiSaveChat();renderProjAI();
 }
 function aiSend(){const inp=document.getElementById('ai-input');if(!inp)return;const v=inp.value;inp.value='';aiAsk(v);}
 async function aiAsk(text){
