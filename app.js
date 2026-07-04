@@ -6775,7 +6775,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.2.0</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.2.0: New AI tab in Analytics — a Gemini-powered analyst grounded in your entire history (every expense, income, transfer, balance, loan, debtor and investment). Ask questions in plain language or generate a deep-dive report. Bring your own free Gemini API key; it is stored only on this device.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.2.1</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.2.1: AI reports no longer cut off mid-sentence — long deep-dive answers now finish in full, and the answer length cap was raised.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7521,7 +7521,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.2.0';
+const APP_VERSION='v4.2.1';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
@@ -8076,7 +8076,7 @@ async function aiAsk(text){
     const reply=await _aiFetch({
       system_instruction:{parts:[{text:ctx}]},
       contents,
-      generationConfig:{temperature:0.35,maxOutputTokens:4096},
+      generationConfig:{temperature:0.35,maxOutputTokens:8192},
     });
     chat.push({r:'m',t:reply});
   }catch(e){
@@ -8094,23 +8094,47 @@ async function _aiFetch(body){
   const models=pref?[pref,...AI_MODELS.filter(m=>m!==pref)]:AI_MODELS.slice();
   let lastErr='no models reachable';
   for(const model of models){
-    let res;
-    try{
-      res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`,{
-        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    }catch(e){lastErr='network error — are you online?';continue;}
-    if(res.status===400||res.status===401||res.status===403){
-      const j=await res.json().catch(()=>({}));
-      throw new Error('Gemini rejected the API key'+(j.error&&j.error.message?': '+j.error.message:'')+'. Tap Key… to re-enter it.');
+    const url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+    // One raw generateContent call. Returns {net}/{err} for soft failures (so we
+    // fall through to the next model) and throws for hard key/quota errors.
+    const call=async payload=>{
+      let res;
+      try{
+        res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      }catch(e){return {net:true};}
+      if(res.status===400||res.status===401||res.status===403){
+        const j=await res.json().catch(()=>({}));
+        throw new Error('Gemini rejected the API key'+(j.error&&j.error.message?': '+j.error.message:'')+'. Tap Key… to re-enter it.');
+      }
+      if(res.status===429){throw new Error('Gemini rate limit / daily quota reached — try again in a bit.');}
+      if(!res.ok){const j=await res.json().catch(()=>({}));return {err:(j.error&&j.error.message)||('HTTP '+res.status)};}
+      return {json:await res.json().catch(()=>null)};
+    };
+    const read=j=>{const c=j&&j.candidates&&j.candidates[0];return {text:c&&c.content&&c.content.parts?c.content.parts.map(p=>p.text||'').join(''):'',reason:(c&&c.finishReason)||''};};
+
+    const first=await call(body);
+    if(first.net){lastErr='network error — are you online?';continue;}
+    if(first.err){lastErr=first.err;continue;}
+    let {text,reason}=read(first.json);
+    if(!text.trim()){lastErr=reason||'empty response';continue;}
+
+    // Gemini caps a single response at maxOutputTokens and reports MAX_TOKENS
+    // when a long answer (e.g. a deep-dive report) is clipped mid-sentence.
+    // Feed the partial back as a model turn and ask it to continue, stitching
+    // the pieces together. Bounded so a stubborn loop can't run away.
+    const convo=body.contents.slice();
+    let guard=0,seg=text;
+    while(reason==='MAX_TOKENS'&&guard++<5){
+      convo.push({role:'model',parts:[{text:seg}]});
+      convo.push({role:'user',parts:[{text:'Continue exactly where you left off, mid-sentence if needed. Do not repeat anything you already wrote and do not restart.'}]});
+      const more=await call({...body,contents:convo});
+      if(more.net||more.err||!more.json)break;
+      const nx=read(more.json);
+      if(!nx.text.trim())break;
+      text+=nx.text;seg=nx.text;reason=nx.reason;
     }
-    if(res.status===429){throw new Error('Gemini rate limit / daily quota reached — try again in a bit.');}
-    if(!res.ok){const j=await res.json().catch(()=>({}));lastErr=(j.error&&j.error.message)||('HTTP '+res.status);continue;}
-    const j=await res.json().catch(()=>null);
-    const out=j&&j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts
-      ?j.candidates[0].content.parts.map(p=>p.text||'').join('').trim():'';
-    if(!out){lastErr=(j&&j.candidates&&j.candidates[0]&&j.candidates[0].finishReason)||'empty response';continue;}
     cSet(AI_MODEL_LS,model);
-    return out;
+    return text.trim();
   }
   throw new Error('Gemini request failed: '+lastErr);
 }
