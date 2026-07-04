@@ -5582,12 +5582,13 @@ function renderCashFlowChart(){
 // ══════════════════════════════════════════════════════════════════════════
 // FORECAST — Treasury, Net Worth, Analytics, History, Fixed Bills
 // ══════════════════════════════════════════════════════════════════════════
-function renderForecast(){renderProjInsights();renderProjTreasury();renderProjHistory();renderProjObligations();renderProjFees();}
+function renderForecast(){renderProjInsights();renderProjTreasury();renderProjHistory();renderProjObligations();renderProjFees();renderProjAI();}
 function projTab(tab,btn){
-  ['insights','treasury','history','obligations'].forEach(t=>{
+  ['insights','treasury','history','obligations','ai'].forEach(t=>{
     const el=document.getElementById('proj-'+t);if(el)el.style.display=t===tab?'block':'none';
   });
   btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');
+  if(tab==='ai')renderProjAI(); // panel skips the init-time render pass; build it fresh on open
 }
 
 // ── ANALYTICS: INSIGHTS TAB ──────────────────────────────────────────────
@@ -6774,7 +6775,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.1.5</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.1.5: Fixed an update loop where the app kept prompting to update because a fresh index.html loaded a stale cached app.js. App scripts are now version-tagged and the service worker fetches the page shell network-first, so updates apply in one refresh and header/App Info versions always match.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.2.0</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.2.0: New AI tab in Analytics — a Gemini-powered analyst grounded in your entire history (every expense, income, transfer, balance, loan, debtor and investment). Ask questions in plain language or generate a deep-dive report. Bring your own free Gemini API key; it is stored only on this device.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7520,7 +7521,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.1.5';
+const APP_VERSION='v4.2.0';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
@@ -7982,4 +7983,224 @@ async function execMergeCat(){
     label.textContent='Pull to refresh';
   }
 })();
+
+// ══════════════════════════════════════════════════════════════════════════
+// AI ANALYST (Analytics → AI) — Gemini-powered analysis and chat grounded in
+// the user's complete financial history. The API key is pasted by the user
+// and lives ONLY in this device's localStorage — never in code or Firestore
+// (the repo and the Firestore project are both publicly readable).
+// ══════════════════════════════════════════════════════════════════════════
+// var + function declarations (not const/let): renderAll() runs during init,
+// before this end-of-file module body executes — hoisting keeps that safe.
+var AI_KEY_LS='sw3_gemini_key', AI_CHAT_LS='sw3_ai_chat', AI_MODEL_LS='sw3_gemini_model';
+// Tried in order until one answers; the winner is remembered per device.
+var AI_MODELS=['gemini-2.5-flash','gemini-2.0-flash','gemini-1.5-flash'];
+var _aiCtx=null,_aiCtxAt=0,_aiBusy=false;
+function _aiKey(){return cGet('sw3_gemini_key')||'';}
+function _aiChat(){if(!S.aiChat)S.aiChat=cGet(AI_CHAT_LS)||[];return S.aiChat;}
+// Trim IN PLACE — reassigning S.aiChat would orphan the array reference that
+// an in-flight aiAsk() still holds, silently discarding the model's reply.
+function _aiSaveChat(){const c=_aiChat();if(c.length>40)c.splice(0,c.length-40);cSet(AI_CHAT_LS,c);}
+
+function renderProjAI(){
+  const el=document.getElementById('proj-ai');if(!el)return;
+  if(!Array.isArray(AI_MODELS))return; // init-time call lands before module vars are assigned; projTab re-renders on open
+  if(!_aiKey()){
+    el.innerHTML=`<div class="card">
+      <div class="clabel">AI Analyst — Setup</div>
+      <div class="csub" style="margin-bottom:6px">Ask anything about your money — a Gemini-powered analyst reads your entire history (every expense, income, transfer, balance, loan, debtor and investment) and answers with your real numbers.</div>
+      <div class="csub" style="margin-bottom:10px">Paste your Gemini API key below. It is stored only on this device and never leaves it except to call Google's API directly. Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--accent)">aistudio.google.com/apikey</a>. Each device needs the key entered once.</div>
+      <div style="display:flex;gap:6px">
+        <input class="ifield" id="ai-key-input" type="password" placeholder="Paste Gemini API key" style="flex:1;font-size:0.76rem" autocomplete="off" onkeydown="if(event.key==='Enter')aiSaveKey()">
+        <button class="btn btn-p btn-sm" onclick="aiSaveKey()">Save</button>
+      </div>
+    </div>`;
+    return;
+  }
+  const chat=_aiChat();
+  const msgs=chat.map(m=>
+    m.r==='u'?`<div class="ai-msg ai-u">${esc(m.t)}</div>`
+    :m.r==='e'?`<div class="ai-msg ai-err">⚠ ${esc(m.t)}</div>`
+    :`<div class="ai-msg ai-m">${_aiMd(m.t)}</div>`).join('');
+  const chips=chat.length?'':`<div class="ai-chips">${[
+    'Give me a deep-dive report on my finances',
+    'Where can I realistically cut back?',
+    'How has my spending trended over the last 6 months?',
+    'Am I on track this month?',
+  ].map(q=>`<button class="ai-chip" onclick="aiAsk('${jsq(q)}')">${esc(q)}</button>`).join('')}</div>`;
+  const model=cGet(AI_MODEL_LS)||AI_MODELS[0];
+  el.innerHTML=`<div class="card" style="padding:12px 14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <div class="clabel" style="margin:0">AI Analyst<span class="ai-badge">${esc(model.replace('gemini-','Gemini '))}</span></div>
+      <div style="display:flex;gap:6px">
+        ${chat.length?`<button class="btn btn-g btn-sm" onclick="aiClearChat()">Clear</button>`:''}
+        <button class="btn btn-g btn-sm" onclick="aiChangeKey()" title="Remove the saved API key from this device">Key…</button>
+      </div>
+    </div>
+    <div class="csub" style="margin-bottom:8px">Grounded in your full history — expenses, income, transfers, balances, loans, debtors, investments.</div>
+    <div class="ai-log" id="ai-log">${msgs||`<div class="empty" style="padding:16px 0"><div class="empty-i">✦</div>Ask anything about your money.<br>Your entire history is the context.</div>`}${_aiBusy?'<div class="ai-msg ai-m ai-typing"><span></span><span></span><span></span></div>':''}</div>
+    ${chips}
+    <div class="ai-inrow">
+      <input class="ifield" id="ai-input" placeholder="Ask about your finances…" style="flex:1;font-size:0.76rem" ${_aiBusy?'disabled':''} onkeydown="if(event.key==='Enter')aiSend()">
+      <button class="btn btn-p" onclick="aiSend()" ${_aiBusy?'disabled':''} style="padding:9px 16px">➤</button>
+    </div>
+  </div>`;
+  const log=document.getElementById('ai-log');if(log)log.scrollTop=log.scrollHeight;
+}
+
+function aiSaveKey(){
+  const inp=document.getElementById('ai-key-input');if(!inp)return;
+  const v=inp.value.trim();
+  if(!v){toast('Paste your Gemini API key first');return;}
+  cSet(AI_KEY_LS,v);toast('Key saved on this device');haptic([8]);renderProjAI();
+}
+function aiChangeKey(){
+  if(!confirm('Remove the saved Gemini API key from this device?'))return;
+  try{localStorage.removeItem(AI_KEY_LS);localStorage.removeItem(AI_MODEL_LS);}catch(e){}
+  renderProjAI();
+}
+function aiClearChat(){
+  if(_aiChat().length&&!confirm('Clear this AI conversation?'))return;
+  S.aiChat=[];_aiSaveChat();renderProjAI();
+}
+function aiSend(){const inp=document.getElementById('ai-input');if(!inp)return;const v=inp.value;inp.value='';aiAsk(v);}
+async function aiAsk(text){
+  if(_aiBusy)return;
+  text=String(text||'').trim();if(!text)return;
+  const chat=_aiChat();chat.push({r:'u',t:text});_aiSaveChat();
+  _aiBusy=true;renderProjAI();
+  try{
+    const ctx=await _aiBuildContext();
+    // Send the recent turns (minus any error bubbles) so follow-ups have memory
+    const contents=chat.filter(m=>m.r!=='e').slice(-20).map(m=>({role:m.r==='u'?'user':'model',parts:[{text:m.t}]}));
+    const reply=await _aiFetch({
+      system_instruction:{parts:[{text:ctx}]},
+      contents,
+      generationConfig:{temperature:0.35,maxOutputTokens:4096},
+    });
+    chat.push({r:'m',t:reply});
+  }catch(e){
+    chat.push({r:'e',t:e&&e.message?e.message:'Request failed — check your connection'});
+  }
+  _aiBusy=false;_aiSaveChat();renderProjAI();
+}
+
+// Calls Gemini's generateContent REST API, falling back through AI_MODELS on
+// 404/5xx (key tiers differ in which models they can access). Remembers the
+// first model that answers. Key errors and quota errors abort immediately.
+async function _aiFetch(body){
+  const key=_aiKey();if(!key)throw new Error('No API key saved — open the Key… settings');
+  const pref=cGet(AI_MODEL_LS);
+  const models=pref?[pref,...AI_MODELS.filter(m=>m!==pref)]:AI_MODELS.slice();
+  let lastErr='no models reachable';
+  for(const model of models){
+    let res;
+    try{
+      res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    }catch(e){lastErr='network error — are you online?';continue;}
+    if(res.status===400||res.status===401||res.status===403){
+      const j=await res.json().catch(()=>({}));
+      throw new Error('Gemini rejected the API key'+(j.error&&j.error.message?': '+j.error.message:'')+'. Tap Key… to re-enter it.');
+    }
+    if(res.status===429){throw new Error('Gemini rate limit / daily quota reached — try again in a bit.');}
+    if(!res.ok){const j=await res.json().catch(()=>({}));lastErr=(j.error&&j.error.message)||('HTTP '+res.status);continue;}
+    const j=await res.json().catch(()=>null);
+    const out=j&&j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts
+      ?j.candidates[0].content.parts.map(p=>p.text||'').join('').trim():'';
+    if(!out){lastErr=(j&&j.candidates&&j.candidates[0]&&j.candidates[0].finishReason)||'empty response';continue;}
+    cSet(AI_MODEL_LS,model);
+    return out;
+  }
+  throw new Error('Gemini request failed: '+lastErr);
+}
+
+// Builds the grounding context: every Firestore collection compacted into
+// pipe-delimited/JSON sections. Cached for 10 minutes so a chat session
+// doesn't re-download the database on every question.
+async function _aiBuildContext(force){
+  if(_aiCtx&&!force&&Date.now()-_aiCtxAt<10*60*1000)return _aiCtx;
+  if(!db)throw new Error('AI needs a connection to load your data — try again once synced');
+  const grab=async col=>{try{const s=await db.collection(col).get();return s.docs.map(d=>({id:d.id,...d.data()}));}catch(e){console.warn('AI ctx fetch failed:',col,e);return[];}};
+  const [tx,inc,xfr,cashB,invB,loans,debs,hist,budgets]=await Promise.all(
+    ['transactions','income','transfers','cashBalances','investments','loans','debtors','historicalSummary','budgets'].map(grab));
+  if(!tx.length&&!inc.length&&!hist.length)throw new Error('Could not load your data — check your connection and retry');
+  // Drop ids and Firestore timestamp objects; they add tokens, not signal
+  const strip=o=>{const r={};for(const k in o){const v=o[k];if(k==='id'||k==='createdAt'||k==='updatedAt')continue;if(v&&typeof v==='object'&&typeof v.seconds==='number')continue;r[k]=v;}return r;};
+  const byDate=(a,b)=>String(a.date||'').localeCompare(String(b.date||''));
+  const ym=o=>`${o.year||'?'}-${String(o.month||'?').padStart(2,'0')}`;
+  const byYm=(a,b)=>ym(a).localeCompare(ym(b));
+  const num=v=>Math.round(Number(v)||0);
+  const sect=[];
+  sect.push('EXPENSES (date|category|payee|bank|amount_NGN|notes):\n'
+    +tx.slice().sort(byDate).map(t=>[t.date,t.category,t.payee,t.bank,num(t.amtNGN||t.amount),(t.notes||'').replace(/[|\n]/g,' ').slice(0,48)].join('|')).join('\n'));
+  sect.push('INCOME (date|category|bank|amount_NGN|notes):\n'
+    +inc.slice().sort(byDate).map(t=>[t.date,t.category||'Income',t.bank,num(t.amtNGN||t.amount),(t.notes||'').replace(/[|\n]/g,' ').slice(0,48)].join('|')).join('\n'));
+  sect.push('TRANSFERS between own accounts — not income or spending (date|from|to|amount_from_side|amount_to_side):\n'
+    +xfr.slice().sort(byDate).map(t=>[t.date,t.from,t.to,num(t.amount),num(t.toAmt!=null?t.toAmt:t.amount)].join('|')).join('\n'));
+  sect.push('MONTH-END ACCOUNT BALANCES (one JSON per month; keys are account names; "USD Cash" is in dollars, the rest NGN):\n'
+    +cashB.slice().sort(byYm).map(c=>ym(c)+' '+JSON.stringify(strip(c))).join('\n'));
+  sect.push('INVESTMENTS (one JSON per month; NGN values per platform):\n'
+    +invB.slice().sort(byYm).map(c=>ym(c)+' '+JSON.stringify(strip(c))).join('\n'));
+  sect.push('LOANS the user OWES (JSON each; pmtLog = repayments made):\n'
+    +loans.map(l=>JSON.stringify(strip(l))).join('\n'));
+  sect.push('DEBTORS — money owed TO the user (JSON each):\n'
+    +debs.map(d=>JSON.stringify(strip(d))).join('\n'));
+  sect.push('HISTORICAL MONTHLY SUMMARY — months before per-transaction tracking began (JSON each):\n'
+    +hist.slice().sort(byYm).map(h=>JSON.stringify(strip(h))).join('\n'));
+  sect.push('BUDGETS (one JSON per month; NGN per category):\n'
+    +budgets.slice().sort(byYm).map(b=>ym(b)+' '+JSON.stringify(strip(b))).join('\n'));
+  const nw=new Date();
+  const fx=getFxRates(nw.getMonth()+1,nw.getFullYear());
+  const head=`You are SpendWise AI, the financial analyst built into the owner's personal finance app. Today is ${todayStr()}.
+All amounts are Nigerian Naira (NGN, ₦) unless marked USD; "USD Cash" is a dollar account. Working FX assumption: 1 USD ≈ ₦${fx.USD}, 1 GBP ≈ ₦${fx.GBP}.
+Rules:
+- Ground every statement in the data below. Cite real months and real figures (use ₦ with thousands separators). Never invent or estimate numbers the data doesn't support — say plainly when it can't answer.
+- Transfers move money between the user's own accounts; never count them as income or spending.
+- Lead with the answer, then the evidence. Be direct and specific to THIS user's patterns — no generic financial-advice boilerplate.
+- Format with markdown: short paragraphs, bullets, and small tables where they help. Round to whole naira.
+
+THE USER'S COMPLETE FINANCIAL DATA:
+
+`;
+  _aiCtx=head+sect.join('\n\n');
+  _aiCtxAt=Date.now();
+  return _aiCtx;
+}
+
+// Minimal markdown → HTML for AI replies: headings, bold/italic/code,
+// bullet + numbered lists, and pipe tables. Everything is HTML-escaped first.
+function _aiMd(src){
+  const e=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const inline=s=>e(s)
+    .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
+    .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g,'$1<i>$2</i>')
+    .replace(/`([^`]+)`/g,'<code>$1</code>');
+  const lines=String(src||'').split(/\r?\n/);
+  let html='',i=0;
+  while(i<lines.length){
+    const L=lines[i];
+    if(/^\s*$/.test(L)){i++;continue;}
+    if(/^#{1,6}\s/.test(L)){html+=`<div class="ai-h">${inline(L.replace(/^#{1,6}\s*/,''))}</div>`;i++;continue;}
+    if(/^\s*[-*•]\s+/.test(L)){
+      let items='';
+      while(i<lines.length&&/^\s*[-*•]\s+/.test(lines[i])){items+=`<li>${inline(lines[i].replace(/^\s*[-*•]\s+/,''))}</li>`;i++;}
+      html+=`<ul>${items}</ul>`;continue;
+    }
+    if(/^\s*\d+[.)]\s+/.test(L)){
+      let items='';
+      while(i<lines.length&&/^\s*\d+[.)]\s+/.test(lines[i])){items+=`<li>${inline(lines[i].replace(/^\s*\d+[.)]\s+/,''))}</li>`;i++;}
+      html+=`<ol>${items}</ol>`;continue;
+    }
+    if(/^\s*\|.*\|\s*$/.test(L)){
+      const rows=[];
+      while(i<lines.length&&/^\s*\|.*\|\s*$/.test(lines[i])){rows.push(lines[i].trim().replace(/^\|/,'').replace(/\|$/,'').split('|').map(c=>c.trim()));i++;}
+      const data=rows.filter(r=>!r.every(c=>/^:?-{2,}:?$/.test(c)));
+      if(data.length)html+='<div class="ai-tblwrap"><table class="ai-tbl">'+data.map((r,ri)=>'<tr>'+r.map(c=>ri===0?`<th>${inline(c)}</th>`:`<td>${inline(c)}</td>`).join('')+'</tr>').join('')+'</table></div>';
+      continue;
+    }
+    html+=`<p>${inline(L)}</p>`;i++;
+  }
+  return html;
+}
 
