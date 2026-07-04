@@ -939,7 +939,7 @@ function initFirebase(){
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats()]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadAiChats()]);
 }
 
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
@@ -957,6 +957,7 @@ let _recurListener=null;
 let _catsListener=null;
 let _debListener=null;
 let _loanListener=null;
+let _aiChatListener=null;
 
 function startRealtimeListeners(){
   stopRealtimeListeners();
@@ -1109,6 +1110,21 @@ function startRealtimeListeners(){
     cSet(CK.loans,S.loans);
     renderLoans();
   },err=>console.warn('loans listener:',err));
+
+  // AI conversations — real-time cross-device sync. aiAsk works by chat id and
+  // re-resolves after each await, and this skips our own pending writes, so a
+  // rebuild here can't drop an in-flight reply. Preserve any in-progress typing.
+  if(_aiChatListener){_aiChatListener();_aiChatListener=null;}
+  _aiChatListener=db.collection('aiChats')
+    .onSnapshot(snap=>{
+      if(snap.metadata.hasPendingWrites) return;
+      const chats=snap.docs.map(d=>({id:d.id,...d.data()}));
+      _aiSortChats(chats);
+      S.aiChats=chats;cSet(AI_CHATS_LS,chats);
+      const draft=(document.getElementById('ai-input')||{}).value;
+      renderProjAI();
+      const inp=document.getElementById('ai-input');if(inp&&draft)inp.value=draft;
+    },err=>console.warn('aiChats listener:',err));
 }
 
 function stopRealtimeListeners(){
@@ -1124,6 +1140,7 @@ function stopRealtimeListeners(){
   if(_catsListener){_catsListener();_catsListener=null;}
   if(_debListener){_debListener();_debListener=null;}
   if(_loanListener){_loanListener();_loanListener=null;}
+  if(_aiChatListener){_aiChatListener();_aiChatListener=null;}
 }
 
 async function loadTxns(m,y){
@@ -6775,7 +6792,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.2.1</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.2.1: AI reports no longer cut off mid-sentence — long deep-dive answers now finish in full, and the answer length cap was raised.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.2.3</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.2.3: AI now supports multiple separate conversations — tap ＋ New to start one, switch between them, and delete individual chats. Pull-to-refresh no longer fires while scrolling the Analytics tab.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7521,7 +7538,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.2.1';
+const APP_VERSION='v4.2.3';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
@@ -7936,6 +7953,10 @@ async function execMergeCat(){
   let startY=0, pulling=false, triggered=false;
 
   appBody.addEventListener('touchstart', e=>{
+    // Disabled on the Analytics page: its inner scroll areas (the AI chat log,
+    // long history lists) sit at appBody.scrollTop===0, so scrolling up to read
+    // would otherwise inadvertently trigger a refresh.
+    if(S.page==='forecast') return;
     // Only begin if scrolled to the very top
     if(appBody.scrollTop===0) {startY=e.touches[0].clientY; pulling=true; triggered=false;}
   },{passive:true});
@@ -7993,14 +8014,75 @@ async function execMergeCat(){
 // var + function declarations (not const/let): renderAll() runs during init,
 // before this end-of-file module body executes — hoisting keeps that safe.
 var AI_KEY_LS='sw3_gemini_key', AI_CHAT_LS='sw3_ai_chat', AI_MODEL_LS='sw3_gemini_model';
+var AI_CHATS_LS='sw3_ai_chats', AI_ACTIVE_LS='sw3_ai_active';
 // Tried in order until one answers; the winner is remembered per device.
 var AI_MODELS=['gemini-2.5-flash','gemini-2.0-flash','gemini-1.5-flash'];
 var _aiCtx=null,_aiCtxAt=0,_aiBusy=false;
+// True while composing a brand-new, not-yet-sent conversation (device-local).
+var _aiNewMode=false;
 function _aiKey(){return cGet('sw3_gemini_key')||'';}
-function _aiChat(){if(!S.aiChat)S.aiChat=cGet(AI_CHAT_LS)||[];return S.aiChat;}
-// Trim IN PLACE — reassigning S.aiChat would orphan the array reference that
-// an in-flight aiAsk() still holds, silently discarding the model's reply.
-function _aiSaveChat(){const c=_aiChat();if(c.length>40)c.splice(0,c.length-40);cSet(AI_CHAT_LS,c);}
+
+// ── Multi-conversation store ────────────────────────────────────────────────
+// Each conversation is one Firestore doc in the `aiChats` collection:
+//   {title, msgs:[{r,t}], createdAt, updatedAt}   (createdAt/updatedAt = epoch ms)
+// giving every chat its own 1MB budget and letting one be deleted on its own.
+// The active-chat pointer is device-local (which chat you're reading is UI
+// state, not data). The Gemini API key is never synced.
+function _aiChats(){if(!Array.isArray(S.aiChats))S.aiChats=cGet(AI_CHATS_LS)||[];return S.aiChats;}
+function _aiActiveId(){return cGet(AI_ACTIVE_LS)||'';}
+function _aiSetActive(id){cSet(AI_ACTIVE_LS,id||'');}
+function _chatById(id){return _aiChats().find(c=>c.id===id)||null;}
+function _aiSortChats(arr){arr.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));return arr;}
+function _aiNewId(){return 'c'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);}
+function _aiTitleFrom(t){t=String(t||'').trim().replace(/\s+/g,' ');if(!t)return 'New conversation';return t.length>42?t.slice(0,42)+'…':t;}
+function _aiSaveCache(){cSet(AI_CHATS_LS,_aiChats());}
+// Resolve the conversation currently on screen: the explicit new-chat view is
+// null; otherwise the pinned active id, falling back to the most recent chat.
+function _aiResolveActive(){
+  if(_aiNewMode)return null;
+  const chats=_aiChats();
+  return _chatById(_aiActiveId())||chats[0]||null;
+}
+// Trim msgs IN PLACE (keep the array reference an in-flight aiAsk holds) and
+// mirror this one chat to Firestore so it follows the user across devices.
+function _aiSaveChatDoc(c){
+  if(!c)return;
+  if(c.msgs.length>40)c.msgs.splice(0,c.msgs.length-40);
+  _aiSaveCache();
+  if(db)db.collection('aiChats').doc(c.id)
+    .set({title:c.title,msgs:c.msgs,createdAt:c.createdAt||Date.now(),updatedAt:c.updatedAt||Date.now()},{merge:true})
+    .catch(e=>console.warn('AI chat sync failed',e));
+}
+// Append a message to a chat resolved by id (never by a captured reference, so
+// a listener rebuild mid-request can't orphan it), bump it to the top, persist.
+function _aiPush(cid,msg){
+  const c=_chatById(cid);if(!c)return;
+  c.msgs.push(msg);c.updatedAt=Date.now();
+  _aiSortChats(_aiChats());
+  _aiSaveChatDoc(c);
+}
+// Pull every conversation into this device on startup (called from syncAll).
+// One-time migration: fold the old single-doc conversation into a chat.
+async function loadAiChats(){
+  if(!db)return;
+  try{
+    const snap=await db.collection('aiChats').get();
+    let chats=snap.docs.map(d=>({id:d.id,...d.data()}));
+    if(!chats.length){
+      const old=await db.collection('appConfig').doc('aiChat').get();
+      const list=old.exists?old.data()?.list:null;
+      if(Array.isArray(list)&&list.length){
+        const first=list.find(m=>m.r==='u');
+        const c={id:_aiNewId(),title:_aiTitleFrom(first&&first.t),msgs:list,createdAt:Date.now(),updatedAt:Date.now()};
+        chats=[c];
+        db.collection('aiChats').doc(c.id).set({title:c.title,msgs:c.msgs,createdAt:c.createdAt,updatedAt:c.updatedAt}).catch(()=>{});
+        db.collection('appConfig').doc('aiChat').set({list:[],migrated:true},{merge:true}).catch(()=>{}); // mark migrated so we don't re-import
+      }
+    }
+    _aiSortChats(chats);
+    S.aiChats=chats;cSet(AI_CHATS_LS,chats);
+  }catch(e){}
+}
 
 function renderProjAI(){
   const el=document.getElementById('proj-ai');if(!el)return;
@@ -8017,27 +8099,39 @@ function renderProjAI(){
     </div>`;
     return;
   }
-  const chat=_aiChat();
-  const msgs=chat.map(m=>
+  const chats=_aiChats();
+  const active=_aiResolveActive();          // null while composing a new chat
+  const list=active?active.msgs:[];
+  const msgs=list.map(m=>
     m.r==='u'?`<div class="ai-msg ai-u">${esc(m.t)}</div>`
     :m.r==='e'?`<div class="ai-msg ai-err">⚠ ${esc(m.t)}</div>`
     :`<div class="ai-msg ai-m">${_aiMd(m.t)}</div>`).join('');
-  const chips=chat.length?'':`<div class="ai-chips">${[
+  const chips=list.length?'':`<div class="ai-chips">${[
     'Give me a deep-dive report on my finances',
     'Where can I realistically cut back?',
     'How has my spending trended over the last 6 months?',
     'Am I on track this month?',
   ].map(q=>`<button class="ai-chip" onclick="aiAsk('${jsq(q)}')">${esc(q)}</button>`).join('')}</div>`;
   const model=cGet(AI_MODEL_LS)||AI_MODELS[0];
+  // Conversation picker — shown once there is at least one saved chat (or a new
+  // one being composed alongside existing ones).
+  const opts=chats.map(c=>`<option value="${esc(c.id)}"${active&&active.id===c.id?' selected':''}>${esc(c.title||'Conversation')}</option>`).join('');
+  const newOpt=active?'':`<option value="__new__" selected>✦ New conversation…</option>`;
+  const showBar=chats.length>0;
+  const chatBar=showBar?`<div class="ai-chatbar">
+      <select class="ifield ai-chatsel" onchange="aiSelectChat(this.value)" ${_aiBusy?'disabled':''}>${newOpt}${opts}</select>
+      ${active?`<button class="btn btn-g btn-sm" onclick="aiDeleteChat()" title="Delete this conversation on all your devices">🗑</button>`:''}
+    </div>`:'';
   el.innerHTML=`<div class="card" style="padding:12px 14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
       <div class="clabel" style="margin:0">AI Analyst<span class="ai-badge">${esc(model.replace('gemini-','Gemini '))}</span></div>
       <div style="display:flex;gap:6px">
-        ${chat.length?`<button class="btn btn-g btn-sm" onclick="aiClearChat()">Clear</button>`:''}
+        <button class="btn btn-g btn-sm" onclick="aiNewChat()" title="Start a new conversation" ${_aiBusy?'disabled':''}>＋ New</button>
         <button class="btn btn-g btn-sm" onclick="aiChangeKey()" title="Remove the saved API key from this device">Key…</button>
       </div>
     </div>
-    <div class="csub" style="margin-bottom:8px">Grounded in your full history — expenses, income, transfers, balances, loans, debtors, investments.</div>
+    ${chatBar}
+    <div class="csub" style="margin:8px 0">Grounded in your full history — expenses, income, transfers, balances, loans, debtors, investments.</div>
     <div class="ai-log" id="ai-log">${msgs||`<div class="empty" style="padding:16px 0"><div class="empty-i">✦</div>Ask anything about your money.<br>Your entire history is the context.</div>`}${_aiBusy?'<div class="ai-msg ai-m ai-typing"><span></span><span></span><span></span></div>':''}</div>
     ${chips}
     <div class="ai-inrow">
@@ -8059,30 +8153,57 @@ function aiChangeKey(){
   try{localStorage.removeItem(AI_KEY_LS);localStorage.removeItem(AI_MODEL_LS);}catch(e){}
   renderProjAI();
 }
-function aiClearChat(){
-  if(_aiChat().length&&!confirm('Clear this AI conversation?'))return;
-  S.aiChat=[];_aiSaveChat();renderProjAI();
+// Switch to composing a brand-new conversation (nothing is written until the
+// first message is actually sent, so we never leave empty ghost chats behind).
+function aiNewChat(){
+  if(_aiBusy)return;
+  _aiNewMode=true;_aiSetActive('');renderProjAI();
+  setTimeout(()=>{const i=document.getElementById('ai-input');if(i)i.focus();},30);
+}
+function aiSelectChat(id){
+  if(_aiBusy)return;
+  if(id==='__new__'){aiNewChat();return;}
+  _aiNewMode=false;_aiSetActive(id);renderProjAI();
+}
+function aiDeleteChat(){
+  const c=_aiResolveActive();if(!c){toast('No conversation to delete');return;}
+  if(!confirm('Delete “'+(c.title||'this conversation')+'” on all your devices?'))return;
+  const chats=_aiChats();const i=chats.findIndex(x=>x.id===c.id);if(i>=0)chats.splice(i,1);
+  _aiSaveCache();
+  if(db)db.collection('aiChats').doc(c.id).delete().catch(e=>console.warn('AI chat delete failed',e));
+  // Fall back to the next most-recent chat, or a fresh empty one if none remain.
+  _aiNewMode=!chats.length;_aiSetActive(chats[0]?chats[0].id:'');
+  haptic([8]);renderProjAI();
 }
 function aiSend(){const inp=document.getElementById('ai-input');if(!inp)return;const v=inp.value;inp.value='';aiAsk(v);}
 async function aiAsk(text){
   if(_aiBusy)return;
   text=String(text||'').trim();if(!text)return;
-  const chat=_aiChat();chat.push({r:'u',t:text});_aiSaveChat();
+  // Resolve the target chat; if composing a new one (or none exist yet), create
+  // it now and title it from this first question.
+  let c=_aiResolveActive();
+  if(!c){
+    c={id:_aiNewId(),title:_aiTitleFrom(text),msgs:[],createdAt:Date.now(),updatedAt:Date.now()};
+    _aiChats().unshift(c);_aiSetActive(c.id);_aiNewMode=false;
+  }
+  const cid=c.id;
+  _aiPush(cid,{r:'u',t:text});
   _aiBusy=true;renderProjAI();
   try{
     const ctx=await _aiBuildContext();
+    const cur=_chatById(cid);if(!cur)throw new Error('This conversation was deleted');
     // Send the recent turns (minus any error bubbles) so follow-ups have memory
-    const contents=chat.filter(m=>m.r!=='e').slice(-20).map(m=>({role:m.r==='u'?'user':'model',parts:[{text:m.t}]}));
+    const contents=cur.msgs.filter(m=>m.r!=='e').slice(-20).map(m=>({role:m.r==='u'?'user':'model',parts:[{text:m.t}]}));
     const reply=await _aiFetch({
       system_instruction:{parts:[{text:ctx}]},
       contents,
       generationConfig:{temperature:0.35,maxOutputTokens:8192},
     });
-    chat.push({r:'m',t:reply});
+    _aiPush(cid,{r:'m',t:reply});
   }catch(e){
-    chat.push({r:'e',t:e&&e.message?e.message:'Request failed — check your connection'});
+    _aiPush(cid,{r:'e',t:e&&e.message?e.message:'Request failed — check your connection'});
   }
-  _aiBusy=false;_aiSaveChat();renderProjAI();
+  _aiBusy=false;renderProjAI();
 }
 
 // Calls Gemini's generateContent REST API, falling back through AI_MODELS on
