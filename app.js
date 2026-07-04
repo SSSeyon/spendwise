@@ -1520,6 +1520,13 @@ function reloadMonth(m,y){
 // Haptic feedback — gracefully no-ops where Vibration API isn't supported
 function haptic(pattern=[10]){try{if(navigator.vibrate) navigator.vibrate(pattern);}catch{}}
 
+// Jumps straight to the Analytics → AI tab (used by the Gemini FAB)
+function openAiInsight(){
+  navTo('forecast');
+  const btn=document.getElementById('proj-tab-ai');
+  if(btn) projTab('ai',btn);
+}
+
 function navTo(pg, deepCat){
   S.page=pg;
   try{localStorage.setItem('sw3_last_page',pg);}catch(e){}
@@ -1528,9 +1535,17 @@ function navTo(pg, deepCat){
   document.querySelectorAll('.bn').forEach(n=>n.classList.toggle('active',n.dataset.pg===pg));
   document.getElementById('app-body').scrollTop=0;
   const fab=document.getElementById('fab');
-  if(['dashboard','expenses','accounts','forecast','debtors'].includes(pg)) fab.className='fab'; else fab.className='fab hidden';
-  if(pg==='debtors') fab.onclick=()=>openDebMod();
-  else fab.onclick=()=>openExpModal('expense');
+  if(pg==='forecast'){
+    fab.className='fab fab-ai';
+    fab.innerHTML='<img src="Logos/Gemini.webp" alt="AI">';
+    fab.onclick=()=>openAiInsight();
+  }else if(['dashboard','expenses','accounts','debtors'].includes(pg)){
+    fab.className='fab';
+    fab.innerHTML='+';
+    fab.onclick=pg==='debtors'?()=>openDebMod():()=>openExpModal('expense');
+  }else{
+    fab.className='fab hidden';
+  }
   if(pg==='expenses'&&deepCat){
     S.expCat=deepCat;
     renderExpenses();
@@ -6792,7 +6807,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.2.3</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.2.3: AI now supports multiple separate conversations — tap ＋ New to start one, switch between them, and delete individual chats. Pull-to-refresh no longer fires while scrolling the Analytics tab.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.2.4</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.2.4: The Analytics tab now shows a shimmering Gemini button in place of the add-transaction button — tap it to jump straight to the AI Analyst.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7538,7 +7553,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.2.3';
+const APP_VERSION='v4.2.4';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
