@@ -1071,10 +1071,15 @@ function startRealtimeListeners(){
     .onSnapshot(snap=>{
       if(!snap.exists||snap.metadata.hasPendingWrites) return;
       const d=snap.data()||{};
-      if(d.platforms&&d.platforms.length)cSet(PLATFORMS_KEY,d.platforms);
-      if(d.invMeta&&Object.keys(d.invMeta).length)cSet(INV_META_KEY,d.invMeta);
-      if(d.invSubs&&Object.keys(d.invSubs).length)cSet(INV_SUBS_KEY,d.invSubs);
-      renderInvestments();renderDashboard();
+      // Firestore still delivers a "server ack" event for our OWN writes once
+      // they commit (hasPendingWrites only filters the first, optimistic echo)
+      // — comparing against the local cache turns that ack into a no-op instead
+      // of a full re-render that would blow away a logo input mid-keystroke.
+      let changed=false;
+      if(d.platforms&&d.platforms.length&&JSON.stringify(d.platforms)!==JSON.stringify(getPlatforms())){cSet(PLATFORMS_KEY,d.platforms);changed=true;}
+      if(d.invMeta&&Object.keys(d.invMeta).length&&JSON.stringify(d.invMeta)!==JSON.stringify(getInvMeta())){cSet(INV_META_KEY,d.invMeta);changed=true;}
+      if(d.invSubs&&Object.keys(d.invSubs).length&&JSON.stringify(d.invSubs)!==JSON.stringify(getInvSubs())){cSet(INV_SUBS_KEY,d.invSubs);changed=true;}
+      if(changed){PLATFORMS=getPlatforms();renderInvestments();renderDashboard();}
     },err=>console.warn('invConfig listener:',err));
 
   // Net worth config — real-time cross-device sync
@@ -4047,13 +4052,18 @@ function _resetIncModal(){
 // INVESTMENTS
 // ══════════════════════════════════════════════════════════════════════════
 function _getInvData(){
-  // Always use freshest data: cache for current month, fallback to any cached month
-  const _cached=cGet(CK.inv(S.expMonth,S.expYear));
-  if(_cached&&Object.keys(_cached).some(k=>!['month','year'].includes(k)&&_cached[k]>0)){
-    S.investments={..._cached};
-  } else if(!S.investments||!Object.keys(S.investments).filter(k=>!['month','year'].includes(k)).length){
-    const allCacheKeys=Object.keys(localStorage).filter(k=>k.startsWith('sw3_inv_'));
-    for(const k of allCacheKeys){const v=cGet(k);if(v&&Object.keys(v).some(ky=>!['month','year'].includes(ky)&&v[ky]>0)){S.investments={...v};break;}}
+  // Always use freshest data for the month currently selected on the Accounts
+  // page (S.cashMonth/S.cashYear — same month the Cash tab follows). Falls
+  // back to the previous month's cache as a placeholder while the live fetch
+  // (loadInvData, kicked off by changeCashMonth) is in flight — never an
+  // arbitrary cached month, which used to surface stale/wrong-month data.
+  const cur=cGet(CK.inv(S.cashMonth,S.cashYear));
+  if(cur&&Object.keys(cur).some(k=>!['month','year'].includes(k)&&cur[k]>0)){
+    S.investments={...cur};
+  } else {
+    const prevM=S.cashMonth===1?12:S.cashMonth-1,prevY=S.cashMonth===1?S.cashYear-1:S.cashYear;
+    const prev=cGet(CK.inv(prevM,prevY));
+    S.investments=(prev&&Object.keys(prev).some(k=>!['month','year'].includes(k)&&prev[k]>0))?{...prev}:{};
   }
   return S.investments;
 }
@@ -4062,7 +4072,7 @@ function _renderInvInto(suffix){
   // suffix = '' for pg-investments, '-2' for pg-accounts acct-invest tab
   const s=suffix;
   const inv=_getInvData(),total=PLATFORMS.reduce((acc,p)=>acc+(inv[p.key]||0),0);
-  const cur=S.dashCurrency,m=S.expMonth,y=S.expYear;
+  const cur=S.dashCurrency,m=S.cashMonth,y=S.cashYear;
   const fxRates=getFxRates(m,y);
   const elTotal=document.getElementById('inv-total'+s);
   const elPlatforms=document.getElementById('inv-platforms'+s);
@@ -4322,7 +4332,7 @@ function openInvAdjModal(pKey, subId, type){
   const sub=subs.find(s=>s.id===subId);
   if(!sub) return;
   const p=PLATFORMS.find(pl=>pl.key===pKey);
-  const m=S.expMonth,y=S.expYear;
+  const m=S.cashMonth,y=S.cashYear;
   const isUSD=p&&p.currency==='USD';
   const fxRates=getFxRates(m,y);
   const fxRate=isUSD?(fxRates.USD||1600):1;
@@ -4352,7 +4362,7 @@ async function applyInvAdjust(){
   const notes=document.getElementById('inv-adj-notes').value.trim();
   const p=PLATFORMS.find(pl=>pl.key===_adjPKey);
   const isUSD=p&&p.currency==='USD';
-  const m=S.expMonth,y=S.expYear;
+  const m=S.cashMonth,y=S.cashYear;
   const fxRate=isUSD?(getFxRates(m,y).USD||1600):1;
   const amtNGN=Math.round(isUSD?amt*fxRate:amt); // may be negative for gain_loss
 
@@ -4417,7 +4427,7 @@ function openLiqModal(pKey, subId){
   const sub=subs.find(s=>s.id===subId);
   if(!sub) return;
   const p=PLATFORMS.find(pl=>pl.key===pKey);
-  const m=S.expMonth,y=S.expYear;
+  const m=S.cashMonth,y=S.cashYear;
   const fxRates=getFxRates(m,y);
   const isUSD=p&&p.currency==='USD';
   const isGBP=p&&p.currency==='GBP';
@@ -4465,7 +4475,7 @@ async function confirmLiquidation(){
   saveSubsForPlatform(_liqPKey,subs);
 
   // Recompute and persist platform total
-  const m=S.expMonth,y=S.expYear;
+  const m=S.cashMonth,y=S.cashYear;
   const newPlatTotal=subs.reduce((sum,s)=>sum+(Number(s.principal)||0),0);
   const invData={...(cGet(CK.inv(m,y))||S.investments),month:m,year:y};
   invData[_liqPKey]=newPlatTotal;
@@ -4507,15 +4517,15 @@ async function saveInvFromEdit(){
   if(S.saving) return;S.saving=true;setSyncStatus('syncing');
   try{
     PLATFORMS=getPlatforms();
-    const data={month:S.expMonth,year:S.expYear};
-    const fxRates=getFxRates(S.expMonth,S.expYear);
+    const data={month:S.cashMonth,year:S.cashYear};
+    const fxRates=getFxRates(S.cashMonth,S.cashYear);
     // Process each platform
     PLATFORMS.forEach(p=>{
       // Check if any edit panel is open for this platform (either suffix)
       const panel=document.getElementById('inv-edit-panel-'+p.key+'-2')||document.getElementById('inv-edit-panel-'+p.key);
       if(!panel||panel.style.display==='none'){
         // Not opened — carry forward existing stored value
-        const existing=cGet(CK.inv(S.expMonth,S.expYear));
+        const existing=cGet(CK.inv(S.cashMonth,S.cashYear));
         if(existing&&existing[p.key]!=null) data[p.key]=existing[p.key];
         return;
       }
@@ -4563,10 +4573,10 @@ async function saveInvFromEdit(){
         const allMeta=getInvMeta();allMeta[p.key]=meta;saveInvMeta(allMeta);
       }
     });
-    S.investments=data;cSet(CK.inv(S.expMonth,S.expYear),data);
+    S.investments=data;cSet(CK.inv(S.cashMonth,S.cashYear),data);
     renderInvestments();renderDashboard();
-    try{await db.collection('investments').doc(sid(S.expMonth,S.expYear)).set(data,{merge:true});toast('Balances saved');haptic([8,40,8]);setSyncStatus('synced');}
-    catch(e){oqAdd('investments',sid(S.expMonth,S.expYear),data,true);toast('Saved offline — will sync when connected');}
+    try{await db.collection('investments').doc(sid(S.cashMonth,S.cashYear)).set(data,{merge:true});toast('Balances saved');haptic([8,40,8]);setSyncStatus('synced');}
+    catch(e){oqAdd('investments',sid(S.cashMonth,S.cashYear),data,true);toast('Saved offline — will sync when connected');}
   }catch(e){console.error('saveInvFromEdit error',e);toast('Error saving — please try again');setSyncStatus('error');}
   finally{S.saving=false;}
 }
@@ -4733,7 +4743,14 @@ async function changeCashMonth(m){
     if(Object.keys(seed).length) S.cash=seed;
   }
   renderCashPage();
-  if(db&&navigator.onLine){loadCashData(m,S.cashYear).then(()=>{if(S.cashMonth===m)renderCashPage();}).catch(()=>{});}
+  // Investments live on the same Accounts page and follow this same month —
+  // paint instantly from cache (or the previous month's cache as a
+  // placeholder — see _getInvData), then refresh live like Cash does.
+  renderInvestments();
+  if(db&&navigator.onLine){
+    loadCashData(m,S.cashYear).then(()=>{if(S.cashMonth===m)renderCashPage();}).catch(()=>{});
+    loadInvData(m,S.cashYear).then(()=>{if(S.cashMonth===m)renderInvestments();}).catch(()=>{});
+  }
   startRealtimeListeners();
 }
 async function saveCash(){
@@ -4839,7 +4856,7 @@ async function saveMoveFunds(){
   const to    = document.getElementById('move-to').value;
   const date  = document.getElementById('move-date').value || todayStr();
   const notes = document.getElementById('move-notes').value.trim();
-  const m = S.expMonth, y = S.expYear;
+  const m = S.cashMonth, y = S.cashYear;
 
   const _mfx = getFxRates(m,y).USD||1650;
 
@@ -5188,6 +5205,11 @@ function acctTab(tab, btn){
   ['cash','invest','debtors','loans'].forEach(t=>{const el=document.getElementById('acct-'+t);if(el)el.style.display=t===tab?'block':'none';});
   btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active');
+  // The month pill only applies to Cash/Investments, which are stored as
+  // monthly snapshots — Debtors/Loans are running balances with no per-month
+  // history, so showing the pill there would wrongly imply it changes them.
+  const monthsRow=document.getElementById('cash-months');
+  if(monthsRow) monthsRow.style.display=(tab==='debtors'||tab==='loans')?'none':'flex';
   if(tab==='debtors') renderDebtors();
   if(tab==='loans') renderLoans();
 }
