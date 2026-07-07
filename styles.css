@@ -181,13 +181,18 @@ body.light .theme-btn:hover{color:#c68a00;background:rgba(230,168,0,0.1)}
 .btn-full{width:100%}
 .btn:disabled{opacity:0.4;cursor:not-allowed;transform:none!important}
 
+/* ── PER-CARD EYE (hide figures) TOGGLE ── */
+.eye-btn{background:none;border:none;padding:2px 4px;margin-left:6px;cursor:pointer;color:var(--text3);display:inline-flex;align-items:center;vertical-align:middle;border-radius:4px;line-height:0}
+.eye-btn:hover{color:var(--text2)}
+.masked{font-family:var(--mono);color:var(--text3);letter-spacing:1px}
+
 /* ── FAB ── */
 .fab{position:fixed;bottom:calc(var(--nh) + 16px);right:18px;width:48px;height:48px;border-radius:50%;background:var(--accent);color:#fff;border:none;font-size:1.5rem;cursor:pointer;z-index:90;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(20,184,166,0.45);transition:all 0.18s}
 .fab:hover{transform:scale(1.07)}
 .fab.hidden{display:none}
 .fab.fab-ai{background:linear-gradient(135deg,#4285f4,#9b72cb 55%,#d96570);box-shadow:0 4px 18px rgba(155,114,203,0.5);overflow:hidden}
 .fab.fab-ai img{width:26px;height:26px;object-fit:contain;position:relative;z-index:1;pointer-events:none}
-.fab.fab-ai::before{content:'';position:absolute;inset:0;background:linear-gradient(115deg,transparent 35%,rgba(255,255,255,0.6) 50%,transparent 65%);background-size:220% 220%;animation:fabShimmer 2.6s ease-in-out infinite}
+.fab.fab-ai::before{content:'';position:absolute;inset:0;background:linear-gradient(115deg,transparent 35%,rgba(255,255,255,0.28) 50%,transparent 65%);background-size:220% 220%;animation:fabShimmer 4.5s ease-in-out infinite}
 @keyframes fabShimmer{0%{background-position:160% 0}100%{background-position:-60% 0}}
 
 /* ── MODALS ── */
