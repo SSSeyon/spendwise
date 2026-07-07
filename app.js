@@ -336,6 +336,17 @@ async function loadInvConfig(){
   }catch(e){console.warn('loadInvConfig failed',e);}
 }
 
+// Guards migrateToSubs' persistent write below. Set true once this session has
+// actually loaded real invSubs/investments data from Firestore (see initFirebase).
+// Without this gate, migrateToSubs ran on the very first synchronous render at
+// boot — before Firestore had a chance to populate the cache — saw an empty
+// subs array (because it hadn't loaded yet, not because it was genuinely
+// empty), and PERSISTED a synthetic single "Investment 1" record (assetClass
+// defaulted to 'equity', principal defaulted to 0) that overwrote the real,
+// multi-entry sub-investment history in Firestore. Reads before the gate opens
+// still return a synthetic in-memory record so the UI has something to show;
+// they just don't persist it.
+let _invMigrateGate=false;
 function migrateToSubs(pKey){
   const existing=getSubsForPlatform(pKey);
   if(existing.length) return existing;
@@ -345,7 +356,7 @@ function migrateToSubs(pKey){
     assetClass:meta.assetClass||'equity',rate:meta.interestRate||'',
     compoundType:meta.compoundType||'daily_accrual',
     startDate:meta.startDate||'',maturityDate:meta.maturityDate||''};
-  saveSubsForPlatform(pKey,[sub]);
+  if(_invMigrateGate) saveSubsForPlatform(pKey,[sub]);
   return [sub];
 }
 
@@ -937,11 +948,12 @@ function initFirebase(){
     firebase.initializeApp({apiKey:"AIzaSyCIe7f02DrbrwZLIBmNlvslXWmNLVMiluw",authDomain:"spendwise-d6393.firebaseapp.com",projectId:"spendwise-d6393",storageBucket:"spendwise-d6393.firebasestorage.app",messagingSenderId:"460779232494",appId:"1:460779232494:web:cd3c178b88d0f22044a7ff"});
     db=firebase.firestore();
     db.enablePersistence().catch(()=>{});
-    if(!navigator.onLine){setSyncStatus('offline');return;}
+    if(!navigator.onLine){_invMigrateGate=true;setSyncStatus('offline');return;}
     setSyncStatus('syncing');
     try{
       const m=S.expMonth,y=S.expYear;
       await syncAll();
+      _invMigrateGate=true;
       // Always reload S.* from cache after sync — loadX functions
       // wrote fresh Firebase data to cache; we must pick it up here
       S.txns=cGet(CK.txns(m,y))||S.txns;
@@ -6892,7 +6904,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.3.1</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.3.1: Fixed Investments not following the Accounts-page month switch (and a rare case where edits could save under the wrong month). Fixed the investment logo textbox losing focus while typing. Debtors/Loans no longer show a misleading month selector.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.3.2</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.3.2: Fixed a boot-timing bug where investment sub-accounts, asset classifications, and platform logos could get silently overwritten with defaults if the app rendered before Firestore data finished loading. Auto-migration now only writes after a real sync completes.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7638,7 +7650,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.3.1';
+const APP_VERSION='v4.3.2';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
