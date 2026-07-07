@@ -842,6 +842,26 @@ function fmtPlatformVal(rawVal,platformKey,currency,m,y){
   return fmtCur(rawVal,currency,m,y);
 }
 
+// ── Per-card privacy (eye) toggles ─────────────────────────────────────────
+// Each money card gets its own independent toggle, persisted device-locally.
+// Only actual cash figures are masked — percentages, badges and progress bars
+// always stay visible.
+const HIDDEN_CARDS_LS='sw3_hidden_cards';
+const _EYE_ON='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+const _EYE_OFF='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+function _hiddenCards(){if(!S.hiddenCards)S.hiddenCards=cGet(HIDDEN_CARDS_LS)||{};return S.hiddenCards;}
+function _isHidden(key){return !!_hiddenCards()[key];}
+function maskIf(key,disp){return _isHidden(key)?'<span class="masked">••••••</span>':disp;}
+function eyeBtn(key,fn){return`<button class="eye-btn" onclick="toggleCardEye('${key}','${fn||''}',event)" title="${_isHidden(key)?'Show figures':'Hide figures'}">${_isHidden(key)?_EYE_OFF:_EYE_ON}</button>`;}
+function toggleCardEye(key,fn,ev){
+  if(ev)ev.stopPropagation();
+  const h=_hiddenCards();
+  if(h[key])delete h[key];else h[key]=true;
+  cSet(HIDDEN_CARDS_LS,h);
+  const f=fn&&window[fn];
+  if(typeof f==='function')f();
+}
+
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);}
 
 // ── UNDO TOAST ─────────────────────────────────────────────────────────────
@@ -1694,7 +1714,8 @@ function renderDashboard(){
   const debtNW=_nwCfg.includeDebtors!==false?S.debtors.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0):0;
   const nw=invTotal+cashTotal+debtNW;
   const _nwParts=[_nwCfg.includeInvestments!==false?'Investments':null,_nwAccts.length?'Cash':null,_nwCfg.includeDebtors!==false&&debtNW?'Debtors':null].filter(Boolean);
-  document.getElementById('dash-nw').textContent=fmtCur(nw,cur,m,y)||'—';
+  document.getElementById('dash-nw').innerHTML=maskIf('nw',fmtCur(nw,cur,m,y)||'—');
+  const _nwEye=document.getElementById('nw-eye');if(_nwEye)_nwEye.innerHTML=eyeBtn('nw','renderDashboard');
   document.getElementById('dash-nw-sub').innerHTML=`${_nwParts.join(' + ')} · ${MONTHS[m-1]} ${y}`+_getNWDeltaBadge(m,y);
 
   const st=bSt(spent,budgTotal);
@@ -1726,10 +1747,10 @@ function renderDashboard(){
       :`<span title="Remaining budget ÷ ${_daysLeft} days left">${fmtCur(_safe,cur,m,y)}/day safe · ${_daysLeft}d left</span>`;
   }
   document.getElementById('dash-stats').innerHTML=`
-    <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('expenses')"><div class="clabel">Spent ›</div><div class="cval-sm">${fmtCur(spent,cur,m,y)}${momBadge(spent,prevSpent,true)}</div><div class="prog"><div class="pf ${st}" style="width:${budgTotal?Math.min(spent/budgTotal*100,100):0}%"></div></div><div class="csub">${_spentFooter}</div></div>
-    <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('income')"><div class="clabel">Income ›</div><div class="cval-sm" style="color:var(--accent)">${fmtCur(incomeDisplay,cur,m,y)}${momBadge(incomeDisplay,prevIncAmt,false)}</div><div class="csub">This month</div></div>
-    <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('cash')"><div class="clabel">Cash ›</div><div class="cval-sm">${cashTotal?fmtCur(cashTotal,cur,m,y):'—'}</div><div class="csub">All accounts</div></div>
-    <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Investments</div><div class="cval-sm">${invTotal?fmtCur(invTotal,cur,m,y):'—'}</div><div class="csub">All platforms</div></div>
+    <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('expenses')"><div class="clabel">Spent ›${eyeBtn('dash-spent','renderDashboard')}</div><div class="cval-sm">${maskIf('dash-spent',fmtCur(spent,cur,m,y))}${momBadge(spent,prevSpent,true)}</div><div class="prog"><div class="pf ${st}" style="width:${budgTotal?Math.min(spent/budgTotal*100,100):0}%"></div></div><div class="csub">${_isHidden('dash-spent')?'<span class="masked">••••••</span>':_spentFooter}</div></div>
+    <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('income')"><div class="clabel">Income ›${eyeBtn('dash-income','renderDashboard')}</div><div class="cval-sm" style="color:var(--accent)">${maskIf('dash-income',fmtCur(incomeDisplay,cur,m,y))}${momBadge(incomeDisplay,prevIncAmt,false)}</div><div class="csub">This month</div></div>
+    <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('cash')"><div class="clabel">Cash ›${eyeBtn('dash-cash','renderDashboard')}</div><div class="cval-sm">${cashTotal?maskIf('dash-cash',fmtCur(cashTotal,cur,m,y)):'—'}</div><div class="csub">All accounts</div></div>
+    <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Investments${eyeBtn('dash-inv','renderDashboard')}</div><div class="cval-sm">${invTotal?maskIf('dash-inv',fmtCur(invTotal,cur,m,y)):'—'}</div><div class="csub">All platforms</div></div>
   `;
 
   // Category spend
@@ -1770,9 +1791,11 @@ function renderDashboard(){
   // Cash (collapsible card)
   const cashAccts=getCashAccounts();
   const cashBadgeEl=document.getElementById('dash-cash-badge');
-  if(cashBadgeEl) cashBadgeEl.textContent=cashTotal?fmtCur(cashTotal,cur,m,y):'—';
+  if(cashBadgeEl) cashBadgeEl.innerHTML=cashTotal?maskIf('dash-cash-list',fmtCur(cashTotal,cur,m,y)):'—';
+  const cashEyeEl=document.getElementById('dash-cash-eye');
+  if(cashEyeEl) cashEyeEl.innerHTML=eyeBtn('dash-cash-list','renderDashboard');
   const cashBodyEl=document.getElementById('dash-cash-body');
-  if(cashBodyEl) cashBodyEl.innerHTML=cashAccts.map((b,i)=>{const val=cash[b]||0;const pct=cashTotal?Math.round((isUSDCashAccount(b)?val*(_fxR.USD||1650):val)/cashTotal*100):0;const dispVal=isUSDCashAccount(b)?(cur==='NATIVE'?'$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fmtCur(val*(_fxR.USD||1650),cur,m,y)):fmtCur(val,cur,m,y);return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;${i<cashAccts.length-1?'border-bottom:1px solid var(--border)':''};cursor:pointer" onclick="drillDownAccount('${jsq(b)}')"><div style="display:flex;align-items:center;gap:8px">${bankLogoEl(b,22)}<div><div style="font-size:0.78rem;font-weight:600">${b}</div><div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}% of total</div></div></div><div style="font-family:var(--mono);font-size:0.86rem;color:${val?'var(--blue)':'var(--text3)'};">${val?dispVal:'—'}</div></div>`;}).join('');
+  if(cashBodyEl) cashBodyEl.innerHTML=cashAccts.map((b,i)=>{const val=cash[b]||0;const pct=cashTotal?Math.round((isUSDCashAccount(b)?val*(_fxR.USD||1650):val)/cashTotal*100):0;const dispVal=isUSDCashAccount(b)?(cur==='NATIVE'?'$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fmtCur(val*(_fxR.USD||1650),cur,m,y)):fmtCur(val,cur,m,y);return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;${i<cashAccts.length-1?'border-bottom:1px solid var(--border)':''};cursor:pointer" onclick="drillDownAccount('${jsq(b)}')"><div style="display:flex;align-items:center;gap:8px">${bankLogoEl(b,22)}<div><div style="font-size:0.78rem;font-weight:600">${b}</div><div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}% of total</div></div></div><div style="font-family:var(--mono);font-size:0.86rem;color:${val?'var(--blue)':'var(--text3)'};">${val?maskIf('dash-cash-list',dispVal):'—'}</div></div>`;}).join('');
 
   // Investments (collapsible card) — always use migrateToSubs so legacy flat data is picked up
   PLATFORMS=getPlatforms();
@@ -1781,7 +1804,9 @@ function renderDashboard(){
     const subTotal=subs.reduce((ss,sb)=>ss+(Number(sb.principal)||0),0);
     return s+(subTotal>0?subTotal:(inv[p.key]||0));
   },0);
-  document.getElementById('dash-inv-total').textContent=dashInvTotal?fmtCur(dashInvTotal,cur==='NATIVE'?'NGN':cur,m,y):'—';
+  document.getElementById('dash-inv-total').innerHTML=dashInvTotal?maskIf('dash-inv-list',fmtCur(dashInvTotal,cur==='NATIVE'?'NGN':cur,m,y)):'—';
+  const invEyeEl=document.getElementById('dash-inv-eye');
+  if(invEyeEl) invEyeEl.innerHTML=eyeBtn('dash-inv-list','renderDashboard');
   document.getElementById('dash-inv').innerHTML=PLATFORMS.map(p=>{
     const subs=migrateToSubs(p.key);
     const subTotal=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
@@ -1789,7 +1814,7 @@ function renderDashboard(){
     const pct=dashInvTotal>0?((val/dashInvTotal)*100).toFixed(1):'0.0';
     const dispVal=fmtPlatformVal(val,p.key,cur,m,y);
     const badge=`<span style="font-size:0.56rem;padding:1px 4px;border-radius:3px;background:var(--bg3);color:var(--text3);margin-left:4px">${p.currency}</span>`;
-    return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="drillDownInvPlatform('${p.key}')"><div style="display:flex;align-items:center;gap:8px">${platformLogoEl(p.key,p.color,22)}<div><div style="font-size:0.78rem;font-weight:600">${p.label}${badge}</div><div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono)">${pct}%</div></div></div><div style="font-family:var(--mono);font-size:0.84rem;color:${val?p.color:'var(--text3)'};">${val?dispVal:'—'}</div></div>`;
+    return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="drillDownInvPlatform('${p.key}')"><div style="display:flex;align-items:center;gap:8px">${platformLogoEl(p.key,p.color,22)}<div><div style="font-size:0.78rem;font-weight:600">${p.label}${badge}</div><div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono)">${pct}%</div></div></div><div style="font-family:var(--mono);font-size:0.84rem;color:${val?p.color:'var(--text3)'};">${val?maskIf('dash-inv-list',dispVal):'—'}</div></div>`;
   }).join('');
   const active=PLATFORMS.filter(p=>{const subs=migrateToSubs(p.key);const st=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);return(st>0?st:(inv[p.key]||0))>0;});
   document.getElementById('dash-abar').innerHTML=dashInvTotal&&active.length?active.map(p=>{const subs=migrateToSubs(p.key);const st=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);const val=st>0?st:(inv[p.key]||0);return`<div style="flex:${val};background:${p.color};opacity:0.8"></div>`;}).join(''):'';
@@ -2878,7 +2903,7 @@ function renderIncome(){
   const listEl=document.getElementById('inc-list');
   if(!summEl||!listEl) return;
   summEl.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center">
-    <div><div class="clabel">Total Income — ${MONTHS[m-1]} ${y}</div><div class="cval" style="color:var(--accent)">${fmtCur(totalNGN,cur,m,y)}</div></div>
+    <div><div class="clabel">Total Income — ${MONTHS[m-1]} ${y}${eyeBtn('inc-summary','renderIncome')}</div><div class="cval" style="color:var(--accent)">${maskIf('inc-summary',fmtCur(totalNGN,cur,m,y))}</div></div>
     <div style="text-align:right"><div class="clabel">Count</div><div class="cval">${inc.length}</div></div>
   </div>`;
   if(!inc.length){listEl.innerHTML=`<div class="empty"><div class="empty-i">↑</div>No income recorded for ${MONTHS[m-1]}</div>`;return;}
@@ -3003,10 +3028,10 @@ function renderExpenses(){
   const filterDesc=S.expCat!=='All'?` · ${S.expCat}`:'';
   document.getElementById('exp-summary').innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:center${Object.keys(catSpend).length?';margin-bottom:12px':''}">
-      <div><div class="clabel">Total — ${MONTHS[m-1]}${filterDesc}</div><div class="cval">${fmtCur(S.expCat!=='All'?filtered.reduce((s,t)=>s+(t.amount||0),0):total,cur,m,y)}</div></div>
+      <div><div class="clabel">Total — ${MONTHS[m-1]}${filterDesc}${eyeBtn('exp-summary','renderExpenses')}</div><div class="cval">${maskIf('exp-summary',fmtCur(S.expCat!=='All'?filtered.reduce((s,t)=>s+(t.amount||0),0):total,cur,m,y))}</div></div>
       <div style="text-align:right"><div class="clabel">Count</div><div class="cval">${filtered.length}${filtered.length!==txns.length?`<span style="font-size:0.6rem;color:var(--text3)"> / ${txns.length}</span>`:''}</div></div>
     </div>
-    ${Object.keys(catSpend).length?`<div style="display:flex;flex-wrap:wrap;gap:5px">${Object.entries(catSpend).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([c,amt])=>`<div onclick="quickCatFilter('${jsq(c)}')" style="padding:2px 9px;border-radius:20px;background:${S.expCat===c?'var(--adim)':'var(--bg2)'};border:1px solid ${S.expCat===c?'var(--accent)':'var(--border)'};font-size:0.63rem;color:${S.expCat===c?'var(--accent)':'var(--text2)'};cursor:pointer">${c} · ${fmtCur(amt,cur,m,y)}</div>`).join('')}</div>`:''}`;
+    ${Object.keys(catSpend).length?`<div style="display:flex;flex-wrap:wrap;gap:5px">${Object.entries(catSpend).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([c,amt])=>`<div onclick="quickCatFilter('${jsq(c)}')" style="padding:2px 9px;border-radius:20px;background:${S.expCat===c?'var(--adim)':'var(--bg2)'};border:1px solid ${S.expCat===c?'var(--accent)':'var(--border)'};font-size:0.63rem;color:${S.expCat===c?'var(--accent)':'var(--text2)'};cursor:pointer">${c} · ${maskIf('exp-summary',fmtCur(amt,cur,m,y))}</div>`).join('')}</div>`:''}`;
 
   const listEl=document.getElementById('exp-list');
   if(!filtered.length){
@@ -4055,7 +4080,7 @@ function _renderInvInto(suffix){
 
   if(elTotal){
     const intBadge=fiPlats.filter(p=>getInvPlatformMeta(p.key).interestRate).length?`<span class="int-badge">Interest-bearing</span>`:'';
-    elTotal.innerHTML=`<div class="clabel">Total Portfolio — ${MONTHS[m-1]} ${y}</div><div class="cval">${total?fmtCur(total,cur==='NATIVE'?'NGN':cur,m,y):'—'}${intBadge}</div><div class="csub" style="display:flex;gap:10px;margin-top:4px"><span style="color:var(--blue)">Equities ${eqTotal?fmtCur(eqTotal,cur==='NATIVE'?'NGN':cur,m,y):'—'}</span><span style="color:var(--gold)">Fixed Income ${fiTotal?fmtCur(fiTotal,cur==='NATIVE'?'NGN':cur,m,y):'—'}</span></div>`;
+    elTotal.innerHTML=`<div class="clabel">Total Portfolio — ${MONTHS[m-1]} ${y}${eyeBtn('inv-page','renderInvestments')}</div><div class="cval">${total?maskIf('inv-page',fmtCur(total,cur==='NATIVE'?'NGN':cur,m,y)):'—'}${intBadge}</div><div class="csub" style="display:flex;gap:10px;margin-top:4px"><span style="color:var(--blue)">Equities ${eqTotal?maskIf('inv-page',fmtCur(eqTotal,cur==='NATIVE'?'NGN':cur,m,y)):'—'}</span><span style="color:var(--gold)">Fixed Income ${fiTotal?maskIf('inv-page',fmtCur(fiTotal,cur==='NATIVE'?'NGN':cur,m,y)):'—'}</span></div>`;
   }
 
   function _renderPlatRow(p){
@@ -4099,8 +4124,8 @@ function _renderInvInto(suffix){
             <div style="font-size:0.6rem;color:var(--text3);margin-top:1px">${sub.startDate?'Since '+fmtDate(sub.startDate):''}${matTag}</div>
           </div>
           <div style="text-align:right;flex-shrink:0;margin-left:10px">
-            <div style="font-size:0.78rem;font-family:var(--mono);color:${p.color}">${dispCcy}${dispTotal}${intLine}</div>
-            ${interest>0?`<div style="font-size:0.58rem;color:var(--text3)">${dispCcy}${dispPrincipal} principal</div>`:''}
+            <div style="font-size:0.78rem;font-family:var(--mono);color:${p.color}">${maskIf('inv-page',`${dispCcy}${dispTotal}${intLine}`)}</div>
+            ${interest>0&&!_isHidden('inv-page')?`<div style="font-size:0.58rem;color:var(--text3)">${dispCcy}${dispPrincipal} principal</div>`:''}
             ${liqBtn}
           </div>
         </div>`};
@@ -4178,8 +4203,8 @@ function _renderInvInto(suffix){
           <div class="ppct">${pct}%</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
-          <div class="pval" style="color:${platformNGN?p.color:'var(--text3)'}">${platformNGN?dispMainVal:'—'}</div>
-          ${totalInterestNGN>0?`<div style="font-size:0.58rem;color:var(--gold);font-family:var(--mono)">+${isUSD?'$'+((totalInterestNGN/fxRate)).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(Math.round(totalInterestNGN))} interest</div>`:''}
+          <div class="pval" style="color:${platformNGN?p.color:'var(--text3)'}">${platformNGN?maskIf('inv-page',dispMainVal):'—'}</div>
+          ${totalInterestNGN>0&&!_isHidden('inv-page')?`<div style="font-size:0.58rem;color:var(--gold);font-family:var(--mono)">+${isUSD?'$'+((totalInterestNGN/fxRate)).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(Math.round(totalInterestNGN))} interest</div>`:''}
         </div>
       </div>
       ${subs.length>0?`<div id="inv-sub-display-${p.key}${s}" style="display:none;margin-top:4px">${subRows.map(r=>r.html).join('')}</div>`:''}
@@ -4622,7 +4647,7 @@ function renderCashPage(){
   const total=ACCTS.reduce((s,b)=>{const v=cash[b]||0;return s+(isUSDCashAccount(b)?v*(fxR.USD||1650):v);},0);
   const total_ngn=total; // NGN-equivalent total for % calculations
   const intMeta=getCashInterestMeta();
-  document.getElementById('cash-summary').innerHTML=`<div class="clabel">Total Cash — ${MONTHS[m-1]} ${y}</div><div class="cval">${total?fmtCur(Math.round(total),cur,m,y):'—'}</div><div class="csub">${ACCTS.join(' · ')}</div>`;
+  document.getElementById('cash-summary').innerHTML=`<div class="clabel">Total Cash — ${MONTHS[m-1]} ${y}${eyeBtn('cash-page','renderCashPage')}</div><div class="cval">${total?maskIf('cash-page',fmtCur(Math.round(total),cur,m,y)):'—'}</div><div class="csub">${ACCTS.join(' · ')}</div>`;
   document.getElementById('cash-breakdown').innerHTML=ACCTS.map((b,i)=>{
     const val=cash[b]||0,pct=total_ngn?Math.round((isUSDCashAccount(b)?(val*(getFxRates(m,y).USD||1650)):val)/total_ngn*100):0;
     const ci=intMeta[b];
@@ -4637,7 +4662,7 @@ function renderCashPage(){
     } else {
       dispVal=fmtCur(val,cur,m,y);
     }
-    return`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;${i<ACCTS.length-1?'border-bottom:1px solid var(--border)':''}"><div style="display:flex;align-items:center;gap:8px">${bankLogoEl(b,26)}<div><div style="font-size:0.82rem;font-weight:600">${b}${intInfo}</div><div style="font-size:0.65rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}%</div>${intProjection}</div></div><div style="font-family:var(--mono);font-size:0.9rem;color:${val?'var(--blue)':'var(--text3)'}">${val?dispVal:'—'}</div></div>`;
+    return`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;${i<ACCTS.length-1?'border-bottom:1px solid var(--border)':''}"><div style="display:flex;align-items:center;gap:8px">${bankLogoEl(b,26)}<div><div style="font-size:0.82rem;font-weight:600">${b}${intInfo}</div><div style="font-size:0.65rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}%</div>${_isHidden('cash-page')?'':intProjection}</div></div><div style="font-family:var(--mono);font-size:0.9rem;color:${val?'var(--blue)':'var(--text3)'}">${val?maskIf('cash-page',dispVal):'—'}</div></div>`;
   }).join('');
   document.getElementById('cash-inputs').innerHTML=`<div class="gform">${ACCTS.map(b=>`<div class="ig"><label class="ilabel">${b} (${isUSDCashAccount(b)?'$':'₦'})</label><input class="ifield" type="text" id="cash-${b.toLowerCase().replace(/\s+/g,'-')}" placeholder="0" value="${cash[b]||''}"></div>`).join('')}</div>`;
   // Cash interest settings section
@@ -4896,7 +4921,7 @@ function renderDebtors(){
   const _dstats=document.getElementById('debtor-stats');
   const _dlist=document.getElementById('debtor-list');
   if(!_dstats||!_dlist) return; // elements only exist when Debtors tab is active
-  _dstats.innerHTML=`<div class="card card-sm" style="margin-bottom:0"><div class="clabel">Total Loaned</div><div class="cval-sm">${fmtCur(totalLoaned,cur,m,y)}</div></div><div class="card card-sm" style="margin-bottom:0"><div class="clabel">Expected Back</div><div class="cval-sm" style="color:var(--red)">${fmtCur(totalOwed,cur,m,y)}</div></div>`;
+  _dstats.innerHTML=`<div class="card card-sm" style="margin-bottom:0"><div class="clabel">Total Loaned${eyeBtn('deb-loaned','renderDebtors')}</div><div class="cval-sm">${maskIf('deb-loaned',fmtCur(totalLoaned,cur,m,y))}</div></div><div class="card card-sm" style="margin-bottom:0"><div class="clabel">Expected Back${eyeBtn('deb-owed','renderDebtors')}</div><div class="cval-sm" style="color:var(--red)">${maskIf('deb-owed',fmtCur(totalOwed,cur,m,y))}</div></div>`;
   if(!dbs.length){_dlist.innerHTML='<div class="empty"><div class="empty-i">⊟</div>No debtors yet</div>';return;}
   _dlist.innerHTML=dbs.map((d,idx)=>{
     const expectRepay=d.expectRepayment!==false;
@@ -5382,12 +5407,12 @@ function renderLoans(){
 
   _lstats.innerHTML=`
     <div class="card card-sm" style="margin-bottom:0">
-      <div class="clabel">Total Borrowed</div>
-      <div class="cval-sm">${fmtCur(totalBorrowed,cur,m,y)}</div>
+      <div class="clabel">Total Borrowed${eyeBtn('loan-borrowed','renderLoans')}</div>
+      <div class="cval-sm">${maskIf('loan-borrowed',fmtCur(totalBorrowed,cur,m,y))}</div>
     </div>
     <div class="card card-sm" style="margin-bottom:0">
-      <div class="clabel">Outstanding</div>
-      <div class="cval-sm" style="color:var(--red)">${fmtCur(totalOutstanding,cur,m,y)}</div>
+      <div class="clabel">Outstanding${eyeBtn('loan-out','renderLoans')}</div>
+      <div class="cval-sm" style="color:var(--red)">${maskIf('loan-out',fmtCur(totalOutstanding,cur,m,y))}</div>
     </div>`;
 
   if(!loans.length){
@@ -6380,8 +6405,8 @@ async function saveBudget(){
 function renderSettExport(){
   document.getElementById('sett-export').innerHTML=`
     <div class="exp-card"><div class="exp-card-title">Full Data Backup (JSON)</div><div class="exp-card-sub">Export everything — transactions, income, cash, investments, debtors, history — as a JSON file you can re-import later.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-p btn-sm" onclick="exportFullBackup()">↓ Download Backup JSON</button><button class="btn btn-g btn-sm" onclick="document.getElementById('backup-file-input').click()">↑ Restore from Backup</button></div><input type="file" id="backup-file-input" accept=".json,application/json" style="display:none" onchange="importFullBackup(event)"></div>
-    <div class="exp-card"><div class="exp-card-title">Export All Data</div><div class="exp-card-sub">All transactions (expenses + income), investment balances, and cash balances — 3 sheets, daily transaction detail.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-exp btn-sm" onclick="exportAll('csv')">↓ CSV</button><button class="btn btn-exp btn-sm" onclick="exportAll('xlsx')">↓ Excel</button></div></div>
-    <div class="exp-card"><div class="exp-card-title">Export by Month</div><div class="exp-card-sub">Select a month and export just that month.</div>
+    <div class="exp-card"><div class="exp-card-title">Export All Data</div><div class="exp-card-sub">Excel: one budget-workbook sheet per month — day-by-day expense matrix with totals &amp; budget, cash accounts, investments and summaries. CSV: flat transaction list.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-exp btn-sm" onclick="exportAll('csv')">↓ CSV</button><button class="btn btn-exp btn-sm" onclick="exportAll('xlsx')">↓ Excel</button></div></div>
+    <div class="exp-card"><div class="exp-card-title">Export by Month</div><div class="exp-card-sub">Select a month and export just that month — Excel uses the budget-workbook layout (expenses × days, cash, investments, summaries).</div>
     <div class="gform" style="margin-bottom:10px">
       <div class="ig"><label class="ilabel">Month</label><select class="sfield" id="exp-mo-sel">${Array.from({length:12},(_,i)=>i+1).reverse().map(m=>`<option value="${m}">${MONTHS[m-1]}</option>`).join('')}</select></div>
       <div class="ig"><label class="ilabel">Year</label><select class="sfield" id="exp-yr-sel"><option value="2026">2026</option><option value="2025">2025</option><option value="2024">2024</option></select></div>
@@ -6617,124 +6642,159 @@ function _buildTxnSheet(txns,incomeRecs,label){
   return rows;
 }
 
-function _buildInvSheet(invSnap){
-  // invSnap: [{month, year, label, platforms:[{name,value}]}]
-  const rows=[['Investments — Monthly Balances'],[]];
-  if(!invSnap||!invSnap.length){rows.push(['No investment data']);return rows;}
-  // Header: Month | Platform1 | Platform2 …
-  const platNames=[...new Set(invSnap.flatMap(s=>s.platforms.map(p=>p.name)))];
-  rows.push(['Month',...platNames,'Total']);
-  invSnap.forEach(s=>{
-    const vals=platNames.map(n=>{const p=s.platforms.find(x=>x.name===n);return p?p.value:0;});
-    rows.push([s.label,...vals,vals.reduce((a,b)=>a+b,0)]);
-  });
-  return rows;
-}
+// ── Workbook-style month sheets ────────────────────────────────────────────
+// Replicates the layout of the original hand-kept budget workbook: one sheet
+// per month — a day-by-day expense matrix (item rows × day columns with Total
+// formulas and the month's budget), then Cash blocks per account, Investments
+// per platform, and the summary tables. Values + number formats only (SheetJS
+// community edition can't write fills/fonts).
+const _XL_NUM='#,##0';
+function _xlN(v){return{v:Math.round((v||0)*100)/100,t:'n',z:_XL_NUM};}
+function _monthSheetName(m,y){return MONTHS[m-1].slice(0,3)+"'"+String(y).slice(2);}
 
-function _buildCashSheet(cashSnap){
-  // cashSnap: [{month, year, label, accounts:[{name,value}]}]
-  const rows=[['Cash — Monthly Balances'],[]];
-  if(!cashSnap||!cashSnap.length){rows.push(['No cash data']);return rows;}
-  const acctNames=[...new Set(cashSnap.flatMap(s=>s.accounts.map(a=>a.name)))];
-  rows.push(['Month',...acctNames,'Total']);
-  cashSnap.forEach(s=>{
-    const vals=acctNames.map(n=>{const a=s.accounts.find(x=>x.name===n);return a?a.value:0;});
-    rows.push([s.label,...vals,vals.reduce((a,b)=>a+b,0)]);
-  });
-  return rows;
-}
-
-function _buildDailySheet(txns, incomeRecs, label){
-  // One row per calendar day that has any activity, sorted ascending
-  const byDate={};
-  txns.forEach(t=>{
-    const d=t.date||'';
-    if(!byDate[d])byDate[d]={date:d,expenses:[],income:[]};
-    byDate[d].expenses.push(t);
-  });
-  (incomeRecs||[]).forEach(i=>{
-    const d=i.date||'';
-    if(!byDate[d])byDate[d]={date:d,expenses:[],income:[]};
-    byDate[d].income.push(i);
-  });
-  const dates=Object.keys(byDate).filter(Boolean).sort();
-  const rows=[[`${label} — Daily Summary`],[],
-    ['Date','Income (₦)','Expenses (₦)','Net (₦)','# Transactions','Detail']
-  ];
-  dates.forEach(d=>{
-    const day=byDate[d];
-    const totalInc=day.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-    const totalExp=day.expenses.reduce((s,t)=>s+(t.amount||0),0);
-    const net=totalInc-totalExp;
-    const count=day.income.length+day.expenses.length;
-    const detail=[
-      ...day.income.map(i=>`+${(i.amtNGN||i.amount||0).toLocaleString()} ${i.category||'Income'}${i.bank?' ('+i.bank+')':''}`),
-      ...day.expenses.map(t=>`-${(t.amount||0).toLocaleString()} ${t.category||''}${t.payee?' '+t.payee:''}${t.bank?' ('+t.bank+')':''}`)
-    ].join(' | ');
-    rows.push([d,totalInc||'',totalExp||'',net,count,detail]);
-  });
-  if(!dates.length)rows.push(['No data for this period']);
-  const totInc=txns.length?0:(incomeRecs||[]).reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-  const grandInc=(incomeRecs||[]).reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-  const grandExp=txns.reduce((s,t)=>s+(t.amount||0),0);
-  rows.push([],[`TOTAL`,'','','','','']);
-  rows.push(['',grandInc,grandExp,grandInc-grandExp,'','']);
-  return rows;
-}
-
-function _exportMultiSheet(txnRows,invRows,cashRows,filename,dailyRows){
-  if(typeof XLSX==='undefined'){toast('Excel library not loaded');return;}
-  const wb=XLSX.utils.book_new();
-  const wsTxn=XLSX.utils.aoa_to_sheet(txnRows);
-  wsTxn['!cols']=[{wch:12},{wch:10},{wch:18},{wch:24},{wch:12},{wch:24},{wch:14},{wch:14}];
-  XLSX.utils.book_append_sheet(wb,wsTxn,'Transactions');
-  if(dailyRows&&dailyRows.length){
-    const wsDaily=XLSX.utils.aoa_to_sheet(dailyRows);
-    wsDaily['!cols']=[{wch:14},{wch:16},{wch:16},{wch:16},{wch:14},{wch:80}];
-    XLSX.utils.book_append_sheet(wb,wsDaily,'Daily Summary');
+function _buildMonthMatrixWS(m,y,txns,incRecs,aux){
+  const days=new Date(y,m,0).getDate();
+  const lastCol=XLSX.utils.encode_col(6+days-1);   // day columns start at G
+  const pad5=[null,null,null,null,null];
+  const aoa=[];
+  // Rows 1-4: Date / Day / Day no / Period across the day columns
+  const dates=[],dayNames=[],dayNos=[],periods=[];
+  for(let d=1;d<=days;d++){
+    const dt=new Date(y,m-1,d);
+    const wd=dt.getDay()===0?7:dt.getDay();        // 1=Mon … 7=Sun
+    dates.push({v:dt,t:'d',z:'d/mmm'});
+    dayNames.push({v:dt,t:'d',z:'ddd'});
+    dayNos.push({v:wd,t:'n'});
+    periods.push(wd>=6?'Weekend':'Weekday');
   }
-  const wsInv=XLSX.utils.aoa_to_sheet(invRows);
-  wsInv['!cols']=[{wch:14},...(invRows[2]||[]).slice(1).map(()=>({wch:16}))];
-  XLSX.utils.book_append_sheet(wb,wsInv,'Investments');
-  const wsCash=XLSX.utils.aoa_to_sheet(cashRows);
-  wsCash['!cols']=[{wch:14},...(cashRows[2]||[]).slice(1).map(()=>({wch:16}))];
-  XLSX.utils.book_append_sheet(wb,wsCash,'Cash');
-  XLSX.writeFile(wb,filename+'.xlsx');
-  toast('Excel downloaded — 4 sheets: Transactions, Daily Summary, Investments, Cash');
+  aoa.push([...pad5,'Date',...dates]);
+  aoa.push([...pad5,'Day',...dayNames]);
+  aoa.push([...pad5,'Day no',...dayNos]);
+  aoa.push([...pad5,'Period',...periods]);
+  aoa.push([]);
+  // Actual expenses: one row per unique description (payee), grouped by category
+  const groups={};                                  // cat → {name → amount[days]}
+  txns.forEach(t=>{
+    const cat=t.category||'Others';
+    const name=(t.payee||'').trim()||cat;
+    // Undated records land on day 1 so the row total stays correct
+    const day=Math.min(days,Math.max(1,parseInt(String(t.date||'').slice(8,10),10)||1));
+    (groups[cat]=groups[cat]||{});
+    (groups[cat][name]=groups[cat][name]||Array(days).fill(0))[day-1]+=(t.amount||0);
+  });
+  aoa.push([null,'Actual expenses']);
+  aoa.push([null,'Expenses','Category','Total','Budget']);
+  const firstItem=aoa.length+1;                     // 1-based Excel row of first item
+  const budgetCats=(aux.budBy[sid(m,y)]||{}).categories||{};
+  Object.keys(groups).sort((a,b)=>a.localeCompare(b)).forEach(cat=>{
+    let first=true;
+    Object.keys(groups[cat]).sort((a,b)=>a.localeCompare(b)).forEach(name=>{
+      const r=aoa.length+1;
+      const cells=groups[cat][name].map(v=>v?_xlN(v):null);
+      const bud=first?budgetCats[ck(cat)]:null;     // budget once per category group
+      aoa.push([null,name,cat,{t:'n',z:_XL_NUM,f:`SUM(G${r}:${lastCol}${r})`},bud?_xlN(bud):null,null,...cells]);
+      first=false;
+    });
+  });
+  const lastItem=aoa.length;
+  const hasItems=lastItem>=firstItem;
+  const totalRow=aoa.length+1;
+  const spentTotal=txns.reduce((s,t)=>s+(t.amount||0),0);
+  aoa.push([null,'Total',null,hasItems?{t:'n',z:_XL_NUM,f:`SUM(D${firstItem}:D${lastItem})`}:_xlN(0),hasItems?{t:'n',z:_XL_NUM,f:`SUM(E${firstItem}:E${lastItem})`}:_xlN(0)]);
+  aoa.push([null,'Cummulative spend',null,{t:'n',z:_XL_NUM,f:`D${totalRow}`}]);
+  aoa.push([]);
+  // Cash: per-account block — opening (prev month), inflow, expense, balance
+  const prevSid=m===1?sid(12,y-1):sid(m-1,y);
+  const cashCur=aux.cashBy[sid(m,y)]||{};
+  const cashPrev=aux.cashBy[prevSid]||{};
+  const accts=getCashAccounts().filter(a=>(cashCur[a]||0)||(cashPrev[a]||0)||incRecs.some(i=>i.bank===a)||txns.some(t=>t.bank===a));
+  aoa.push([null,'Cash']);
+  accts.forEach(a=>{
+    const inflow=incRecs.filter(i=>i.bank===a).reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
+    const spend=txns.filter(t=>t.bank===a).reduce((s,t)=>s+(t.amount||0),0);
+    aoa.push([null,a]);
+    aoa.push([null,'Opening balance',null,_xlN(cashPrev[a]||0)]);
+    aoa.push([null,'Inflow',null,_xlN(inflow)]);
+    aoa.push([null,'Expense',null,_xlN(-spend)]);
+    aoa.push([null,'Balance',null,_xlN(cashCur[a]!=null?cashCur[a]:(cashPrev[a]||0)+inflow-spend)]);
+    aoa.push([]);
+  });
+  // Investments: per-platform block — opening (prev month) and closing value
+  const invCur=aux.invBy[sid(m,y)]||{};
+  const invPrev=aux.invBy[prevSid]||{};
+  const plats=getPlatforms().filter(p=>(invCur[p.key]||0)||(invPrev[p.key]||0));
+  aoa.push([null,'Investments']);
+  plats.forEach(p=>{
+    aoa.push([null,p.label]);
+    aoa.push([null,'Opening balance',null,_xlN(invPrev[p.key]||0)]);
+    aoa.push([null,'Closing balance',null,_xlN(invCur[p.key]||0)]);
+    aoa.push([]);
+  });
+  // Summary tables
+  const wdTotals=[0,0,0,0,0,0,0];                   // Mon..Sun
+  txns.forEach(t=>{
+    const d=parseInt(String(t.date||'').slice(8,10),10);
+    const dt=new Date(y,m-1,d||1);
+    wdTotals[dt.getDay()===0?6:dt.getDay()-1]+=(t.amount||0);
+  });
+  aoa.push([null,'Expense summary']);
+  aoa.push([null,'Day of the week',null,'Amount']);
+  ['Mon','Tue','Wed','Thur','Fri','Sat','Sun'].forEach((n,i)=>aoa.push([null,n,{v:i+1,t:'n'},_xlN(wdTotals[i])]));
+  aoa.push([null,'Total',null,_xlN(spentTotal)]);
+  aoa.push([]);
+  aoa.push([null,'Expense summary']);
+  aoa.push([null,'Day of the week',null,'Amount']);
+  aoa.push([null,'Weekday',null,_xlN(wdTotals[0]+wdTotals[1]+wdTotals[2]+wdTotals[3]+wdTotals[4])]);
+  aoa.push([null,'Weekend',null,_xlN(wdTotals[5]+wdTotals[6])]);
+  aoa.push([null,'Total',null,_xlN(spentTotal)]);
+  aoa.push([]);
+  aoa.push([null,'Cash available']);
+  aoa.push([null,'Bank',null,'N Amount']);
+  let cashTot=0;
+  accts.forEach(a=>{const v=cashCur[a]||0;cashTot+=v;aoa.push([null,a,null,_xlN(v)]);});
+  aoa.push([null,'Total',null,_xlN(cashTot)]);
+  aoa.push([]);
+  aoa.push([null,'Investment']);
+  aoa.push([null,'Platform',null,'N Amount']);
+  let invTot=0;
+  plats.forEach(p=>{const v=invCur[p.key]||0;invTot+=v;aoa.push([null,p.label,null,_xlN(v)]);});
+  aoa.push([null,'Total',null,_xlN(invTot)]);
+  aoa.push([]);
+  const debtExp=(S.debtors||[]).filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0);
+  aoa.push([null,'Financial assets']);
+  aoa.push([null,'Source',null,'N Amount']);
+  aoa.push([null,'Cash',null,_xlN(cashTot)]);
+  aoa.push([null,'Investments',null,_xlN(invTot)]);
+  aoa.push([null,'Expected debt repayment',null,_xlN(debtExp)]);
+  aoa.push([null,'Total',null,_xlN(cashTot+invTot+debtExp)]);
+  const ws=XLSX.utils.aoa_to_sheet(aoa,{cellDates:true});
+  ws['!cols']=[{wch:9},{wch:18},{wch:16.6},{wch:14.6},{wch:13.9},{wch:10.3},...Array(days).fill({wch:13.9})];
+  return ws;
 }
 
-async function _fetchInvAndCashSnaps(m,y){
-  // Fetch historical investment and cash docs for the selected period
-  const invSnap=[],cashSnap=[];
-  const months=m?[[m,y]]:(() => {
-    // All months from Nov 2023 to current
-    const res=[];const now=new Date();
-    for(let yr=2023;yr<=now.getFullYear();yr++){
-      const s=yr===2023?11:1,e=yr===now.getFullYear()?now.getMonth()+1:12;
-      for(let mo=s;mo<=e;mo++) res.push([mo,yr]);
-    }
-    return res;
-  })();
-  await Promise.all(months.map(async([mo,yr])=>{
-    const [invDoc,cashDoc]=await Promise.all([
-      db.collection('investments').doc(sid(mo,yr)).get().catch(()=>null),
-      db.collection('cashBalances').doc(sid(mo,yr)).get().catch(()=>null),
-    ]);
-    const label=`${MONTHS[mo-1]}-${String(yr).slice(2)}`;
-    if(invDoc&&invDoc.exists){
-      const d=invDoc.data();
-      const platforms=PLATFORMS.map(p=>({name:p.label,value:d[p.key]||0})).filter(p=>p.value>0);
-      if(platforms.length) invSnap.push({month:mo,year:yr,label,platforms});
-    }
-    if(cashDoc&&cashDoc.exists){
-      const d=cashDoc.data();
-      const accounts=getCashAccounts().map(a=>({name:a,value:d[a]||0})).filter(a=>a.value>0);
-      if(accounts.length) cashSnap.push({month:mo,year:yr,label,accounts});
-    }
-  }));
-  invSnap.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);
-  cashSnap.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);
-  return{invSnap,cashSnap};
+// Cash balances, investment values and budgets for every month, keyed by
+// 'YYYY-MM' doc id — fetched once per export so multi-sheet builds are cheap.
+async function _fetchMatrixAux(){
+  const [cashSnap,invSnap,budSnap]=await Promise.all([
+    db.collection('cashBalances').get().catch(()=>null),
+    db.collection('investments').get().catch(()=>null),
+    db.collection('budgets').get().catch(()=>null),
+  ]);
+  const map=s=>{const o={};if(s)s.docs.forEach(d=>o[d.id]=d.data());return o;};
+  return{cashBy:map(cashSnap),invBy:map(invSnap),budBy:map(budSnap)};
+}
+
+async function _exportMatrixXlsx(monthsList,txns,incRecs,filename){
+  if(typeof XLSX==='undefined'){toast('Excel library not loaded');return;}
+  const aux=await _fetchMatrixAux();
+  const wb=XLSX.utils.book_new();
+  monthsList.forEach(([mo,yr])=>{
+    const mt=txns.filter(t=>t.month===mo&&t.year===yr);
+    const mi=incRecs.filter(i=>i.month===mo&&i.year===yr);
+    XLSX.utils.book_append_sheet(wb,_buildMonthMatrixWS(mo,yr,mt,mi,aux),_monthSheetName(mo,yr));
+  });
+  XLSX.writeFile(wb,filename+'.xlsx');
+  toast(`Excel downloaded — ${monthsList.length} month sheet${monthsList.length===1?'':'s'}`);
 }
 
 async function exportAll(fmt){
@@ -6754,8 +6814,12 @@ async function exportAll(fmt){
       const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='SpendWise_All.csv';a.click();URL.revokeObjectURL(url);
       toast('CSV downloaded');return;
     }
-    const{invSnap,cashSnap}=await _fetchInvAndCashSnaps(null,null);
-    _exportMultiSheet(_buildTxnSheet(txns,incRecs,'All Time'),_buildInvSheet(invSnap),_buildCashSheet(cashSnap),'SpendWise_All',_buildDailySheet(txns,incRecs,'All Time'));
+    // One workbook-style sheet per month that has any activity, oldest first
+    const keys=new Set();
+    [...txns,...incRecs].forEach(r=>{if(r.month&&r.year)keys.add(r.year*100+r.month);});
+    const monthsList=[...keys].sort((a,b)=>a-b).map(k=>[k%100,Math.floor(k/100)]);
+    if(!monthsList.length){toast('No data to export');return;}
+    await _exportMatrixXlsx(monthsList,txns,incRecs,'SpendWise_All');
   }catch(e){console.error(e);toast('Error exporting — check console');}
 }
 
@@ -6786,8 +6850,7 @@ async function exportMonth(fmt){
       const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`SpendWise_${MONTHS[m-1]}_${y}.csv`;a.click();URL.revokeObjectURL(url);
       toast('CSV downloaded');return;
     }
-    const{invSnap,cashSnap}=await _fetchInvAndCashSnaps(m,y);
-    _exportMultiSheet(_buildTxnSheet(txns,incRecs,label),_buildInvSheet(invSnap),_buildCashSheet(cashSnap),`SpendWise_${MONTHS[m-1]}_${y}`,_buildDailySheet(txns,incRecs,label));
+    await _exportMatrixXlsx([[m,y]],txns,incRecs,`SpendWise_${MONTHS[m-1]}_${y}`);
   }catch(e){console.error(e);toast('Error exporting');}
 }
 
@@ -6807,7 +6870,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.2.4</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.2.4: The Analytics tab now shows a shimmering Gemini button in place of the add-transaction button — tap it to jump straight to the AI Analyst.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.3.0</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.3.0: Excel export now mirrors the original budget workbook (one day-by-day sheet per month with cash, investments and summaries). Per-card eye toggles hide cash figures (percentages stay visible). AI Analyst gains a retry button on failed replies and conversation renaming. Softer Gemini button shimmer.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7553,7 +7616,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.2.4';
+const APP_VERSION='v4.3.0';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
@@ -8121,6 +8184,9 @@ function renderProjAI(){
     m.r==='u'?`<div class="ai-msg ai-u">${esc(m.t)}</div>`
     :m.r==='e'?`<div class="ai-msg ai-err">⚠ ${esc(m.t)}</div>`
     :`<div class="ai-msg ai-m">${_aiMd(m.t)}</div>`).join('');
+  // Offer a one-tap retry when the conversation ended on a failed reply
+  const retryBtn=(!_aiBusy&&list.length&&list[list.length-1].r==='e')
+    ?`<div style="margin:4px 0 2px"><button class="btn btn-g btn-sm" onclick="aiRetry()" title="Send the last question again">↻ Retry</button></div>`:'';
   const chips=list.length?'':`<div class="ai-chips">${[
     'Give me a deep-dive report on my finances',
     'Where can I realistically cut back?',
@@ -8135,7 +8201,7 @@ function renderProjAI(){
   const showBar=chats.length>0;
   const chatBar=showBar?`<div class="ai-chatbar">
       <select class="ifield ai-chatsel" onchange="aiSelectChat(this.value)" ${_aiBusy?'disabled':''}>${newOpt}${opts}</select>
-      ${active?`<button class="btn btn-g btn-sm" onclick="aiDeleteChat()" title="Delete this conversation on all your devices">🗑</button>`:''}
+      ${active?`<button class="btn btn-g btn-sm" onclick="aiRenameChat()" title="Rename this conversation">✎</button><button class="btn btn-g btn-sm" onclick="aiDeleteChat()" title="Delete this conversation on all your devices">🗑</button>`:''}
     </div>`:'';
   el.innerHTML=`<div class="card" style="padding:12px 14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
@@ -8147,7 +8213,7 @@ function renderProjAI(){
     </div>
     ${chatBar}
     <div class="csub" style="margin:8px 0">Grounded in your full history — expenses, income, transfers, balances, loans, debtors, investments.</div>
-    <div class="ai-log" id="ai-log">${msgs||`<div class="empty" style="padding:16px 0"><div class="empty-i">✦</div>Ask anything about your money.<br>Your entire history is the context.</div>`}${_aiBusy?'<div class="ai-msg ai-m ai-typing"><span></span><span></span><span></span></div>':''}</div>
+    <div class="ai-log" id="ai-log">${msgs||`<div class="empty" style="padding:16px 0"><div class="empty-i">✦</div>Ask anything about your money.<br>Your entire history is the context.</div>`}${retryBtn}${_aiBusy?'<div class="ai-msg ai-m ai-typing"><span></span><span></span><span></span></div>':''}</div>
     ${chips}
     <div class="ai-inrow">
       <input class="ifield" id="ai-input" placeholder="Ask about your finances…" style="flex:1;font-size:0.76rem" ${_aiBusy?'disabled':''} onkeydown="if(event.key==='Enter')aiSend()">
@@ -8180,6 +8246,18 @@ function aiSelectChat(id){
   if(id==='__new__'){aiNewChat();return;}
   _aiNewMode=false;_aiSetActive(id);renderProjAI();
 }
+function aiRenameChat(){
+  if(_aiBusy)return;
+  const c=_aiResolveActive();if(!c){toast('No conversation to rename');return;}
+  const v=prompt('Rename conversation',c.title||'');
+  if(v===null)return;
+  const t=String(v).trim().replace(/\s+/g,' ');
+  if(!t)return;
+  c.title=t.length>60?t.slice(0,60)+'…':t;
+  c.updatedAt=Date.now();
+  _aiSaveChatDoc(c);
+  haptic([8]);renderProjAI();
+}
 function aiDeleteChat(){
   const c=_aiResolveActive();if(!c){toast('No conversation to delete');return;}
   if(!confirm('Delete “'+(c.title||'this conversation')+'” on all your devices?'))return;
@@ -8203,6 +8281,12 @@ async function aiAsk(text){
   }
   const cid=c.id;
   _aiPush(cid,{r:'u',t:text});
+  await _aiRun(cid);
+}
+// Run one Gemini request against a chat's current history. The chat is always
+// re-resolved by id after each await (listener rebuilds mid-request must not
+// orphan the reply — see _aiPush).
+async function _aiRun(cid){
   _aiBusy=true;renderProjAI();
   try{
     const ctx=await _aiBuildContext();
@@ -8219,6 +8303,17 @@ async function aiAsk(text){
     _aiPush(cid,{r:'e',t:e&&e.message?e.message:'Request failed — check your connection'});
   }
   _aiBusy=false;renderProjAI();
+}
+// Retry after a failed reply: drop the trailing error bubble(s) IN PLACE and
+// re-run the request — the last user message is still the tail of the history.
+async function aiRetry(){
+  if(_aiBusy)return;
+  const c=_aiResolveActive();if(!c)return;
+  let removed=false;
+  while(c.msgs.length&&c.msgs[c.msgs.length-1].r==='e'){c.msgs.pop();removed=true;}
+  if(!c.msgs.some(m=>m.r==='u')){renderProjAI();return;}
+  if(removed){c.updatedAt=Date.now();_aiSaveChatDoc(c);}
+  await _aiRun(c.id);
 }
 
 // Calls Gemini's generateContent REST API, falling back through AI_MODELS on
