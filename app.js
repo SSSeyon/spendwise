@@ -6904,7 +6904,7 @@ function renderSettData(){
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.3.2</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.3.2: Fixed a boot-timing bug where investment sub-accounts, asset classifications, and platform logos could get silently overwritten with defaults if the app rendered before Firestore data finished loading. Auto-migration now only writes after a real sync completes.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.3.3</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.3.3: AI Analyst now falls back to a lower-tier Gemini model when the current one hits a rate limit, instead of failing the request outright.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7650,7 +7650,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.3.2';
+const APP_VERSION='v4.3.3';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
@@ -8351,17 +8351,21 @@ async function aiRetry(){
 }
 
 // Calls Gemini's generateContent REST API, falling back through AI_MODELS on
-// 404/5xx (key tiers differ in which models they can access). Remembers the
-// first model that answers. Key errors and quota errors abort immediately.
+// 404/5xx and 429 (key tiers differ in which models they can access, and each
+// model has its own separate rate limit — a 429 on the preferred/flagship
+// model doesn't mean a lower tier is also exhausted). Remembers the first
+// model that answers. Only a bad-key error (400/401/403) aborts immediately;
+// everything else is tried against every model before giving up.
 async function _aiFetch(body){
   const key=_aiKey();if(!key)throw new Error('No API key saved — open the Key… settings');
   const pref=cGet(AI_MODEL_LS);
   const models=pref?[pref,...AI_MODELS.filter(m=>m!==pref)]:AI_MODELS.slice();
-  let lastErr='no models reachable';
+  let lastErr='no models reachable',allRateLimited=true;
   for(const model of models){
     const url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
-    // One raw generateContent call. Returns {net}/{err} for soft failures (so we
-    // fall through to the next model) and throws for hard key/quota errors.
+    // One raw generateContent call. Returns {net}/{err} (err.rateLimited set
+    // for 429s) for soft failures — the caller falls through to the next
+    // model in AI_MODELS for all of these — and throws only for a bad key.
     const call=async payload=>{
       let res;
       try{
@@ -8371,17 +8375,20 @@ async function _aiFetch(body){
         const j=await res.json().catch(()=>({}));
         throw new Error('Gemini rejected the API key'+(j.error&&j.error.message?': '+j.error.message:'')+'. Tap Key… to re-enter it.');
       }
-      if(res.status===429){throw new Error('Gemini rate limit / daily quota reached — try again in a bit.');}
+      if(res.status===429){
+        const j=await res.json().catch(()=>({}));
+        return {err:'rate limited'+(j.error&&j.error.message?': '+j.error.message:''),rateLimited:true};
+      }
       if(!res.ok){const j=await res.json().catch(()=>({}));return {err:(j.error&&j.error.message)||('HTTP '+res.status)};}
       return {json:await res.json().catch(()=>null)};
     };
     const read=j=>{const c=j&&j.candidates&&j.candidates[0];return {text:c&&c.content&&c.content.parts?c.content.parts.map(p=>p.text||'').join(''):'',reason:(c&&c.finishReason)||''};};
 
     const first=await call(body);
-    if(first.net){lastErr='network error — are you online?';continue;}
-    if(first.err){lastErr=first.err;continue;}
+    if(first.net){lastErr='network error — are you online?';allRateLimited=false;continue;}
+    if(first.err){lastErr=first.err;if(!first.rateLimited)allRateLimited=false;continue;}
     let {text,reason}=read(first.json);
-    if(!text.trim()){lastErr=reason||'empty response';continue;}
+    if(!text.trim()){lastErr=reason||'empty response';allRateLimited=false;continue;}
 
     // Gemini caps a single response at maxOutputTokens and reports MAX_TOKENS
     // when a long answer (e.g. a deep-dive report) is clipped mid-sentence.
@@ -8401,6 +8408,7 @@ async function _aiFetch(body){
     cSet(AI_MODEL_LS,model);
     return text.trim();
   }
+  if(allRateLimited)throw new Error('Gemini rate limit reached on every available model ('+models.join(', ')+') — try again in a bit.');
   throw new Error('Gemini request failed: '+lastErr);
 }
 
