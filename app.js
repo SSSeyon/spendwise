@@ -64,6 +64,34 @@ function toggleTheme(){
   }catch{}
 })();
 
+// ── THEME VARIANT (Classic vs Dark) ──────────────────────────────────────
+// Independent of the light/dark toggle above: Classic keeps its existing
+// light/dark submodes exactly as-is (no class = Classic). "Dark" is a
+// separate, fixed-dark visual skin (new fonts/colors/radii) applied via
+// body.theme-dark — see body.theme-dark{} in styles.css. Switching variants
+// never touches app data or the .light class, so Classic's own preference
+// is preserved when switching back.
+const THEME_VARIANT_KEY='sw3_theme_variant';
+function getThemeVariant(){
+  try{return localStorage.getItem(THEME_VARIANT_KEY)||'classic';}catch{return 'classic';}
+}
+function setThemeVariant(v){
+  document.body.classList.toggle('theme-dark',v==='dark');
+  try{localStorage.setItem(THEME_VARIANT_KEY,v);}catch{}
+  const meta=document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.setAttribute('content',v==='dark'?'#0c0e12':'#060610');
+  renderSettData();
+}
+(function initThemeVariant(){
+  try{
+    if(getThemeVariant()==='dark'){
+      document.body.classList.add('theme-dark');
+      const meta=document.querySelector('meta[name="theme-color"]');
+      if(meta) meta.setAttribute('content','#0c0e12');
+    }
+  }catch{}
+})();
+
 // ══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
 // ══════════════════════════════════════════════════════════════════════════
@@ -6903,8 +6931,17 @@ function renderSettData(){
   const ls=cGet(CK.lastSync);
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
+  const tv=getThemeVariant();
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.3.3</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.3.3: AI Analyst now falls back to a lower-tier Gemini model when the current one hits a rate limit, instead of failing the request outright.</div></div></div>
+    <div class="exp-card" style="margin-top:10px">
+      <div class="exp-card-title" style="margin-bottom:6px">Appearance</div>
+      <div class="exp-card-sub" style="margin-bottom:10px">Classic keeps the current look (with its own light/dark toggle in the header). Dark is a separate fixed-dark theme.</div>
+      <div class="tabs" style="margin-bottom:0">
+        <button class="tab${tv==='classic'?' active':''}" onclick="setThemeVariant('classic')">Classic</button>
+        <button class="tab${tv==='dark'?' active':''}" onclick="setThemeVariant('dark')">Dark</button>
+      </div>
+    </div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.3.4</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.3.4: Added an optional "Dark" theme (Settings → Data → Appearance) alongside the existing Classic look — a separate fixed-dark skin with new fonts/colors. Classic and its light/dark toggle are unchanged.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7650,7 +7687,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.3.3';
+const APP_VERSION='v4.3.4';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});

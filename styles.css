@@ -31,6 +31,29 @@ body.light{
   --shadow-sm:0 1px 2px rgba(0,0,0,0.06);
 }
 
+/* ── DARK THEME (alternate, opt-in) ── */
+/* Always-dark palette — takes precedence over .light regardless of the
+   Classic light/dark toggle state, since it's declared after body.light
+   and both selectors share specificity (0,1,1). */
+body.theme-dark{
+  --bg:#0c0e12;--bg1:#14171d;--bg2:#1a1e26;--bg3:#1e222b;
+  --border:#1e222b;--border2:#2a2f3a;
+  --text:#e9ecf0;--text2:#c4cbd4;--text3:#5c6472;
+  --accent:#5b6cff;--adim:rgba(91,108,255,0.14);--ab:rgba(91,108,255,0.28);
+  --red:#f4816b;--rdim:rgba(244,129,107,0.14);
+  --blue:#8f9bff;--bdim:rgba(143,155,255,0.14);
+  --gold:#f4a52a;--gdim:rgba(244,165,42,0.14);
+  --green:#4ade80;--gdim2:rgba(74,222,128,0.14);
+  --r:18px;--rsm:11px;
+  --font:'Space Grotesk',sans-serif;--mono:'IBM Plex Mono',monospace;
+  --shadow:0 1px 3px rgba(0,0,0,0.5),0 6px 20px rgba(0,0,0,0.3);
+  --shadow-sm:0 1px 2px rgba(0,0,0,0.4);
+}
+/* Classic's light/dark toggle doesn't apply to this fixed-dark theme */
+body.theme-dark .theme-btn{display:none}
+/* Brand-tinted shadow on the FAB should follow the new accent hue */
+body.theme-dark .fab{box-shadow:0 4px 16px rgba(91,108,255,0.45)}
+
 html,body{height:100%;overflow:hidden}
 body{font-family:var(--font);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;transition:background 0.25s,color 0.25s}
 
