@@ -1703,6 +1703,10 @@ function renderAll(){
 // DASHBOARD
 // ══════════════════════════════════════════════════════════════════════════
 function renderDashboard(){
+  // Keep Analytics → Insights live: it's a pure read of in-memory state, and
+  // renderDashboard() already runs after every data mutation in the app, so
+  // piggybacking here means Insights never needs a manual refresh.
+  try{renderProjInsights();}catch(e){}
   const m=S.dashMonth,y=S.dashYear,cur=S.dashCurrency;
   const _cs=document.getElementById('dash-currency');if(_cs&&_cs.value!==cur)_cs.value=cur;
   // Keep all tab currency selects in sync
@@ -4495,6 +4499,27 @@ function openLiqModal(pKey, subId){
   setTimeout(()=>initNumInputs(document.getElementById('liq-modal')),50);
 }
 
+// Records the interest portion of a fixed-income liquidation as an Income
+// entry for that period (Income History / Insights), without touching cash —
+// the cash side is already handled by the liquidation's own _adjustCash call.
+async function _recordInvestmentInterestIncome(label,bank,amtNGN,date,m,y){
+  const data={amount:amtNGN,amtNGN,currency:'NGN',category:'Interest Income',bank,notes:`${label} — fixed income payout`,date,month:m,year:y};
+  try{
+    const ref=await db.collection('income').add({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+    S.income.unshift({...data,id:ref.id});
+  }catch(e){
+    const offId='offline_inc_'+Date.now();
+    oqAdd('income',offId,data,true);
+    S.income.unshift({...data,id:offId});
+  }
+  cSet(CK.inc(m,y),S.income);
+  const hist=cGet('sw3_history')||[];
+  const hIdx=hist.findIndex(h=>h.year===y&&h.month===m);
+  const totalInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
+  if(hIdx>=0){hist[hIdx].income=totalInc;}
+  else{const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];hist.push({year:y,month:m,label:MS2[m-1]+" '"+String(y).slice(2),income:totalInc,expenses:S.txns.reduce((s,t)=>s+(t.amount||0),0)});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
+  cSet('sw3_history',hist);
+}
 async function confirmLiquidation(){
   if(!_liqPKey||!_liqSubId){closeMod('liq-modal');return;}
   const rawAmt=document.getElementById('liq-amount').value.replace(/,/g,'');
@@ -4509,6 +4534,10 @@ async function confirmLiquidation(){
   const subIdx=subs.findIndex(s=>s.id===_liqSubId);
   if(subIdx<0){toast('Investment not found');return;}
   const sub=subs[subIdx];
+  const pNGN=Number(sub.principal)||0;
+  // Payout above principal on a fixed-income sub is realised interest — report
+  // it as income for the period. Principal itself is never counted as income.
+  const interestNGN=(sub.assetClass==='fixed_income'&&sub.rate)?Math.max(0,amtNGN-pNGN):0;
 
   // Zero out the sub principal
   subs[subIdx]={...sub,principal:0};
@@ -4546,11 +4575,12 @@ async function confirmLiquidation(){
     // Liquidate to cash account
     _adjustCash(destVal,amtNGN,liqM,liqY,'investment-liquidation');
     toast(`₦${fNum(amtNGN)} liquidated → ${destVal}`);
+    if(interestNGN>0) await _recordInvestmentInterestIncome(sub.label,destVal,interestNGN,date,liqM,liqY);
   }
 
   closeMod('liq-modal');
   haptic([8,40,8]);
-  renderInvestments();renderDashboard();
+  renderInvestments();renderDashboard();renderIncome();
 }
 
 async function saveInvFromEdit(){
@@ -6941,7 +6971,7 @@ function renderSettData(){
         <button class="tab${tv==='dark'?' active':''}" onclick="setThemeVariant('dark')">Dark</button>
       </div>
     </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.3.4</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.3.4: Added an optional "Dark" theme (Settings → Data → Appearance) alongside the existing Classic look — a separate fixed-dark skin with new fonts/colors. Classic and its light/dark toggle are unchanged.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.3.5</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.3.5: Liquidating a fixed-income investment above its principal now records the interest portion in Income History for that period. Analytics → Insights now updates live as you add expenses, income and investment changes, instead of needing a refresh.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7687,7 +7717,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.3.4';
+const APP_VERSION='v4.3.5';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
