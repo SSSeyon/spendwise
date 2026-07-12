@@ -64,34 +64,6 @@ function toggleTheme(){
   }catch{}
 })();
 
-// ── THEME VARIANT (Classic vs Dark) ──────────────────────────────────────
-// Independent of the light/dark toggle above: Classic keeps its existing
-// light/dark submodes exactly as-is (no class = Classic). "Dark" is a
-// separate, fixed-dark visual skin (new fonts/colors/radii) applied via
-// body.theme-dark — see body.theme-dark{} in styles.css. Switching variants
-// never touches app data or the .light class, so Classic's own preference
-// is preserved when switching back.
-const THEME_VARIANT_KEY='sw3_theme_variant';
-function getThemeVariant(){
-  try{return localStorage.getItem(THEME_VARIANT_KEY)||'classic';}catch{return 'classic';}
-}
-function setThemeVariant(v){
-  document.body.classList.toggle('theme-dark',v==='dark');
-  try{localStorage.setItem(THEME_VARIANT_KEY,v);}catch{}
-  const meta=document.querySelector('meta[name="theme-color"]');
-  if(meta) meta.setAttribute('content',v==='dark'?'#0c0e12':'#060610');
-  renderSettData();
-}
-(function initThemeVariant(){
-  try{
-    if(getThemeVariant()==='dark'){
-      document.body.classList.add('theme-dark');
-      const meta=document.querySelector('meta[name="theme-color"]');
-      if(meta) meta.setAttribute('content','#0c0e12');
-    }
-  }catch{}
-})();
-
 // ══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
 // ══════════════════════════════════════════════════════════════════════════
@@ -1703,10 +1675,6 @@ function renderAll(){
 // DASHBOARD
 // ══════════════════════════════════════════════════════════════════════════
 function renderDashboard(){
-  // Keep Analytics → Insights live: it's a pure read of in-memory state, and
-  // renderDashboard() already runs after every data mutation in the app, so
-  // piggybacking here means Insights never needs a manual refresh.
-  try{renderProjInsights();}catch(e){}
   const m=S.dashMonth,y=S.dashYear,cur=S.dashCurrency;
   const _cs=document.getElementById('dash-currency');if(_cs&&_cs.value!==cur)_cs.value=cur;
   // Keep all tab currency selects in sync
@@ -5744,6 +5712,12 @@ function projTab(tab,btn){
 // Full read of the smart-insights engine: month outlook, per-category
 // projections with the method that produced them, and narrative insights
 // (including the positive ones the notification bell deliberately skips).
+// Manual refresh only (↻ button below): computeSmartInsights re-parses
+// several months of cached transactions, so it's kept off the save path.
+function refreshInsights(){
+  renderProjInsights();
+  toast('Insights refreshed');haptic([8]);
+}
 function renderProjInsights(){
   const el=document.getElementById('proj-insights');if(!el)return;
   const now=new Date();
@@ -5755,7 +5729,10 @@ function renderProjInsights(){
   const pct=R.totalBudget>0?Math.round(R.totalProj/R.totalBudget*100):0;
   const barColor=pct>=110?'var(--red)':pct>=90?'var(--gold)':'var(--accent)';
   let html=`<div class="card">
-    <div class="clabel">Month Outlook — ${MONTHS[m-1]} ${y} · Day ${day}/${daysInMonth}</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <div class="clabel" style="margin:0">Month Outlook — ${MONTHS[m-1]} ${y} · Day ${day}/${daysInMonth}</div>
+      <button class="btn btn-g btn-sm" onclick="refreshInsights()" title="Recompute insights with the latest data" style="padding:2px 8px;font-size:0.68rem">↻ Refresh</button>
+    </div>
     <div class="cval" style="color:${barColor}">${R.totalProj?fN(R.totalProj):'—'}<span style="font-size:0.7rem;color:var(--text2);font-weight:400"> projected${R.totalBudget?` · ${pct}% of ${fN(R.totalBudget)} budget`:''}</span></div>
     ${R.totalBudget?`<div class="prog" style="margin-top:8px"><div class="pf ${pct>=110?'over':pct>=90?'warn':'ok'}" style="width:${Math.min(100,pct)}%"></div></div>`:''}
     <div class="csub" style="margin-top:8px">${R.monthsUsed>=2
@@ -6961,17 +6938,8 @@ function renderSettData(){
   const ls=cGet(CK.lastSync);
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
-  const tv=getThemeVariant();
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px">
-      <div class="exp-card-title" style="margin-bottom:6px">Appearance</div>
-      <div class="exp-card-sub" style="margin-bottom:10px">Classic keeps the current look (with its own light/dark toggle in the header). Dark is a separate fixed-dark theme.</div>
-      <div class="tabs" style="margin-bottom:0">
-        <button class="tab${tv==='classic'?' active':''}" onclick="setThemeVariant('classic')">Classic</button>
-        <button class="tab${tv==='dark'?' active':''}" onclick="setThemeVariant('dark')">Dark</button>
-      </div>
-    </div>
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.3.5</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.3.5: Liquidating a fixed-income investment above its principal now records the interest portion in Income History for that period. Analytics → Insights now updates live as you add expenses, income and investment changes, instead of needing a refresh.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.3.4</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.3.4: Liquidating a fixed-income investment above its principal now records the interest portion in Income History for that period. Analytics → Insights gained a refresh button to recompute with the latest data on demand.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7717,7 +7685,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.3.5';
+const APP_VERSION='v4.3.4';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
