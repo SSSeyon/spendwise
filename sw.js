@@ -1,7 +1,7 @@
 // SpendWise Service Worker
 // Network-first (revalidated) for the HTML shell so the version pointer is
 // never stale; cache-first for version-queried assets and CDN libs.
-const CACHE = 'spendwise-v17';
+const CACHE = 'spendwise-v18';
 
 // Only truly-static, rarely-changing assets are pre-cached. index.html,
 // app.js and styles.css are intentionally NOT pre-cached here: index.html is
@@ -12,6 +12,7 @@ const STATIC = [
   './',
   './manifest.json',
   'https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;500;600;700;800&display=swap',
+  'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap',
   'https://cdn.jsdelivr.net/npm/chart.js',
   'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
   'https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js',

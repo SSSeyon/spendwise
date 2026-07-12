@@ -64,6 +64,22 @@ function toggleTheme(){
   }catch{}
 })();
 
+// ── DESIGN MODE (Classic | Monarch) ─────────────────────────────────────────
+// Cosmetic only. Monarch adds body.monarch, which activates the scoped token
+// blocks at the bottom of styles.css plus a few render flourishes (icon
+// badges, hero chart, grouped budget). Classic is the default and its CSS
+// token blocks are untouched when the flag is off. Data and features are
+// identical in both modes.
+function getDesignMode(){try{return localStorage.getItem('sw3_design_mode')==='monarch'?'monarch':'classic';}catch{return 'classic';}}
+function isMonarch(){return document.body.classList.contains('monarch');}
+function setDesignMode(mode){
+  try{localStorage.setItem('sw3_design_mode',mode);}catch{}
+  document.body.classList.toggle('monarch',mode==='monarch');
+  try{renderAll();}catch{}
+  toast(mode==='monarch'?'Monarch design mode':'Classic design mode');
+}
+(function initDesignMode(){try{if(getDesignMode()==='monarch')document.body.classList.add('monarch');}catch{}})();
+
 // ══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
 // ══════════════════════════════════════════════════════════════════════════
@@ -129,6 +145,12 @@ const CAT_ICONS = {
   'Work Travel':        '✈️',
   'Education':          '📚',
 };
+
+// Circular tinted icon badge (Monarch mode only — call sites branch on
+// isMonarch(); Classic keeps its original plain-emoji markup untouched).
+const _CATB_PALETTE=['#0e9384','#e04f16','#444ce7','#ba24d5','#0086c9','#e31b54','#099250','#dc6803','#6938ef','#088ab2'];
+function catColor(cat){let h=0;const s=String(cat||'');for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return _CATB_PALETTE[h%_CATB_PALETTE.length];}
+function catBadge(cat){return`<span class="catb" style="--catbg:${catColor(cat)}26">${CAT_ICONS[cat]||'📦'}</span>`;}
 
 // ── GITHUB-HOSTED LOGOS ────────────────────────────────────────────────────
 // Upload logo files to the Logos/ folder in your GitHub repo.
@@ -622,6 +644,137 @@ function openRecurModal(){
 }
 function deleteRecurring(i){const list=getRecurring();list.splice(i,1);saveRecurring(list);openRecurModal();renderRecurringCard();}
 
+// ── TRANSACTION RULES (auto-categorization — GLOBAL, runs in both design modes) ──
+// Stored like recurring: localStorage cache + appConfig/rules doc in Firestore.
+// A rule = {match, category}: when an expense name contains `match`
+// (case-insensitive), the category is auto-assigned in the expense form.
+// First matching rule wins; rules take precedence over the built-in smartCat.
+const CK_RULES='sw3_rules';
+function getRules(){return cGet(CK_RULES)||[];}
+function saveRules(list){
+  cSet(CK_RULES,list);
+  if(db)db.collection('appConfig').doc('rules')
+    .set({list,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .catch(e=>console.warn('rules sync failed',e));
+}
+async function loadRules(){
+  if(!db) return;
+  try{
+    const doc=await db.collection('appConfig').doc('rules').get();
+    const arr=doc.exists?doc.data()?.list:null;
+    if(Array.isArray(arr))cSet(CK_RULES,arr);
+  }catch(e){}
+}
+function applyRules(payee){
+  const p=String(payee||'').toLowerCase().trim();
+  if(!p)return null;
+  for(const r of getRules()){if(r.match&&r.category&&p.includes(String(r.match).toLowerCase()))return r.category;}
+  return null;
+}
+function addRule(){
+  const match=(document.getElementById('rule-match')?.value||'').trim();
+  const category=document.getElementById('rule-cat')?.value;
+  if(!match){toast('Enter the text to match');return;}
+  if(!category){toast('Pick a category');return;}
+  const list=getRules();list.push({match,category});saveRules(list);
+  renderSettBudget();toast('Rule added');
+}
+function deleteRule(i){const list=getRules();list.splice(i,1);saveRules(list);renderSettBudget();}
+
+// ── GOALS (GLOBAL feature — data + logic run in both design modes) ──────────
+// Stored like recurring: localStorage cache + appConfig/goals doc in Firestore.
+// A goal = {id, name, icon, target, current, deadline, createdAt}.
+const CK_GOALS='sw3_goals';
+function getGoals(){return cGet(CK_GOALS)||[];}
+function saveGoals(list){
+  cSet(CK_GOALS,list);
+  if(db)db.collection('appConfig').doc('goals')
+    .set({list,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .catch(e=>console.warn('goals sync failed',e));
+}
+async function loadGoals(){
+  if(!db) return;
+  try{
+    const doc=await db.collection('appConfig').doc('goals').get();
+    const arr=doc.exists?doc.data()?.list:null;
+    if(Array.isArray(arr))cSet(CK_GOALS,arr);
+  }catch(e){}
+}
+function renderGoalsCard(){
+  const card=document.getElementById('dash-goals-card');
+  const list=document.getElementById('dash-goals-list');
+  if(!card||!list)return;
+  const goals=getGoals();
+  if(!goals.length){card.style.display='none';return;}
+  card.style.display='block';
+  const cur=S.dashCurrency,m=S.dashMonth||S.expMonth,y=S.dashYear||S.expYear;
+  list.innerHTML=goals.map((g,i)=>{
+    const pct=g.target>0?Math.min(100,Math.round((g.current||0)/g.target*100)):0;
+    const done=pct>=100;
+    return`<div style="padding:7px 0;cursor:pointer" onclick="openGoalModal(${i})">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+        <span style="font-size:0.76rem;font-weight:600">${g.icon||'🎯'} ${esc(g.name)}${done?' <span class="badge bg">Done ✓</span>':''}</span>
+        <span style="font-size:0.66rem;font-family:var(--mono);color:var(--text2)">${fmtCur(g.current||0,cur,m,y)} / ${fmtCur(g.target||0,cur,m,y)}</span>
+      </div>
+      <div class="prog"><div class="pf ${done?'ok':pct>=50?'ok':'warn'}" style="width:${pct}%"></div></div>
+      <div style="display:flex;justify-content:space-between;margin-top:2px">
+        <span style="font-size:0.6rem;color:var(--text3);font-family:var(--mono)">${pct}%</span>
+        ${g.deadline?`<span style="font-size:0.6rem;color:var(--text3)">by ${fmtDate(g.deadline)}</span>`:''}
+      </div>
+    </div>`;
+  }).join('');
+}
+let _goalEditIdx=null;
+function openGoalModal(idx){
+  _goalEditIdx=(typeof idx==='number')?idx:null;
+  const g=_goalEditIdx!=null?getGoals()[_goalEditIdx]:null;
+  document.getElementById('goal-modal-title').textContent=g?'Edit Goal':'New Goal';
+  document.getElementById('goal-name').value=g?.name||'';
+  document.getElementById('goal-emoji').textContent=g?.icon||'🎯';
+  document.getElementById('goal-target').value=g?.target||'';
+  document.getElementById('goal-current').value=g?.current||'';
+  document.getElementById('goal-deadline').value=g?.deadline||'';
+  document.getElementById('goal-delete-btn').style.display=g?'block':'none';
+  openMod('goal-modal');
+  setTimeout(()=>{initNumInputs(document.getElementById('goal-modal'));},0);
+}
+function saveGoalFromModal(){
+  const name=(document.getElementById('goal-name').value||'').trim();
+  const target=parseFloat(document.getElementById('goal-target').value)||0;
+  const current=parseFloat(document.getElementById('goal-current').value)||0;
+  const deadline=document.getElementById('goal-deadline').value||'';
+  const icon=(document.getElementById('goal-emoji').textContent||'').trim()||'🎯';
+  if(!name){toast('Enter a goal name');return;}
+  if(target<=0){toast('Enter a target amount');return;}
+  const list=getGoals();
+  if(_goalEditIdx!=null&&list[_goalEditIdx])list[_goalEditIdx]={...list[_goalEditIdx],name,icon,target,current,deadline};
+  else list.push({id:'g'+Date.now().toString(36),name,icon,target,current,deadline,createdAt:todayStr()});
+  saveGoals(list);
+  closeMod('goal-modal');toast(_goalEditIdx!=null?'Goal updated':'Goal added');
+  renderGoalsCard();renderSettData();
+}
+function deleteGoalFromModal(){
+  if(_goalEditIdx==null)return;
+  if(!confirm('Delete this goal?'))return;
+  const list=getGoals();list.splice(_goalEditIdx,1);saveGoals(list);
+  closeMod('goal-modal');toast('Goal deleted');
+  renderGoalsCard();renderSettData();
+}
+
+// ── BUDGET CATEGORY GROUPS (Monarch grouped budget rollups) ────────────────
+// Fixed default grouping of the built-in categories; custom categories fall
+// into "Other". Used only by the Monarch dashboard budget view — Classic
+// keeps its flat list.
+const DEF_CAT_GROUPS={
+  'Home & Utilities':['Utilities','Domestic','Internet services'],
+  'Food':['Food','Groceries'],
+  'Transport':['Fuel','Car maintenance','Work Travel'],
+  'Family':['Kids','Education','Itunu'],
+  'Personal':['Personal care','Recreation'],
+  'Giving & Loans':['Gifts and donations','Loans'],
+};
+function catGroupOf(cat){for(const[g,arr]of Object.entries(DEF_CAT_GROUPS)){if(arr.includes(cat))return g;}return'Other';}
+
 // HISTORY is loaded from localStorage (seeded via JSON import).
 function getHistory(){return cGet('sw3_history')||[];}
 
@@ -971,7 +1124,7 @@ function initFirebase(){
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadAiChats()]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadAiChats(),loadGoals(),loadRules()]);
 }
 
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
@@ -986,6 +1139,8 @@ let _fxOvrListener=null;
 let _invCfgListener=null;
 let _nwCfgListener=null;
 let _recurListener=null;
+let _goalsListener=null;
+let _rulesListener=null;
 let _catsListener=null;
 let _debListener=null;
 let _loanListener=null;
@@ -1118,6 +1273,29 @@ function startRealtimeListeners(){
       }
     },err=>console.warn('recurring listener:',err));
 
+  // Goals — real-time cross-device sync
+  if(_goalsListener){_goalsListener();_goalsListener=null;}
+  _goalsListener=db.collection('appConfig').doc('goals')
+    .onSnapshot(snap=>{
+      if(!snap.exists||snap.metadata.hasPendingWrites) return;
+      const arr=snap.data()?.list;
+      if(Array.isArray(arr)){
+        cSet(CK_GOALS,arr);
+        renderGoalsCard();
+      }
+    },err=>console.warn('goals listener:',err));
+
+  // Transaction rules — real-time cross-device sync
+  if(_rulesListener){_rulesListener();_rulesListener=null;}
+  _rulesListener=db.collection('appConfig').doc('rules')
+    .onSnapshot(snap=>{
+      if(!snap.exists||snap.metadata.hasPendingWrites) return;
+      const arr=snap.data()?.list;
+      if(Array.isArray(arr)){
+        cSet(CK_RULES,arr);
+      }
+    },err=>console.warn('rules listener:',err));
+
   // Custom categories — real-time cross-device sync
   if(_catsListener){_catsListener();_catsListener=null;}
   _catsListener=db.collection('appConfig').doc('customCats')
@@ -1174,6 +1352,8 @@ function stopRealtimeListeners(){
   if(_invCfgListener){_invCfgListener();_invCfgListener=null;}
   if(_nwCfgListener){_nwCfgListener();_nwCfgListener=null;}
   if(_recurListener){_recurListener();_recurListener=null;}
+  if(_goalsListener){_goalsListener();_goalsListener=null;}
+  if(_rulesListener){_rulesListener();_rulesListener=null;}
   if(_catsListener){_catsListener();_catsListener=null;}
   if(_debListener){_debListener();_debListener=null;}
   if(_loanListener){_loanListener();_loanListener=null;}
@@ -1662,7 +1842,7 @@ function renderAll(){
   const n=new Date();
   const _hdrDate=document.getElementById('hdr-date');if(_hdrDate)_hdrDate.textContent=MS[n.getMonth()].toUpperCase()+' '+n.getFullYear();
   initPeriodSelector();
-  const _rf=[['applyDashOrder',applyDashOrder],['renderDashboard',renderDashboard],['renderExpenses',renderExpenses],['renderInvestments',renderInvestments],['renderCashPage',renderCashPage],['renderDebtors',renderDebtors],['renderLoans',renderLoans],['renderForecast',renderForecast],['renderSettings',renderSettings],['renderRecurringCard',renderRecurringCard]];
+  const _rf=[['applyDashOrder',applyDashOrder],['renderDashboard',renderDashboard],['renderExpenses',renderExpenses],['renderInvestments',renderInvestments],['renderCashPage',renderCashPage],['renderDebtors',renderDebtors],['renderLoans',renderLoans],['renderForecast',renderForecast],['renderSettings',renderSettings],['renderRecurringCard',renderRecurringCard],['renderGoalsCard',renderGoalsCard]];
   _rf.forEach(([name,fn])=>{try{fn();}catch(e){console.error('renderAll: '+name+' threw',e);_showRenderErr(name,e);}});
   try{
     const lastPg=localStorage.getItem('sw3_last_page');
@@ -1800,10 +1980,29 @@ function renderDashboard(){
   const allCats=[...new Set([...CATS,...Object.keys(catSpend)])];
   // Only show categories with actual spend; budgets still count in total for the Spent card
   const catRows=allCats.filter(c=>catSpend[c]>0).map(c=>({cat:c,spent:catSpend[c]||0,budg:S.budgets[ck(c)]||0})).sort((a,b)=>b.spent-a.spent);
-  document.getElementById('dash-cats').innerHTML=catRows.length?catRows.map(r=>{
+  const _catRowHtml=r=>{
     const st=bSt(r.spent,r.budg);const pct=r.budg?Math.min(r.spent/r.budg*100,100):0;
-    return`<div class="cr"><div class="cr-top"><span class="cr-name"><span style="margin-right:5px">${CAT_ICONS[r.cat]||''}</span>${r.cat}</span><div class="cr-vals"><span class="cr-spent" style="color:${st==='over'?'var(--red)':st==='warn'?'var(--gold)':'var(--text)'}">${fmtCur(r.spent,cur,m,y)}</span>${r.budg?`<span class="cr-budg">/ ${fmtCur(r.budg,cur,m,y)}</span>`:''}</div></div><div class="prog"><div class="pf ${st}" style="width:${pct}%"></div></div></div>`;
-  }).join(''):'<div class="empty"><div class="empty-i">↕</div>No expenses this month</div>';
+    const icn=isMonarch()?catBadge(r.cat):`<span style="margin-right:5px">${CAT_ICONS[r.cat]||''}</span>`;
+    return`<div class="cr"><div class="cr-top"><span class="cr-name">${icn}${r.cat}</span><div class="cr-vals"><span class="cr-spent" style="color:${st==='over'?'var(--red)':st==='warn'?'var(--gold)':'var(--text)'}">${fmtCur(r.spent,cur,m,y)}</span>${r.budg?`<span class="cr-budg">/ ${fmtCur(r.budg,cur,m,y)}</span>`:''}</div></div><div class="prog"><div class="pf ${st}" style="width:${pct}%"></div></div></div>`;
+  };
+  if(isMonarch()&&catRows.length){
+    // Monarch: category-group rollups (parent totals + child rows)
+    const grouped={};
+    catRows.forEach(r=>{const g=catGroupOf(r.cat);(grouped[g]=grouped[g]||[]).push(r);});
+    const gEntries=Object.entries(grouped).map(([g,rows])=>({g,rows,spent:rows.reduce((s,r)=>s+r.spent,0),budg:rows.reduce((s,r)=>s+r.budg,0)})).sort((a,b)=>b.spent-a.spent);
+    document.getElementById('dash-cats').innerHTML=gEntries.map(ge=>{
+      const gst=bSt(ge.spent,ge.budg);
+      return`<div style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0 5px">
+          <span style="font-size:0.64rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text2)">${ge.g}</span>
+          <span style="font-size:0.64rem;font-family:var(--mono);color:${gst==='over'?'var(--red)':'var(--text2)'}">${fmtCur(ge.spent,cur,m,y)}${ge.budg?` / ${fmtCur(ge.budg,cur,m,y)}`:''}</span>
+        </div>
+        ${ge.rows.map(_catRowHtml).join('')}
+      </div>`;
+    }).join('');
+  }else{
+    document.getElementById('dash-cats').innerHTML=catRows.length?catRows.map(_catRowHtml).join(''):'<div class="empty"><div class="empty-i">↕</div>No expenses this month</div>';
+  }
 
   // Cash (collapsible card)
   const cashAccts=getCashAccounts();
@@ -1866,11 +2065,17 @@ function renderDashboard(){
   // Net Worth trend
   renderNWTrendChart();
 
+  // Monarch chart-forward hero (no-op in Classic)
+  renderNWHeroChart();
+
   // Recent transactions
   const recEl=document.getElementById('dash-recent');
   const combined=[...txns.map(t=>({...t,type:'exp'})),...incList.map(t=>({...t,type:'inc'}))].sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:txnTs(b.createdAt)-txnTs(a.createdAt)).slice(0,5);
   if(!combined.length){recEl.innerHTML='<div class="empty"><div class="empty-i">↕</div>No transactions yet</div>';}
-  else{recEl.innerHTML='<div class="txlist">'+combined.map(tx=>`<div class="txi"><div><div class="txi-cat">${tx.category?(CAT_ICONS[tx.category]||'')+' '+tx.category:esc(tx.payee)||'—'}</div><div class="txi-meta">${esc(tx.payee||tx.notes)||'—'} · ${fmtDate(tx.date)}</div></div><div class="${tx.type==='inc'?'txi-amt txi-inc':'txi-amt txi-exp'}">${tx.type==='inc'?'+':''}${fmtCur(tx.amount,cur,m,y)}</div></div>`).join('')+'</div>';}
+  else{recEl.innerHTML='<div class="txlist">'+combined.map(tx=>{
+    const _lbl=tx.category?(isMonarch()?catBadge(tx.category)+tx.category:(CAT_ICONS[tx.category]||'')+' '+tx.category):esc(tx.payee)||'—';
+    return`<div class="txi"><div><div class="txi-cat">${_lbl}</div><div class="txi-meta">${esc(tx.payee||tx.notes)||'—'} · ${fmtDate(tx.date)}</div></div><div class="${tx.type==='inc'?'txi-amt txi-inc':'txi-amt txi-exp'}">${tx.type==='inc'?'+':''}${fmtCur(tx.amount,cur,m,y)}</div></div>`;
+  }).join('')+'</div>';}
 
   // Calendar
   renderDashCalendar(m, y, [...S.txns, ...S.income.map(i=>({...i,type:'inc'}))]);
@@ -2744,6 +2949,26 @@ function renderNWTrendChart(){
   S.nwChart=new Chart(ctx,{type:'line',data:{labels:pts.map(p=>p.label),datasets:[{data:pts.map(p=>p.nw),borderColor:'#c8f542',backgroundColor:'rgba(200,245,66,0.06)',borderWidth:2,pointBackgroundColor:'#c8f542',pointRadius:4,tension:0.35,fill:true}]},options:{responsive:true,maintainAspectRatio:true,layout:{padding:{top:18}},plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>fmtChartNGN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}},plugins:[nwLabelPlugin]});
 }
 
+// Monarch mode: 12-month net-worth area chart inside the Net Worth hero card.
+// Read-only over cached history; hidden (and destroyed) entirely in Classic.
+function renderNWHeroChart(){
+  const wrap=document.getElementById('nw-hero-chart-wrap');
+  if(!wrap)return;
+  const _teardown=()=>{wrap.style.display='none';if(S.nwHeroChart){S.nwHeroChart.destroy();S.nwHeroChart=null;}};
+  if(!isMonarch()||_isHidden('nw')){_teardown();return;}
+  const hist=getHistory();
+  const pts=hist.slice(-12).map(h=>({label:h.label,nw:_nwForMonth(h.month,h.year)})).filter(p=>p.nw>0);
+  if(pts.length<2){_teardown();return;}
+  const canvas=document.getElementById('nw-hero-chart');
+  if(!canvas)return;
+  wrap.style.display='block';
+  if(S.nwHeroChart)S.nwHeroChart.destroy();
+  const acc=(getComputedStyle(document.body).getPropertyValue('--accent')||'#14b8a6').trim();
+  S.nwHeroChart=new Chart(canvas.getContext('2d'),{type:'line',
+    data:{labels:pts.map(p=>p.label),datasets:[{data:pts.map(p=>p.nw),borderColor:acc,backgroundColor:acc+'1f',borderWidth:2,pointRadius:0,pointHitRadius:8,tension:0.35,fill:true}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmtChartNGN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:getComputedStyle(document.body).getPropertyValue('--text3').trim()||'#888',font:{size:9},maxTicksLimit:6},border:{display:false}},y:{display:false}}}});
+}
+
 function renderDashFullYear(y,totalInc,totalExp,cur){
   const histYear=getHistory().filter(h=>h.year===y);
   const now=new Date();
@@ -3141,7 +3366,7 @@ function renderExpenses(){
       <div onclick="toggleExpGrp('${gid}')" style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);cursor:pointer;user-select:none">
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:0.63rem;color:var(--text3);transition:transform 0.15s" id="${gid}-arrow">▶</span>
-          <span style="font-size:0.9rem">${CAT_ICONS[cat]||'📋'}</span>
+          ${isMonarch()?catBadge(cat):`<span style="font-size:0.9rem">${CAT_ICONS[cat]||'📋'}</span>`}
           <span style="font-size:0.8rem;font-weight:700">${cat}</span>
           <span style="font-size:0.62rem;color:var(--text3);font-family:var(--mono)">${items.length}</span>
         </div>
@@ -3345,10 +3570,12 @@ function setTxnType(type){
   if(title)title.textContent=type==='income'?'Record Income':type==='transfer'?'Transfer':type==='expense'?'New Expense':'Transaction';
 }
 function autoSuggestCat(payee){
-  const cat=smartCat(payee);
+  // User-defined rules (appConfig/rules) take precedence over built-in keywords.
+  const ruleCat=applyRules(payee);
+  const cat=ruleCat||smartCat(payee);
   const hint=document.getElementById('e-autocat-hint');
   const catSel=document.getElementById('e-cat');
-  if(cat&&catSel){catSel.value=cat;updateExpenseLines();if(hint)hint.textContent='↑ auto';}
+  if(cat&&catSel){catSel.value=cat;updateExpenseLines();if(hint)hint.textContent=ruleCat?'↑ rule':'↑ auto';}
   else{if(hint)hint.textContent='';}
 }
 function updateRecurDesc(){
@@ -5632,8 +5859,14 @@ function renderCashFlowChart(){
   // Destroy stale instance before creating a new one
   if(S._sankeyChart){S._sankeyChart.destroy();S._sankeyChart=null;}
 
-  const CAT_COLOURS=['#f87171','#fb923c','#e879a0','#c084fc','#fbbf24','#60a5fa','#34d399','#94a3b8'];
-  const colorMap={'Income':'#14b8a6','Savings':'#34d399','Deficit':'#fb923c','Others':'#94a3b8'};
+  // Monarch: muted green/coral palette; Classic keeps the original colors.
+  const _mon=isMonarch();
+  const CAT_COLOURS=_mon
+    ?['#d97862','#c98a4b','#b0779c','#8a7fc9','#bfa04a','#6b93b0','#5aa88a','#9a998f']
+    :['#f87171','#fb923c','#e879a0','#c084fc','#fbbf24','#60a5fa','#34d399','#94a3b8'];
+  const colorMap=_mon
+    ?{'Income':'#2f8f6f','Savings':'#5aa88a','Deficit':'#c98a4b','Others':'#9a998f'}
+    :{'Income':'#14b8a6','Savings':'#34d399','Deficit':'#fb923c','Others':'#94a3b8'};
   cats.forEach(([cat],i)=>{if(!colorMap[cat])colorMap[cat]=CAT_COLOURS[i%CAT_COLOURS.length];});
 
   const data=[];
@@ -5686,11 +5919,11 @@ function renderCashFlowChart(){
   const legEl=document.getElementById('cashflow-legend');
   if(legEl){
     const items=[
-      {color:'#14b8a6',label:`Income ${fmtCur(incTotal,cur,m,y)}`},
-      {color:'#f87171',label:`Expenses ${fmtCur(totalExp,cur,m,y)}`},
+      {color:colorMap['Income'],label:`Income ${fmtCur(incTotal,cur,m,y)}`},
+      {color:_mon?'#d97862':'#f87171',label:`Expenses ${fmtCur(totalExp,cur,m,y)}`},
       savings>=0
-        ?{color:'#34d399',label:`Savings ${fmtCur(savings,cur,m,y)}`}
-        :{color:'#fb923c',label:`Deficit ${fmtCur(Math.abs(savings),cur,m,y)}`},
+        ?{color:colorMap['Savings'],label:`Savings ${fmtCur(savings,cur,m,y)}`}
+        :{color:colorMap['Deficit'],label:`Deficit ${fmtCur(Math.abs(savings),cur,m,y)}`},
     ];
     legEl.innerHTML=items.map(it=>`<span style="display:flex;align-items:center;gap:3px;font-size:0.58rem;color:var(--text3)"><span style="display:inline-block;width:7px;height:7px;border-radius:1px;background:${it.color}"></span>${it.label}</span>`).join('');
   }
@@ -6312,6 +6545,19 @@ function renderSettBudget(){
         <div><label class="ilabel">Into (target)</label><select class="sfield" id="merge-into" style="font-size:0.75rem">${getAllCats().map(c=>`<option>${c}</option>`).join('')}</select></div>
       </div>
       <button class="btn btn-d btn-full" onclick="openMergeCatModal()" style="font-size:0.76rem">Merge & Reassign</button>
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:14px">
+      <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Auto-Categorization Rules</div>
+      <div class="csub" style="margin-bottom:10px">When an expense name contains the text below, its category is filled in automatically (first match wins, overrides the built-in suggestions). Applies everywhere, in both design modes.</div>
+      ${getRules().map((r,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span style="flex:1;font-size:0.74rem">"${esc(r.match)}" <span style="color:var(--text3)">→</span> ${CAT_ICONS[r.category]||''} ${esc(r.category)}</span>
+        <button class="txi-del" onclick="deleteRule(${i})">×</button>
+      </div>`).join('')||'<div style="font-size:0.7rem;color:var(--text3);padding:2px 0 6px">No rules yet.</div>'}
+      <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:6px;margin-top:10px;align-items:center">
+        <input class="ifield" id="rule-match" placeholder="Name contains…" style="font-size:0.74rem;padding:6px 10px">
+        <select class="sfield" id="rule-cat" style="font-size:0.74rem;padding:6px 10px">${getAllCats().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select>
+        <button class="btn btn-p btn-sm" onclick="addRule()">+ Add</button>
+      </div>
     </div>`;
   setTimeout(()=>{initNumInputs(document.getElementById('sett-budget'));},0);
 }
@@ -6938,8 +7184,28 @@ function renderSettData(){
   const ls=cGet(CK.lastSync);
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
+  const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.3.4</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.3.4: Liquidating a fixed-income investment above its principal now records the interest portion in Income History for that period. Analytics → Insights gained a refresh button to recompute with the latest data on demand.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.0</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.0: New Monarch design mode (Settings → Design Mode) — a softer, chart-forward look you can switch on and off; Classic stays the default. Also new: savings Goals with progress tracking, auto-categorization Rules (Settings → Budget), an Upcoming Bills card for recurring transactions, and grouped budget rollups in Monarch mode.</div></div></div>
+    <div class="exp-card" style="margin-top:10px">
+      <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
+      <div class="exp-card-sub" style="margin-bottom:10px">Switch the app's look. Classic is the original design; Monarch is a softer, chart-forward style. Purely cosmetic — your data and features are identical in both.</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-sm ${_mon?'btn-g':'btn-p'}" style="flex:1" onclick="setDesignMode('classic')">Classic</button>
+        <button class="btn btn-sm ${_mon?'btn-p':'btn-g'}" style="flex:1" onclick="setDesignMode('monarch')">Monarch</button>
+      </div>
+    </div>
+    <div class="exp-card" style="margin-top:10px">
+      <div class="exp-card-title" style="margin-bottom:6px">Goals</div>
+      <div class="exp-card-sub" style="margin-bottom:8px">Savings targets with progress tracking. Active goals appear on the dashboard.</div>
+      ${getGoals().map((g,i)=>{const pct=g.target>0?Math.min(100,Math.round((g.current||0)/g.target*100)):0;return`<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)"><span style="font-size:0.76rem">${g.icon||'🎯'} ${esc(g.name)} <span style="color:var(--text3);font-size:0.64rem;font-family:var(--mono)">${pct}%</span></span><button class="btn btn-g btn-sm" style="padding:2px 8px;font-size:0.66rem" onclick="openGoalModal(${i})">Edit</button></div>`;}).join('')||'<div style="font-size:0.7rem;color:var(--text3);padding:2px 0 6px">No goals yet.</div>'}
+      <button class="btn btn-p btn-sm btn-full" style="margin-top:10px" onclick="openGoalModal()">+ New Goal</button>
+    </div>
+    <div class="exp-card" style="margin-top:10px">
+      <div class="exp-card-title" style="margin-bottom:6px">Recurring Transactions</div>
+      <div class="exp-card-sub" style="margin-bottom:10px">Bills and income that repeat. Due items appear on the dashboard as Upcoming Bills. Add one via the expense form's recurring option.</div>
+      <button class="btn btn-g btn-sm btn-full" onclick="openRecurModal()">Manage Recurring (${getRecurring().length})</button>
+    </div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
       <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
@@ -7685,7 +7951,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.3.4';
+const APP_VERSION='v4.4.0';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});

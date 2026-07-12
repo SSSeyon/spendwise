@@ -441,3 +441,66 @@ datalist option{background:var(--bg2);color:var(--text)}
   .ai-typing span:nth-child(2){animation-delay:0.2s;}
   .ai-typing span:nth-child(3){animation-delay:0.4s;}
   @keyframes aiBlink{0%,80%,100%{opacity:0.25;}40%{opacity:1;}}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MONARCH DESIGN MODE — everything below is scoped under body.monarch.
+   The Classic :root{} and body.light{} token blocks above are NEVER touched;
+   removing body.monarch restores Classic exactly. Toggled from Settings
+   (sw3_design_mode) via setDesignMode() in app.js.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Monarch DARK tokens ── */
+body.monarch{
+  --bg:#17191d;--bg1:#1f2227;--bg2:#262a30;--bg3:#2d3239;
+  --border:#2c3138;--border2:#3a4048;
+  --text:#edeae3;--text2:#a09d92;--text3:#615f56;
+  --accent:#3fa98c;--adim:rgba(63,169,140,0.12);--ab:rgba(63,169,140,0.26);
+  --red:#e8705f;--rdim:rgba(232,112,95,0.12);
+  --blue:#7d93b8;--bdim:rgba(125,147,184,0.12);
+  --gold:#d9a13c;--gdim:rgba(217,161,60,0.12);
+  --green:#57bd94;--gdim2:rgba(87,189,148,0.12);
+  --r:16px;--rsm:10px;
+  --font:'Inter',-apple-system,'Segoe UI',Roboto,sans-serif;
+  --shadow:0 1px 2px rgba(0,0,0,0.3),0 10px 30px rgba(0,0,0,0.24);
+  --shadow-sm:0 1px 2px rgba(0,0,0,0.22);
+}
+
+/* ── Monarch LIGHT tokens (warm off-white canvas) ── */
+body.monarch.light{
+  --bg:#faf9f6;--bg1:#ffffff;--bg2:#f4f2ec;--bg3:#ece9e0;
+  --border:#eceae2;--border2:#d9d5c9;
+  --text:#26251f;--text2:#71705f;--text3:#aeab9c;
+  --accent:#0e7a63;--adim:rgba(14,122,99,0.09);--ab:rgba(14,122,99,0.22);
+  --red:#d64f3d;--rdim:rgba(214,79,61,0.09);
+  --blue:#4a6fa5;--bdim:rgba(74,111,165,0.09);
+  --gold:#b7791f;--gdim:rgba(183,121,31,0.1);
+  --green:#1e8e68;--gdim2:rgba(30,142,104,0.1);
+  --shadow:0 1px 2px rgba(60,55,35,0.05),0 10px 32px rgba(60,55,35,0.08);
+  --shadow-sm:0 1px 2px rgba(60,55,35,0.05);
+}
+
+/* ── Monarch component polish (soft cards, calmer chrome) ── */
+body.monarch .card{padding:18px 16px;border-color:transparent}
+body.monarch .exp-card,body.monarch .dc{border-color:transparent;box-shadow:var(--shadow)}
+body.monarch:not(.light) .card,
+body.monarch:not(.light) .exp-card,
+body.monarch:not(.light) .dc{border-color:var(--border)}
+body.monarch .btn{border-radius:12px}
+body.monarch .btn-p{box-shadow:0 2px 10px var(--ab)}
+body.monarch .tabs{border-color:transparent;background:var(--bg2);border-radius:12px}
+body.monarch .tab{border-radius:9px;font-weight:600}
+body.monarch .ifield,body.monarch .sfield{border-radius:12px}
+body.monarch .modal{border-radius:20px 20px 0 0;border-top-width:1px;border-top-color:var(--border)}
+body.monarch .bnav{border-color:transparent;box-shadow:0 10px 34px rgba(0,0,0,0.18),0 2px 8px rgba(0,0,0,0.1)}
+body.monarch .nw-hero{border-color:transparent;background:var(--bg1)}
+body.monarch .nw-hero::after{display:none}
+body.monarch .nw-big{font-family:var(--font);font-weight:700;letter-spacing:-0.04em;color:var(--text)}
+body.monarch .pg-title{letter-spacing:-0.02em}
+body.monarch .clabel{letter-spacing:0.1em}
+body.monarch .prog{height:6px;border-radius:4px}
+body.monarch .mpill,body.monarch .cfpill,body.monarch .filter-chip,body.monarch .chart-btn{font-family:var(--font)}
+body.monarch .search-bar,body.monarch .period-sel{border-radius:12px}
+
+/* ── Monarch category icon badges (rendered only in Monarch by app.js) ── */
+body.monarch .catb{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--catbg,var(--bg2));font-size:0.78rem;margin-right:8px;vertical-align:middle;flex-shrink:0;line-height:1}
+body.monarch .cr-name{display:inline-flex;align-items:center}
