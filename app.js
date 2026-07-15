@@ -1908,6 +1908,15 @@ function renderDashboard(){
     const bal=subs.length?subs.reduce((ss,sub)=>ss+(Number(sub.principal)||0),0):(S.investments[p.key]||0);
     return s+bal;
   },0):0;
+  // Full portfolio total — ALL platforms, regardless of the Net Worth include
+  // toggles. The Investments stat card always shows the complete figure (the
+  // Net Worth number above is what honours the include config). Matches the
+  // total shown by drillDown('investments').
+  const invTotalAll=PLATFORMS.reduce((s,p)=>{
+    const subs=getSubsForPlatform(p.key);
+    const bal=subs.length?subs.reduce((ss,sub)=>ss+(Number(sub.principal)||0),0):(S.investments[p.key]||0);
+    return s+bal;
+  },0);
   const debtNW=_nwCfg.includeDebtors!==false?S.debtors.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0):0;
   const nw=invTotal+cashTotal+debtNW;
   const _nwParts=[_nwCfg.includeInvestments!==false?'Investments':null,_nwAccts.length?'Cash':null,_nwCfg.includeDebtors!==false&&debtNW?'Debtors':null].filter(Boolean);
@@ -1947,7 +1956,7 @@ function renderDashboard(){
     <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('expenses')"><div class="clabel">Spent ›${eyeBtn('dash-spent','renderDashboard')}</div><div class="cval-sm">${maskIf('dash-spent',fmtCur(spent,cur,m,y))}${momBadge(spent,prevSpent,true)}</div><div class="prog"><div class="pf ${st}" style="width:${budgTotal?Math.min(spent/budgTotal*100,100):0}%"></div></div><div class="csub">${_isHidden('dash-spent')?'<span class="masked">••••••</span>':_spentFooter}</div></div>
     <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('income')"><div class="clabel">Income ›${eyeBtn('dash-income','renderDashboard')}</div><div class="cval-sm" style="color:var(--accent)">${maskIf('dash-income',fmtCur(incomeDisplay,cur,m,y))}${momBadge(incomeDisplay,prevIncAmt,false)}</div><div class="csub">This month</div></div>
     <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('cash')"><div class="clabel">Cash ›${eyeBtn('dash-cash','renderDashboard')}</div><div class="cval-sm">${cashTotal?maskIf('dash-cash',fmtCur(cashTotal,cur,m,y)):'—'}</div><div class="csub">All accounts</div></div>
-    <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Investments${eyeBtn('dash-inv','renderDashboard')}</div><div class="cval-sm">${invTotal?maskIf('dash-inv',fmtCur(invTotal,cur,m,y)):'—'}</div><div class="csub">All platforms</div></div>
+    <div class="card card-sm" style="margin-bottom:0;cursor:pointer" onclick="drillDown('investments')"><div class="clabel">Investments ›${eyeBtn('dash-inv','renderDashboard')}</div><div class="cval-sm">${invTotalAll?maskIf('dash-inv',fmtCur(invTotalAll,cur==='NATIVE'?'NGN':cur,m,y)):'—'}</div><div class="csub">All platforms</div></div>
   `;
 
   // Category spend
