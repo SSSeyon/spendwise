@@ -4463,6 +4463,7 @@ function _renderInvInto(suffix){
         <div style="text-align:right;flex-shrink:0">
           <div class="pval" style="color:${platformNGN?p.color:'var(--text3)'}">${platformNGN?maskIf('inv-page',dispMainVal):'—'}</div>
           ${totalInterestNGN>0&&!_isHidden('inv-page')?`<div style="font-size:0.58rem;color:var(--gold);font-family:var(--mono)">+${isUSD?'$'+((totalInterestNGN/fxRate)).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(Math.round(totalInterestNGN))} interest</div>`:''}
+          <div onclick="event.stopPropagation();drillDownInvPlatform('${p.key}')" style="font-size:0.6rem;color:var(--text3);margin-top:2px;cursor:pointer">Activity ›</div>
         </div>
       </div>
       ${subs.length>0?`<div id="inv-sub-display-${p.key}${s}" style="display:none;margin-top:4px">${subRows.map(r=>r.html).join('')}</div>`:''}
@@ -4946,7 +4947,7 @@ function renderCashPage(){
     } else {
       dispVal=fmtCur(val,cur,m,y);
     }
-    return`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;${i<ACCTS.length-1?'border-bottom:1px solid var(--border)':''}"><div style="display:flex;align-items:center;gap:8px">${bankLogoEl(b,26)}<div><div style="font-size:0.82rem;font-weight:600">${b}${intInfo}</div><div style="font-size:0.65rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}%</div>${_isHidden('cash-page')?'':intProjection}</div></div><div style="font-family:var(--mono);font-size:0.9rem;color:${val?'var(--blue)':'var(--text3)'}">${val?maskIf('cash-page',dispVal):'—'}</div></div>`;
+    return`<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;cursor:pointer;${i<ACCTS.length-1?'border-bottom:1px solid var(--border)':''}" onclick="drillDownAccount('${jsq(b)}')"><div style="display:flex;align-items:center;gap:8px">${bankLogoEl(b,26)}<div><div style="font-size:0.82rem;font-weight:600">${b}${intInfo} <span style="font-size:0.6rem;color:var(--text3)">›</span></div><div style="font-size:0.65rem;color:var(--text2);font-family:var(--mono);margin-top:1px">${pct}%</div>${_isHidden('cash-page')?'':intProjection}</div></div><div style="font-family:var(--mono);font-size:0.9rem;color:${val?'var(--blue)':'var(--text3)'}">${val?maskIf('cash-page',dispVal):'—'}</div></div>`;
   }).join('');
   document.getElementById('cash-inputs').innerHTML=`<div class="gform">${ACCTS.map(b=>`<div class="ig"><label class="ilabel">${b} (${isUSDCashAccount(b)?'$':'₦'})</label><input class="ifield" type="text" id="cash-${b.toLowerCase().replace(/\s+/g,'-')}" placeholder="0" value="${cash[b]||''}"></div>`).join('')}</div>`;
   // Cash interest settings section
@@ -5219,30 +5220,25 @@ function renderDebtors(){
     const pct=d.amount>0?((d.paid||0)/d.amount)*100:0;
     const settled=pct>=100||!expectRepay;
     const owedDisp=fmtCur(d.ngnBalance||0,cur,m,y);
-    return`<div class="dc" style="${settled&&expectRepay?'opacity:0.4':''}">
+    return`<div class="dc" style="cursor:pointer;${settled&&expectRepay?'opacity:0.4':''}" onclick="drillDownDebtor('${d.id||idx}')">
       <div class="dc-top">
-        <div><div class="dc-name">${esc(d.name)}</div><div class="dc-sub">${esc(d.category)} · ${d.currency} ${fNum(d.amount)}${d.date?' · '+fmtDate(d.date):''}</div></div>
+        <div><div class="dc-name">${esc(d.name)} <span style="font-size:0.62rem;color:var(--text3)">›</span></div><div class="dc-sub">${esc(d.category)} · ${d.currency} ${fNum(d.amount)}${d.date?' · '+fmtDate(d.date):''}</div></div>
         <div class="badge ${!expectRepay?'bgold':settled?'bg':'br'}">${!expectRepay?'Write-off':settled?'Settled':owedDisp+' due'}</div>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
         <div style="font-size:0.65rem;color:var(--text2)">Expecting repayment</div>
-        <div onclick="toggleRepay('${d.id||idx}',${!expectRepay})" style="width:36px;height:20px;border-radius:10px;background:${expectRepay?'var(--accent)':'var(--border2)'};position:relative;cursor:pointer;transition:background 0.2s;flex-shrink:0">
+        <div onclick="event.stopPropagation();toggleRepay('${d.id||idx}',${!expectRepay})" style="width:36px;height:20px;border-radius:10px;background:${expectRepay?'var(--accent)':'var(--border2)'};position:relative;cursor:pointer;transition:background 0.2s;flex-shrink:0">
           <div style="position:absolute;top:2px;${expectRepay?'right:2px':'left:2px'};width:16px;height:16px;border-radius:50%;background:${expectRepay?'var(--bg)':'var(--text3)'};transition:all 0.2s"></div>
         </div>
       </div>
       ${expectRepay&&!settled?`<div class="prog" style="margin-top:8px"><div class="pf ok" style="width:${Math.min(pct,100)}%"></div></div>`:''}
       ${d.notes?`<div style="font-size:0.65rem;color:var(--text2);margin-top:5px">${esc(d.notes)}</div>`:''}
       <div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">
-        ${expectRepay&&!settled?`<button class="btn btn-g btn-sm" onclick="recordPmt('${d.id||idx}',${d.amount},${d.paid||0},${d.rate||DEF_RATES[d.currency]||1})">Record Payment</button>`:''}
-        <button class="btn btn-g btn-sm" onclick="openAddDebt('${d.id||idx}')">+ Add Debt</button>
-        ${(d.pmtLog&&d.pmtLog.length)?`<button class="btn btn-g btn-sm" onclick="togglePmtLog('${d.id||idx}')">Payment History (${d.pmtLog.length})</button>`:''}
-        <button class="btn btn-g btn-sm" onclick="openEditDeb('${d.id||idx}')">Edit</button>
-        <button class="btn btn-d btn-sm" onclick="removeDeb('${d.id||idx}')">Remove</button>
+        ${expectRepay&&!settled?`<button class="btn btn-g btn-sm" onclick="event.stopPropagation();recordPmt('${d.id||idx}',${d.amount},${d.paid||0},${d.rate||DEF_RATES[d.currency]||1})">Record Payment</button>`:''}
+        <button class="btn btn-g btn-sm" onclick="event.stopPropagation();openAddDebt('${d.id||idx}')">+ Add Debt</button>
+        <button class="btn btn-g btn-sm" onclick="event.stopPropagation();openEditDeb('${d.id||idx}')">Edit</button>
+        <button class="btn btn-d btn-sm" onclick="event.stopPropagation();removeDeb('${d.id||idx}')">Remove</button>
       </div>
-      ${(d.pmtLog&&d.pmtLog.length)?`<div id="pmt-log-${d.id||idx}" style="display:none;margin-top:8px;background:var(--bg2);border-radius:6px;padding:8px 10px">
-        <div style="font-size:0.6rem;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">Payment Log</div>
-        ${[...d.pmtLog].reverse().map(p=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:0.68rem"><span style="color:var(--text2)">${fmtDate(p.date)}</span><span style="font-family:var(--mono);color:var(--accent)">+${fN(p.amount)}</span></div>`).join('')}
-      </div>`:''}
     </div>`;
   }).join('');
 }
@@ -5743,10 +5739,10 @@ function renderLoans(){
       const accrued=principal*(l.ratePA/100)*(days/365);
       if(accrued>0) accruedStr=`<div style="font-size:0.6rem;color:var(--gold);font-family:var(--mono);margin-top:3px">≈${fmtCur(accrued,cur,m,y)} interest accrued over ${days}d (estimate, not saved)</div>`;
     }
-    return`<div class="dc" style="${settled?'opacity:0.5':''}">
+    return`<div class="dc" style="cursor:pointer;${settled?'opacity:0.5':''}" onclick="drillDownLoan('${l.id}')">
       <div class="dc-top">
         <div>
-          <div class="dc-name">${esc(l.lender)}</div>
+          <div class="dc-name">${esc(l.lender)} <span style="font-size:0.62rem;color:var(--text3)">›</span></div>
           <div class="dc-sub">${esc(l.loanType||'Loan')} · ${l.currency} ${fNum(l.amount||0)}${rateStr}${dueStr}</div>
           <div class="dc-sub" style="margin-top:2px">${l.startDate?fmtDate(l.startDate):''}${disbTo}</div>
         </div>
@@ -5756,18 +5752,10 @@ function renderLoans(){
       <div style="font-size:0.6rem;color:var(--text3);font-family:var(--mono);margin-top:3px">${pct.toFixed(0)}% repaid · ${fmtCur(repaid,cur,m,y)} of ${fmtCur(principal,cur,m,y)}</div>${accruedStr}`:''}
       ${l.notes?`<div style="font-size:0.65rem;color:var(--text2);margin-top:5px">${esc(l.notes)}</div>`:''}
       <div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">
-        ${!settled?`<button class="btn btn-g btn-sm" onclick="openLoanRepay('${l.id}')">Record Repayment</button>`:''}
-        ${(l.repayLog&&l.repayLog.length)?`<button class="btn btn-g btn-sm" onclick="toggleLoanLog('${l.id}')">History (${l.repayLog.length})</button>`:''}
-        <button class="btn btn-g btn-sm" onclick="openEditLoan('${l.id}')">Edit</button>
-        <button class="btn btn-d btn-sm" onclick="removeLoan('${l.id}')">Remove</button>
-      </div>
-      ${(l.repayLog&&l.repayLog.length)?`<div id="loan-log-${l.id}" style="display:none;margin-top:8px;background:var(--bg2);border-radius:6px;padding:8px 10px">
-        <div style="font-size:0.6rem;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">Repayment Log</div>
-        ${[...l.repayLog].reverse().map(p=>`<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:0.68rem">
-          <span style="color:var(--text2)">${fmtDate(p.date)}${p.account?' · '+esc(p.account):''}</span>
-          <span style="font-family:var(--mono);color:var(--red)">-${fN(p.amount)}</span>
-        </div>`).join('')}
-      </div>`:''}</div>`
+        ${!settled?`<button class="btn btn-g btn-sm" onclick="event.stopPropagation();openLoanRepay('${l.id}')">Record Repayment</button>`:''}
+        <button class="btn btn-g btn-sm" onclick="event.stopPropagation();openEditLoan('${l.id}')">Edit</button>
+        <button class="btn btn-d btn-sm" onclick="event.stopPropagation();removeLoan('${l.id}')">Remove</button>
+      </div></div>`
   }).join('');
 }
 
@@ -7726,6 +7714,101 @@ function drillDownInvPlatform(pKey){
       </div>`;
     }).join('');
   }
+
+  document.getElementById('drill-body').innerHTML=body;
+  openMod('drill-modal');
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// DEBTOR / LOAN ACTIVITY DRILLDOWN
+// ══════════════════════════════════════════════════════════════════════════
+// Shared row renderer for a debt-style ledger entry.
+function _debtRow(label,meta,amt,isCredit){
+  return`<div class="txi" style="padding:7px 0;border-bottom:1px solid var(--border)">
+    <div style="min-width:0;flex:1">
+      <div class="txi-cat">${label}</div>
+      <div class="txi-meta">${meta}</div>
+    </div>
+    <div class="txi-amt ${isCredit?'txi-inc':'txi-exp'}" style="white-space:nowrap;margin-left:10px">${isCredit?'+':'−'}${amt}</div>
+  </div>`;
+}
+
+function drillDownDebtor(id){
+  const d=S.debtors.find(x=>x.id===id)||S.debtors[parseInt(id)];
+  if(!d) return;
+  const curSym=d.currency==='USD'?'$':d.currency==='GBP'?'£':'₦';
+  const bal=(d.amount||0)-(d.paid||0);
+  document.getElementById('drill-title').innerHTML=`${esc(d.name)} · ${curSym}${fNum(bal)} due`;
+
+  // The original loan plus every subsequent top-up. Debtors created before
+  // addLog existed have no entry for the opening amount, so synthesise one
+  // from the record's own date/amount to keep the running balance honest.
+  const adds=(d.addLog||[]).map(a=>({date:a.date,amount:a.amount,note:a.note||'',acct:a.disbursedFrom||'',_k:'add'}));
+  const openingLogged=adds.reduce((s,a)=>s+(a.amount||0),0);
+  const opening=(d.amount||0)-openingLogged;
+  if(opening>0.005) adds.push({date:d.date||'',amount:opening,note:'Original loan',acct:d.acct||'',_k:'add'});
+  const pmts=(d.pmtLog||[]).map(p=>({date:p.date,amount:p.amount,note:'',acct:p.creditedTo||'',_k:'pmt'}));
+  // Payments recorded before pmtLog existed live only in the aggregate `paid`
+  // field. Synthesise one entry for the untracked remainder so the running
+  // balance reconciles to the real outstanding figure shown in the title.
+  const pmtLogged=pmts.reduce((s,p)=>s+(p.amount||0),0);
+  const priorPaid=(d.paid||0)-pmtLogged;
+  if(priorPaid>0.005) pmts.push({date:d.date||'',amount:priorPaid,note:'Earlier payment',acct:'',_k:'pmt'});
+
+  const merged=[...adds,...pmts];
+  if(!merged.length){
+    document.getElementById('drill-body').innerHTML='<div style="color:var(--text3);padding:12px 0">No activity recorded for this debtor.</div>';
+    openMod('drill-modal');return;
+  }
+
+  // Chronological order for the running balance (oldest→newest). Same-date ties
+  // put the loan before its repayment, since you can't repay before borrowing.
+  const asc=[...merged].sort((a,b)=>{
+    if(a.date!==b.date) return a.date<b.date?-1:1;
+    return a._k==='add'?-1:b._k==='add'?1:0;
+  });
+  let run=0;
+  const runMap=new Map();
+  asc.forEach(e=>{run+=e._k==='add'?(e.amount||0):-(e.amount||0);runMap.set(e,run);});
+
+  // Display newest-first.
+  const all=[...asc].reverse();
+  const body='<div class="txlist">'+all.map(e=>{
+    const isAdd=e._k==='add';
+    const badge=isAdd
+      ?`<span style="font-size:0.55rem;font-weight:700;color:var(--gold);background:rgba(250,204,21,0.12);border-radius:3px;padding:1px 4px;margin-left:4px">LOANED</span>`
+      :`<span style="font-size:0.55rem;font-weight:700;color:var(--accent);background:rgba(52,211,153,0.12);border-radius:3px;padding:1px 4px;margin-left:4px">PAID</span>`;
+    const acct=e.acct?` · ${isAdd?'from ':'to '}${esc(e.acct)}`:'';
+    const note=e.note?` · ${esc(e.note)}`:'';
+    const meta=`${e.date?fmtDate(e.date):'—'}${acct}${note} · bal ${curSym}${fNum(runMap.get(e)||0)}`;
+    return _debtRow((isAdd?'Loaned out':'Repayment')+badge,meta,curSym+fNum(e.amount||0),!isAdd);
+  }).join('')+'</div>';
+
+  document.getElementById('drill-body').innerHTML=body;
+  openMod('drill-modal');
+}
+
+function drillDownLoan(id){
+  const l=S.loans.find(x=>x.id===id);
+  if(!l) return;
+  const principal=l.amtNGN||l.amount||0;
+  const outstanding=Math.max(0,principal-(l.repaid||0));
+  document.getElementById('drill-title').innerHTML=`${esc(l.lender||l.name||'Loan')} · ${fN(Math.round(outstanding))} outstanding`;
+
+  const rows=[
+    ...(l.repayLog||[]).map(r=>({date:r.date,amount:r.amount,note:r.notes||'',acct:r.account||'',_k:'rp'})),
+    {date:l.startDate||'',amount:principal,note:'Loan received',acct:l.acct||'',_k:'orig'}
+  ].sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:0);
+
+  const body='<div class="txlist">'+rows.map(e=>{
+    const isOrig=e._k==='orig';
+    const badge=isOrig
+      ?`<span style="font-size:0.55rem;font-weight:700;color:var(--gold);background:rgba(250,204,21,0.12);border-radius:3px;padding:1px 4px;margin-left:4px">BORROWED</span>`
+      :`<span style="font-size:0.55rem;font-weight:700;color:var(--accent);background:rgba(52,211,153,0.12);border-radius:3px;padding:1px 4px;margin-left:4px">REPAID</span>`;
+    const acct=e.acct?` · ${isOrig?'into ':'from '}${esc(e.acct)}`:'';
+    const note=e.note?` · ${esc(e.note)}`:'';
+    return _debtRow((isOrig?'Loan received':'Repayment')+badge,`${e.date?fmtDate(e.date):'—'}${acct}${note}`,fN(Math.round(e.amount||0)),isOrig);
+  }).join('')+'</div>';
 
   document.getElementById('drill-body').innerHTML=body;
   openMod('drill-modal');
