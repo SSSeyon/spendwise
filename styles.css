@@ -168,6 +168,7 @@ body.light .theme-btn:hover{color:#c68a00;background:rgba(230,168,0,0.1)}
 .ifield,.sfield{width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);color:var(--text);font-family:var(--font);font-size:0.84rem;padding:10px 13px;outline:none;transition:border-color 0.14s,box-shadow 0.14s;appearance:none}
 .ifield:focus,.sfield:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--adim)}
 .ifield[type=number]{font-family:var(--mono)}
+textarea.ifield{resize:none;overflow-y:auto;max-height:200px;line-height:1.4;min-height:auto}
 .gform{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
 
 /* ── BUTTONS ── */

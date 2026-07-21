@@ -494,7 +494,7 @@
     </div>
     <div class="gform">
       <div class="ig"><label class="ilabel">Date</label><input class="ifield" type="date" id="e-date"></div>
-      <div class="ig"><label class="ilabel">Notes</label><input class="ifield" type="text" id="e-notes" placeholder="Optional"></div>
+      <div class="ig"><label class="ilabel">Notes</label><textarea class="ifield ta-notes" id="e-notes" rows="1" placeholder="Optional" oninput="_autoGrowTA(this)"></textarea></div>
     </div>
     <!-- Recurring toggle -->
     <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);margin-bottom:12px">
@@ -569,7 +569,7 @@
     </div>
     <div class="ig">
       <label class="ilabel">Notes (optional)</label>
-      <input class="ifield" type="text" id="move-notes" placeholder="e.g. Monthly savings deposit">
+      <textarea class="ifield ta-notes" id="move-notes" rows="1" placeholder="e.g. Monthly savings deposit" oninput="_autoGrowTA(this)"></textarea>
     </div>
     <button class="btn btn-p btn-full" onclick="saveMoveFunds()">Move Funds</button>
   </div>
@@ -620,7 +620,7 @@
     </div>
     <div class="gform">
       <div class="ig"><label class="ilabel">Date</label><input class="ifield" type="date" id="i-date"></div>
-      <div class="ig"><label class="ilabel">Notes</label><input class="ifield" type="text" id="i-notes" placeholder="Optional"></div>
+      <div class="ig"><label class="ilabel">Notes</label><textarea class="ifield ta-notes" id="i-notes" rows="1" placeholder="Optional" oninput="_autoGrowTA(this)"></textarea></div>
     </div>
     <input type="hidden" id="i-edit-id" value="">
     <button class="btn btn-inc btn-full" id="i-save" onclick="saveIncome()">Record Income</button>
@@ -690,7 +690,7 @@
       </div>
       <div class="ig" style="margin-bottom:14px">
         <label class="ilabel">Notes (optional)</label>
-        <input class="ifield" type="text" id="inv-adj-notes" placeholder="e.g. Monthly top-up">
+        <textarea class="ifield ta-notes" id="inv-adj-notes" rows="1" placeholder="e.g. Monthly top-up" oninput="_autoGrowTA(this)"></textarea>
       </div>
       <button class="btn btn-p btn-full" style="font-weight:700" onclick="applyInvAdjust()">Apply</button>
       <button class="btn btn-g btn-full" style="margin-top:8px" onclick="closeMod('inv-adj-modal')">Cancel</button>
@@ -721,7 +721,7 @@
     </div>
     <div class="ig"><label class="ilabel">Date of Transaction</label><input class="ifield" type="date" id="d-date"></div>
     <div class="ig"><label class="ilabel">Exchange Rate to ₦ (blank = default)</label><input class="ifield" type="text" id="d-rate" placeholder="e.g. 1600"></div>
-    <div class="ig"><label class="ilabel">Notes</label><input class="ifield" type="text" id="d-notes" placeholder="Optional"></div>
+    <div class="ig"><label class="ilabel">Notes</label><textarea class="ifield ta-notes" id="d-notes" rows="1" placeholder="Optional" oninput="_autoGrowTA(this)"></textarea></div>
     <button class="btn btn-p btn-full" id="deb-save" onclick="saveDebtor()">Add Debtor</button>
     <input type="hidden" id="d-eid">
   </div>
@@ -751,7 +751,7 @@
       <div class="ig"><label class="ilabel">Due Date</label><input class="ifield" type="date" id="ln-due" placeholder="Optional"></div>
     </div>
     <div class="ig"><label class="ilabel">Exchange Rate to ₦ (blank = default)</label><input class="ifield" type="text" id="ln-fx" placeholder="e.g. 1600"></div>
-    <div class="ig"><label class="ilabel">Notes</label><input class="ifield" type="text" id="ln-notes" placeholder="Optional — purpose, collateral, etc."></div>
+    <div class="ig"><label class="ilabel">Notes</label><textarea class="ifield ta-notes" id="ln-notes" rows="1" placeholder="Optional — purpose, collateral, etc." oninput="_autoGrowTA(this)"></textarea></div>
     <button class="btn btn-p btn-full" id="loan-save" onclick="saveLoan()">Add Loan</button>
     <input type="hidden" id="ln-eid">
   </div>
@@ -763,7 +763,7 @@
     <div class="ig"><label class="ilabel">Repayment Amount</label><input class="ifield" type="text" id="lrp-amt" placeholder="0"></div>
     <div class="ig"><label class="ilabel">Deduct From Account</label><select class="sfield" id="lrp-acct"><option value="">— None / External —</option></select></div>
     <div class="ig"><label class="ilabel">Date</label><input class="ifield" type="date" id="lrp-date"></div>
-    <div class="ig"><label class="ilabel">Notes</label><input class="ifield" type="text" id="lrp-notes" placeholder="Optional"></div>
+    <div class="ig"><label class="ilabel">Notes</label><textarea class="ifield ta-notes" id="lrp-notes" rows="1" placeholder="Optional" oninput="_autoGrowTA(this)"></textarea></div>
     <button class="btn btn-p btn-full" onclick="saveLoanRepayment()">Record Repayment</button>
     <input type="hidden" id="lrp-lid">
   </div>

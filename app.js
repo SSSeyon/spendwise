@@ -1074,7 +1074,14 @@ function _recalcHistIncome(m,y){
   const hIdx=hist.findIndex(h=>h.year===y&&h.month===m);
   if(hIdx>=0){hist[hIdx].income=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);cSet('sw3_history',hist);}
 }
-function openMod(id){document.getElementById(id).classList.add('open');}
+function _autoGrowTA(el){el.style.height='auto';el.style.height=el.scrollHeight+'px';}
+function openMod(id){
+  document.getElementById(id).classList.add('open');
+  // Deferred a tick so it runs after any synchronous .value= population that
+  // happens right after the openMod() call (e.g. openEditExp sets e-notes
+  // after opening exp-modal) — otherwise the box would size to the old/empty value.
+  setTimeout(()=>document.querySelectorAll('#'+id+' textarea.ta-notes').forEach(_autoGrowTA),0);
+}
 function closeMod(id){document.getElementById(id).classList.remove('open');}
 
 function setSyncStatus(st){
