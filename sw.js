@@ -1,6 +1,6 @@
 // SpendWise Service Worker
-// Network-first (revalidated) for the HTML shell so the version pointer is
-// never stale; cache-first for version-queried assets and CDN libs.
+// Stale-while-revalidate for the HTML shell (instant boot, refreshed in the
+// background); cache-first for version-queried assets, fonts and CDN libs.
 const CACHE = 'spendwise-v18';
 
 // Only truly-static, rarely-changing assets are pre-cached. index.html,
@@ -27,8 +27,11 @@ const NETWORK_ONLY = [
   'securetoken.googleapis.com',
   'firebaseinstallations.googleapis.com',
   'generativelanguage.googleapis.com',
-  'fonts.gstatic.com',
 ];
+// NOTE: fonts.gstatic.com is deliberately NOT network-only. Google serves font
+// binaries from immutable, hash-named URLs, so they are safe to cache forever —
+// and leaving them uncached cost a blocking network round-trip on every launch
+// (text paint waits on webfonts), which was a major share of online boot time.
 
 // ── Skip waiting when told to (used by Force Hard Refresh and update banner)
 self.addEventListener('message', event => {
@@ -69,29 +72,49 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // HTML shell (page navigations and index.html): network-first with
-  // revalidation, so a new release is always picked up while online. The
-  // ?v= on app.js/styles.css referenced inside then forces those to refresh
-  // in lockstep. Falls back to cache when offline.
+  // HTML shell (page navigations and index.html): stale-while-revalidate.
+  //
+  // This used to be network-first, which meant every online launch blocked on a
+  // full round-trip to GitHub Pages before ANYTHING painted — while offline
+  // launches were instant, because the fetch failed immediately and fell
+  // straight through to the cache. That asymmetry was the whole reason the app
+  // felt slow to open on a connection.
+  //
+  // Now: return the cached shell immediately (if we have one) and refresh it in
+  // the background for next time. The shell can therefore be one release behind
+  // for a single launch — that is exactly what checkForUpdate() in app.js and
+  // the update banner exist to cover, and forceHardRefresh() skips the wait.
+  // The ?v= on app.js/styles.css inside the shell still keeps those in lockstep.
   const isHTML = req.mode === 'navigate' ||
     url.pathname === '/' || url.pathname.endsWith('/') || url.pathname.endsWith('index.html');
   if (isHTML && url.origin === self.location.origin) {
     event.respondWith((async () => {
+      const cache = await caches.open(CACHE);
+      const cached = (await cache.match('./index.html')) || (await cache.match('./'));
+
+      // {cache:'no-cache'} forces revalidation against the server (304 when
+      // unchanged) instead of silently serving a max-age-fresh stale copy.
+      const revalidate = fetch(new Request(url.href, { cache: 'no-cache' }))
+        .then(fresh => {
+          if (fresh && fresh.status === 200) cache.put('./index.html', fresh.clone());
+          return fresh;
+        });
+
+      if (cached) {
+        // Keep the SW alive for the background refresh, but never let a failed
+        // or hanging revalidation surface as an error — we already responded.
+        event.waitUntil(revalidate.catch(() => {}));
+        return cached;
+      }
+
+      // Cold cache (first ever load, or after a cache wipe): we have no choice
+      // but to wait for the network.
       try {
-        // {cache:'no-cache'} forces revalidation against the server (304 when
-        // unchanged) instead of silently serving a max-age-fresh stale copy.
-        const fresh = await fetch(new Request(url.href, { cache: 'no-cache' }));
-        if (fresh && fresh.status === 200) {
-          const cache = await caches.open(CACHE);
-          cache.put('./index.html', fresh.clone());
-        }
-        return fresh;
+        return await revalidate;
       } catch (err) {
-        const cache = await caches.open(CACHE);
-        return (await cache.match('./index.html')) || (await cache.match('./')) ||
-          new Response('Offline — reconnect to load SpendWise.', {
-            status: 503, headers: { 'Content-Type': 'text/plain' },
-          });
+        return new Response('Offline — reconnect to load SpendWise.', {
+          status: 503, headers: { 'Content-Type': 'text/plain' },
+        });
       }
     })());
     return;
