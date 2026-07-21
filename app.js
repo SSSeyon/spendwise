@@ -4205,7 +4205,7 @@ async function saveExpense(){
         const _net=_eOldAmt-amt; // positive = expense reduced, negative = expense increased
         if(_net!==0) _adjustCash(data.bank, _net, expTxM, expTxY, 'expense-edit');
       }else{
-        if(_eOldBank&&_eOldAmt) _adjustCash(_eOldBank, _eOldAmt, _editTx.year||expTxY, _editTx.month||expTxM, 'expense-edit-reverse');
+        if(_eOldBank&&_eOldAmt) _adjustCash(_eOldBank, _eOldAmt, _editTx.month||expTxM, _editTx.year||expTxY, 'expense-edit-reverse');
         if(data.bank) _adjustCash(data.bank, -amt, expTxM, expTxY, 'expense-edit');
       }
     } else {
@@ -4229,7 +4229,7 @@ async function saveExpense(){
         const _cnet=_ceOldAmt-amt;
         if(_cnet!==0) _adjustCash(data.bank, _cnet, expTxM, expTxY, 'expense-edit');
       }else{
-        if(_ceOldBank&&_ceOldAmt) _adjustCash(_ceOldBank, _ceOldAmt, _editTx?.year||expTxY, _editTx?.month||expTxM, 'expense-edit-reverse');
+        if(_ceOldBank&&_ceOldAmt) _adjustCash(_ceOldBank, _ceOldAmt, _editTx?.month||expTxM, _editTx?.year||expTxY, 'expense-edit-reverse');
         if(data.bank) _adjustCash(data.bank, -amt, expTxM, expTxY, 'expense-edit');
       }
     }else{
@@ -4317,7 +4317,7 @@ async function saveIncome(){
         const _inet=amt-_iOldAmt; // positive = income increased, negative = decreased
         if(_inet!==0) _adjustCash(bank, _inet, txM, txY, 'income-edit');
       }else{
-        if(_iOldBank&&_iOldAmt) _adjustCash(_iOldBank, -_iOldAmt, _editInc?.year||txY, _editInc?.month||txM, 'income-edit-reverse');
+        if(_iOldBank&&_iOldAmt) _adjustCash(_iOldBank, -_iOldAmt, _editInc?.month||txM, _editInc?.year||txY, 'income-edit-reverse');
         _adjustCash(bank, amt, txM, txY, 'income-edit');
       }
       toast(`Income updated · ${bank} adjusted`);
@@ -4351,7 +4351,7 @@ async function saveIncome(){
         const _cinet=amt-_ciOldAmt;
         if(_cinet!==0) _adjustCash(bank, _cinet, txM, txY, 'income-edit');
       }else{
-        if(_ciOldBank&&_ciOldAmt) _adjustCash(_ciOldBank, -_ciOldAmt, _editInc?.year||txY, _editInc?.month||txM, 'income-edit-reverse');
+        if(_ciOldBank&&_ciOldAmt) _adjustCash(_ciOldBank, -_ciOldAmt, _editInc?.month||txM, _editInc?.year||txY, 'income-edit-reverse');
         _adjustCash(bank, amt, txM, txY, 'income-edit');
       }
     }else{
