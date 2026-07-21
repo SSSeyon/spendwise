@@ -7270,7 +7270,8 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.1</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.1: Notifications now work on phones — they were silently failing on Android and only ever appearing on desktop. If they are off, open the bell menu and tap "Turn on notifications for this device". Also: the app now opens much faster when you are online, instead of waiting on the network before showing anything.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.2</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.2: You can now save multiple AI API keys (More → Data → AI API Keys) and pick which one is active, plus edit or delete any of them. Also: fixed an edit-expense bug where changing an expense's source bank didn't reverse the old bank's balance, and Notes fields now wrap and grow as you type instead of scrolling sideways.</div></div></div>
+    ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
       <div class="exp-card-sub" style="margin-bottom:10px">Switch the app's look. Classic is the original design; Monarch is a softer, chart-forward style. Purely cosmetic — your data and features are identical in both.</div>
@@ -8130,7 +8131,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.1';
+const APP_VERSION='v4.4.2';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
@@ -8607,12 +8608,126 @@ async function execMergeCat(){
 // before this end-of-file module body executes — hoisting keeps that safe.
 var AI_KEY_LS='sw3_gemini_key', AI_CHAT_LS='sw3_ai_chat', AI_MODEL_LS='sw3_gemini_model';
 var AI_CHATS_LS='sw3_ai_chats', AI_ACTIVE_LS='sw3_ai_active';
+var AI_KEYS_LS='sw3_gemini_keys', AI_ACTIVE_KEY_LS='sw3_gemini_active_key';
 // Tried in order until one answers; the winner is remembered per device.
 var AI_MODELS=['gemini-2.5-flash','gemini-2.0-flash','gemini-1.5-flash'];
 var _aiCtx=null,_aiCtxAt=0,_aiBusy=false;
 // True while composing a brand-new, not-yet-sent conversation (device-local).
 var _aiNewMode=false;
-function _aiKey(){return cGet('sw3_gemini_key')||'';}
+
+// ── Multi-key store (Data tab) ──────────────────────────────────────────────
+// Several Gemini API keys can be saved (e.g. separate Google accounts to work
+// around free-tier rate limits); one is "active" at a time. Device-local only
+// — same rule as the old single key, never synced to Firestore.
+function _aiNewKeyId(){return 'k'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
+function _aiKeys(){
+  if(!Array.isArray(S.aiKeys)){
+    let keys=cGet(AI_KEYS_LS);
+    if(!Array.isArray(keys)){
+      // One-time migration from the old single-key slot.
+      const legacy=cGet(AI_KEY_LS);
+      keys=legacy?[{id:_aiNewKeyId(),label:'Default',key:legacy}]:[];
+      if(keys.length) cSet(AI_ACTIVE_KEY_LS,keys[0].id);
+      cSet(AI_KEYS_LS,keys);
+    }
+    S.aiKeys=keys;
+  }
+  return S.aiKeys;
+}
+function _aiSaveKeys(){cSet(AI_KEYS_LS,_aiKeys());}
+function _aiActiveKeyId(){
+  const keys=_aiKeys();
+  const id=cGet(AI_ACTIVE_KEY_LS)||'';
+  if(id&&keys.some(k=>k.id===id)) return id;
+  return keys[0]?.id||''; // stale/missing pointer — fall back to the first saved key
+}
+function _aiKey(){
+  const k=_aiKeys().find(k=>k.id===_aiActiveKeyId());
+  return k?k.key:'';
+}
+function renderApiKeysCard(){
+  const keys=_aiKeys();
+  const activeId=_aiActiveKeyId();
+  const rows=keys.map(k=>{
+    const isActive=k.id===activeId;
+    const masked=k.key?('•'.repeat(Math.max(0,k.key.length-4))+k.key.slice(-4)):'';
+    return`<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding:7px 0;border-bottom:1px solid var(--border)">
+      <label style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;cursor:pointer">
+        <input type="radio" name="ai-active-key" ${isActive?'checked':''} onchange="setActiveAiKey('${jsq(k.id)}')">
+        <div style="min-width:0">
+          <div style="font-size:0.76rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(k.label||'Untitled key')}${isActive?' <span style="color:var(--accent);font-size:0.6rem">● ACTIVE</span>':''}</div>
+          <div style="font-size:0.64rem;color:var(--text3);font-family:var(--mono)">${masked}</div>
+        </div>
+      </label>
+      <div style="display:flex;gap:4px;flex-shrink:0">
+        <button class="btn btn-g btn-sm" style="padding:2px 7px;font-size:0.64rem" onclick="editAiKey('${jsq(k.id)}')">✎</button>
+        <button class="btn btn-d btn-sm" style="padding:2px 7px;font-size:0.64rem" onclick="deleteAiKey('${jsq(k.id)}')">✕</button>
+      </div>
+    </div>`;
+  }).join('')||'<div style="font-size:0.7rem;color:var(--text3);padding:2px 0 6px">No API keys saved yet.</div>';
+  return`<div class="exp-card" style="margin-top:10px">
+    <div class="exp-card-title" style="margin-bottom:6px">AI API Keys</div>
+    <div class="exp-card-sub" style="margin-bottom:10px">Gemini API keys for the AI Analyst (Analytics → AI). Stored only on this device, never synced. Pick which one is active — switch any time.</div>
+    ${rows}
+    <div style="display:flex;gap:6px;margin-top:10px">
+      <input class="ifield" id="new-ai-key-label" placeholder="Label (e.g. Personal)" style="flex:1;font-size:0.74rem;padding:6px 10px">
+    </div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <input class="ifield" id="new-ai-key-value" type="password" autocomplete="off" placeholder="Paste Gemini API key" style="flex:1;font-size:0.74rem;padding:6px 10px" onkeydown="if(event.key==='Enter')addAiKey()">
+      <button class="btn btn-p btn-sm" onclick="addAiKey()">+ Add</button>
+    </div>
+  </div>`;
+}
+function addAiKey(){
+  const labelEl=document.getElementById('new-ai-key-label');
+  const valEl=document.getElementById('new-ai-key-value');
+  const label=(labelEl?.value||'').trim();
+  const key=(valEl?.value||'').trim();
+  if(!key){toast('Paste an API key first');return;}
+  const keys=_aiKeys();
+  const id=_aiNewKeyId();
+  keys.push({id,label:label||`Key ${keys.length+1}`,key});
+  _aiSaveKeys();
+  if(!cGet(AI_ACTIVE_KEY_LS)) cSet(AI_ACTIVE_KEY_LS,id); // first key ever — make it active
+  if(labelEl)labelEl.value='';if(valEl)valEl.value='';
+  toast('API key saved');haptic([8]);
+  renderSettData();renderProjAI();
+}
+function setActiveAiKey(id){
+  cSet(AI_ACTIVE_KEY_LS,id);
+  toast('Active key switched');haptic([8]);
+  renderSettData();renderProjAI();
+}
+function editAiKey(id){
+  const k=_aiKeys().find(x=>x.id===id);if(!k)return;
+  const newLabel=prompt('Label',k.label||'');
+  if(newLabel===null)return;
+  const newKey=prompt('API key',k.key||'');
+  if(newKey===null)return;
+  const v=newKey.trim();
+  if(!v){toast('API key cannot be empty');return;}
+  k.label=newLabel.trim()||k.label;k.key=v;
+  _aiSaveKeys();
+  toast('API key updated');
+  renderSettData();renderProjAI();
+}
+function deleteAiKey(id){
+  const keys=_aiKeys();
+  const idx=keys.findIndex(x=>x.id===id);if(idx===-1)return;
+  const k=keys[idx];
+  if(!confirm(`Delete API key "${k.label||'Untitled'}"?`))return;
+  keys.splice(idx,1);
+  _aiSaveKeys();
+  if(cGet(AI_ACTIVE_KEY_LS)===id) cSet(AI_ACTIVE_KEY_LS,keys[0]?.id||'');
+  toast('API key deleted');haptic([8]);
+  renderSettData();renderProjAI();
+}
+function goToApiKeys(){
+  navTo('settings');
+  const tabBtn=document.querySelector('#pg-settings .tabs .tab');
+  if(tabBtn) settTab('data',tabBtn);
+  setTimeout(()=>document.getElementById('sett-data')?.scrollIntoView({behavior:'smooth',block:'start'}),50);
+}
 
 // ── Multi-conversation store ────────────────────────────────────────────────
 // Each conversation is one Firestore doc in the `aiChats` collection:
@@ -8683,11 +8798,8 @@ function renderProjAI(){
     el.innerHTML=`<div class="card">
       <div class="clabel">AI Analyst — Setup</div>
       <div class="csub" style="margin-bottom:6px">Ask anything about your money — a Gemini-powered analyst reads your entire history (every expense, income, transfer, balance, loan, debtor and investment) and answers with your real numbers.</div>
-      <div class="csub" style="margin-bottom:10px">Paste your Gemini API key below. It is stored only on this device and never leaves it except to call Google's API directly. Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--accent)">aistudio.google.com/apikey</a>. Each device needs the key entered once.</div>
-      <div style="display:flex;gap:6px">
-        <input class="ifield" id="ai-key-input" type="password" placeholder="Paste Gemini API key" style="flex:1;font-size:0.76rem" autocomplete="off" onkeydown="if(event.key==='Enter')aiSaveKey()">
-        <button class="btn btn-p btn-sm" onclick="aiSaveKey()">Save</button>
-      </div>
+      <div class="csub" style="margin-bottom:10px">Add a free Gemini API key to get started — stored only on this device, never leaves it except to call Google's API directly. Get one at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--accent)">aistudio.google.com/apikey</a>.</div>
+      <button class="btn btn-p btn-sm" onclick="goToApiKeys()">Add API Key</button>
     </div>`;
     return;
   }
@@ -8722,7 +8834,7 @@ function renderProjAI(){
       <div class="clabel" style="margin:0">AI Analyst<span class="ai-badge">${esc(model.replace('gemini-','Gemini '))}</span></div>
       <div style="display:flex;gap:6px">
         <button class="btn btn-g btn-sm" onclick="aiNewChat()" title="Start a new conversation" ${_aiBusy?'disabled':''}>＋ New</button>
-        <button class="btn btn-g btn-sm" onclick="aiChangeKey()" title="Remove the saved API key from this device">Key…</button>
+        <button class="btn btn-g btn-sm" onclick="goToApiKeys()" title="Manage API keys">Keys…</button>
       </div>
     </div>
     ${chatBar}
@@ -8737,17 +8849,6 @@ function renderProjAI(){
   const log=document.getElementById('ai-log');if(log)log.scrollTop=log.scrollHeight;
 }
 
-function aiSaveKey(){
-  const inp=document.getElementById('ai-key-input');if(!inp)return;
-  const v=inp.value.trim();
-  if(!v){toast('Paste your Gemini API key first');return;}
-  cSet(AI_KEY_LS,v);toast('Key saved on this device');haptic([8]);renderProjAI();
-}
-function aiChangeKey(){
-  if(!confirm('Remove the saved Gemini API key from this device?'))return;
-  try{localStorage.removeItem(AI_KEY_LS);localStorage.removeItem(AI_MODEL_LS);}catch(e){}
-  renderProjAI();
-}
 // Switch to composing a brand-new conversation (nothing is written until the
 // first message is actually sent, so we never leave empty ghost chats behind).
 function aiNewChat(){
@@ -8837,7 +8938,7 @@ async function aiRetry(){
 // model that answers. Only a bad-key error (400/401/403) aborts immediately;
 // everything else is tried against every model before giving up.
 async function _aiFetch(body){
-  const key=_aiKey();if(!key)throw new Error('No API key saved — open the Key… settings');
+  const key=_aiKey();if(!key)throw new Error('No API key saved — open Keys… settings');
   const pref=cGet(AI_MODEL_LS);
   const models=pref?[pref,...AI_MODELS.filter(m=>m!==pref)]:AI_MODELS.slice();
   let lastErr='no models reachable',allRateLimited=true;
@@ -8853,7 +8954,7 @@ async function _aiFetch(body){
       }catch(e){return {net:true};}
       if(res.status===400||res.status===401||res.status===403){
         const j=await res.json().catch(()=>({}));
-        throw new Error('Gemini rejected the API key'+(j.error&&j.error.message?': '+j.error.message:'')+'. Tap Key… to re-enter it.');
+        throw new Error('Gemini rejected the API key'+(j.error&&j.error.message?': '+j.error.message:'')+'. Tap Keys… to switch or fix it.');
       }
       if(res.status===429){
         const j=await res.json().catch(()=>({}));
