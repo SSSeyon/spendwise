@@ -85,8 +85,14 @@ self.addEventListener('fetch', event => {
   // for a single launch — that is exactly what checkForUpdate() in app.js and
   // the update banner exist to cover, and forceHardRefresh() skips the wait.
   // The ?v= on app.js/styles.css inside the shell still keeps those in lockstep.
-  const isHTML = req.mode === 'navigate' ||
-    url.pathname === '/' || url.pathname.endsWith('/') || url.pathname.endsWith('index.html');
+  //
+  // Scoped to the app's actual entry point rather than `req.mode === 'navigate'`:
+  // matching every navigation would hand the cached shell back for ANY same-origin
+  // HTML path, which is wrong for anything that isn't index.html. The PWA launch
+  // URL is the directory root ('/spendwise/'), so the endsWith('/') test already
+  // covers it.
+  const isHTML = url.pathname === '/' || url.pathname.endsWith('/') ||
+    url.pathname.endsWith('index.html');
   if (isHTML && url.origin === self.location.origin) {
     event.respondWith((async () => {
       const cache = await caches.open(CACHE);

@@ -114,13 +114,24 @@ function saveCustomCats(arr){
     .set({cats:arr,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('customCats sync failed',e));
 }
+// Every loadX() below deliberately swallows its own error rather than throwing,
+// so that one failed Firestore read cannot reject syncAll()'s Promise.all and
+// leave the entire app unsynced. That part is intentional — keep it.
+//
+// What was NOT intentional: swallowing them *silently*. A failed read was
+// indistinguishable from a successful one, so the header could show a green
+// "Synced" while the app quietly served stale cached data, with nothing in the
+// console to say so. That is the same class of bug as _pushDeviceNotifs's empty
+// catch, which hid broken mobile notifications indefinitely. Log, don't vanish.
+function _warnLoad(what,e){ console.warn(`[sync] ${what} failed — keeping cached data:`,e); }
+
 async function loadCustomCats(){
   if(!db) return;
   try{
     const doc=await db.collection('appConfig').doc('customCats').get();
     const arr=doc.exists?doc.data()?.cats:null;
     if(Array.isArray(arr)){try{localStorage.setItem('sw3_custom_cats',JSON.stringify(arr));}catch{}}
-  }catch(e){}
+  }catch(e){_warnLoad('loadCustomCats',e);}
 }
 function getAllCats(){return[..._BASE_CATS,...getCustomCats().filter(c=>!_BASE_CATS.includes(c))];}
 // CATS: evaluated lazily after full script init via getter so cGet is always available
@@ -218,7 +229,7 @@ async function loadFxOverrides(){
     if(doc.exists&&doc.data()?.overrides){
       cSet(FX_OVR_KEY,doc.data().overrides);
     }
-  }catch(e){}
+  }catch(e){_warnLoad('loadFxOverrides',e);}
 }
 async function loadCashAccounts(){
   if(!db) return;
@@ -227,7 +238,7 @@ async function loadCashAccounts(){
     if(doc.exists&&Array.isArray(doc.data()?.accounts)){
       cSet('sw3_cash_accounts',doc.data().accounts);
     }
-  }catch(e){}
+  }catch(e){_warnLoad('loadCashAccounts',e);}
 }
 
 // Build <option> HTML for cash accounts with balance shown in brackets
@@ -278,7 +289,7 @@ async function loadNWConfig(){
   try{
     const doc=await db.collection('appConfig').doc('nwConfig').get();
     if(doc.exists&&doc.data()?.cfg)cSet(NW_CFG_KEY,doc.data().cfg);
-  }catch(e){}
+  }catch(e){_warnLoad('loadNWConfig',e);}
 }
 
 
@@ -344,7 +355,7 @@ async function loadCashLogos(){
       const merged={...getCashLogos(),...doc.data()};
       cSet('sw3_cash_logos',merged);
     }
-  }catch(e){}
+  }catch(e){_warnLoad('loadCashLogos',e);}
 }
 async function loadInvConfig(){
   if(!db) return;
@@ -553,7 +564,7 @@ async function loadRecurring(){
     const doc=await db.collection('appConfig').doc('recurring').get();
     const arr=doc.exists?doc.data()?.list:null;
     if(Array.isArray(arr))cSet(CK_RECUR,arr);
-  }catch(e){}
+  }catch(e){_warnLoad('loadRecurring',e);}
 }
 function nextRunDate(freq,from){
   const d=new Date(from||Date.now());
@@ -663,7 +674,7 @@ async function loadRules(){
     const doc=await db.collection('appConfig').doc('rules').get();
     const arr=doc.exists?doc.data()?.list:null;
     if(Array.isArray(arr))cSet(CK_RULES,arr);
-  }catch(e){}
+  }catch(e){_warnLoad('loadRules',e);}
 }
 function applyRules(payee){
   const p=String(payee||'').toLowerCase().trim();
@@ -698,7 +709,7 @@ async function loadGoals(){
     const doc=await db.collection('appConfig').doc('goals').get();
     const arr=doc.exists?doc.data()?.list:null;
     if(Array.isArray(arr))cSet(CK_GOALS,arr);
-  }catch(e){}
+  }catch(e){_warnLoad('loadGoals',e);}
 }
 function renderGoalsCard(){
   const card=document.getElementById('dash-goals-card');
@@ -1496,7 +1507,7 @@ async function loadCashData(m,y){
     }
     // Absolute fallback — local cache only (offline / no prior month path).
     if(Object.keys(localCash).length){S.cash=localCash;return;}
-  }catch(e){}
+  }catch(e){_warnLoad('loadCashData',e);}
 }
 
 async function loadDebtors(){
@@ -1507,7 +1518,7 @@ async function loadDebtors(){
       S.debtors=snap.docs.map(d=>({id:d.id,...d.data()}));
       cSet(CK.debtors,S.debtors);
     }
-  }catch(e){}
+  }catch(e){_warnLoad('loadDebtors',e);}
 }
 
 async function loadHistoricalSummary(){
@@ -1701,9 +1712,9 @@ async function loadBudgets(m,y){
           S.budgets={...DEF_BUDGETS,...pd.data().categories};
           cSet(CK.budgets(m,y),S.budgets);
         }
-      }catch(e){}
+      }catch(e){_warnLoad('loadBudgets (prior-month fallback)',e);}
     }
-  }catch(e){}
+  }catch(e){_warnLoad('loadBudgets',e);}
 }
 
 function reloadMonth(m,y){
@@ -2368,7 +2379,7 @@ function toggleNotifPanel(){
   const scrim=document.getElementById('notif-scrim');
   const isOpen=panel.classList.contains('open');
   if(isOpen){closeNotifPanel();}
-  else{panel.classList.add('open');scrim.style.display='block';}
+  else{_renderNotifList();panel.classList.add('open');scrim.style.display='block';}
 }
 function closeNotifPanel(){
   document.getElementById('notif-panel').classList.remove('open');
@@ -2395,12 +2406,46 @@ function updateNotifPanel(alerts){
 }
 
 const _NOTIF_ORDER={danger:0,warn:1,info:2,good:3};
+
+// Banner shown at the top of the notification panel when this device cannot
+// actually show system notifications. Chrome on Android frequently suppresses
+// the boot-time permission prompt (quiet UI), so a device can sit at 'default'
+// forever without the user ever seeing a request — this gives them a tap to
+// trigger one, which is also the only reliable way to ask on mobile.
+function _notifPermBanner(){
+  if(!('Notification' in window)) return '';
+  const p=Notification.permission;
+  if(p==='granted') return '';
+  if(p==='denied') return `<div class="notif-empty" style="text-align:left;line-height:1.5">
+      🔕 Notifications are blocked for SpendWise on this device.<br>
+      Re-enable them in your browser's site settings for this page.
+    </div>`;
+  return `<div class="notif-empty" style="text-align:left;line-height:1.5;cursor:pointer" onclick="_enableNotifsFromGesture()">
+      🔔 <span style="color:var(--accent);font-weight:600;text-decoration:underline">Turn on notifications for this device</span><br>
+      <span style="font-size:0.9em">Alerts will show while SpendWise is open.</span>
+    </div>`;
+}
+
+async function _enableNotifsFromGesture(){
+  if(!('Notification' in window)){toast('This browser has no notification support');return;}
+  try{
+    const p=await Notification.requestPermission();
+    _notifPermission=p;
+    toast(p==='granted'?'Notifications enabled':'Notifications not enabled');
+  }catch(e){
+    console.warn('[notif] requestPermission failed',e);
+    toast('Could not enable notifications');
+  }
+  _renderNotifList();
+}
+
 function _renderNotifList(){
   const list=document.getElementById('notif-list');
   if(!list) return;
-  if(!_currentAlerts.length){list.innerHTML='<div class="notif-empty">✓ No alerts right now</div>';return;}
+  const perm=_notifPermBanner();
+  if(!_currentAlerts.length){list.innerHTML=perm+'<div class="notif-empty">✓ No alerts right now</div>';return;}
   _currentAlerts.sort((a,b)=>(_NOTIF_ORDER[a.type]??2)-(_NOTIF_ORDER[b.type]??2));
-  list.innerHTML=_currentAlerts.map((a,i)=>{
+  list.innerHTML=perm+_currentAlerts.map((a,i)=>{
     // Expanding only earns its tap when there's genuinely more to show
     const hasDetail=!!(a.why||a.link);
     return`
@@ -2492,21 +2537,56 @@ async function _requestNotifPermission(){
   }
 }
 const _sentPushIds=new Set();
-function _pushDeviceNotifs(alerts){
+
+// IMPORTANT — why this goes through the service worker and not `new Notification()`:
+// Mobile browsers (Chrome on Android, Safari on iOS) do NOT implement the
+// Notification constructor. Calling it there throws
+//   TypeError: Failed to construct 'Notification': Illegal constructor.
+//              Use ServiceWorkerRegistration.showNotification() instead.
+// Desktop browsers DO implement it — which is why this function used to work
+// perfectly on a laptop and silently never fire on a phone. The old code also
+// swallowed the throw in a bare `catch(e){}`, so the failure was invisible.
+// ServiceWorkerRegistration.showNotification() works on desktop AND mobile, so
+// it is the primary path. Do not "simplify" this back to the constructor.
+async function _pushDeviceNotifs(alerts){
   if(!('Notification' in window)||Notification.permission!=='granted') return;
-  alerts.forEach(a=>{
+
+  const fresh=alerts.filter(a=>{
     const id=_alertId(a);
-    if(_sentPushIds.has(id)||_dismissedIds.has(id)) return;
-    _sentPushIds.add(id);
-    try{
-      new Notification('SpendWise — '+a.title,{
-        body:a.sub.replace(/<[^>]+>/g,'').slice(0,120),
-        icon:'/favicon.ico',
-        tag:id,
-        silent:false
-      });
-    }catch(e){}
+    return !_sentPushIds.has(id)&&!_dismissedIds.has(id);
   });
+  if(!fresh.length) return;
+
+  // getRegistration() (not .ready) — .ready never settles when registration
+  // failed, which would hang this function forever instead of falling back.
+  let reg=null;
+  try{ reg=await navigator.serviceWorker?.getRegistration(); }
+  catch(e){ console.warn('[notif] no service worker registration:',e); }
+
+  for(const a of fresh){
+    const id=_alertId(a);
+    _sentPushIds.add(id);
+    const title='SpendWise — '+a.title;
+    // Relative path: the app is served from /spendwise/, so the previous
+    // root-absolute '/favicon.ico' pointed outside the app at a file that does
+    // not exist in this repo. Desktop tolerates a missing icon; Android does not.
+    const opts={
+      body:a.sub.replace(/<[^>]+>/g,'').slice(0,120),
+      icon:'icon-192.png',
+      badge:'icon-192.png',
+      tag:id,
+      silent:false
+    };
+    try{
+      if(reg&&reg.showNotification) await reg.showNotification(title,opts);
+      else new Notification(title,opts); // desktop-only last resort
+    }catch(e){
+      // Never swallow this again — a silent throw here is precisely how the
+      // mobile breakage went unnoticed. Un-mark the id so it can retry.
+      console.warn('[notif] failed to show notification',id,e);
+      _sentPushIds.delete(id);
+    }
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -5500,7 +5580,7 @@ async function loadLoans(){
       S.loans=snap.docs.map(d=>({id:d.id,...d.data()}));
       cSet(CK.loans,S.loans);
     }
-  }catch(e){}
+  }catch(e){_warnLoad('loadLoans',e);}
 }
 
 function _populateLoanAcct(selId, selectedVal=''){
@@ -7183,7 +7263,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.0</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.0: New Monarch design mode (Settings → Design Mode) — a softer, chart-forward look you can switch on and off; Classic stays the default. Also new: savings Goals with progress tracking, auto-categorization Rules (Settings → Budget), an Upcoming Bills card for recurring transactions, and grouped budget rollups in Monarch mode.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.1</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.1: Notifications now work on phones — they were silently failing on Android and only ever appearing on desktop. If they are off, open the bell menu and tap "Turn on notifications for this device". Also: the app now opens much faster when you are online, instead of waiting on the network before showing anything.</div></div></div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
       <div class="exp-card-sub" style="margin-bottom:10px">Switch the app's look. Classic is the original design; Monarch is a softer, chart-forward style. Purely cosmetic — your data and features are identical in both.</div>
@@ -8043,7 +8123,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.0';
+const APP_VERSION='v4.4.1';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
@@ -8586,7 +8666,7 @@ async function loadAiChats(){
     }
     _aiSortChats(chats);
     S.aiChats=chats;cSet(AI_CHATS_LS,chats);
-  }catch(e){}
+  }catch(e){_warnLoad('loadAiChats',e);}
 }
 
 function renderProjAI(){
