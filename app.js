@@ -4118,42 +4118,44 @@ async function saveExpense(){
 
   // ── Income ──
   if(type==='income'){
-    S.saving=true;const btn=document.getElementById('e-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
     const incBank=document.getElementById('i-bank2')?.value||getCashAccounts()[0];
     const incIsUSD=isUSDCashAccount(incBank);
     const incDateVal=document.getElementById('e-date').value||todayStr();
     const _idp=incDateVal.split('-');const incTxM=parseInt(_idp[1]),incTxY=parseInt(_idp[0]);
     const incFxRates=getFxRates(incTxM,incTxY);
     const incAmtNGN=incIsUSD?Math.round(amt*incFxRates.USD):amt;
-    const data={amount:amt,amtNGN:incAmtNGN,currency:incIsUSD?'USD':'NGN',category:document.getElementById('i-cat2')?.value||'Other',bank:incBank,notes:document.getElementById('e-notes').value,date:incDateVal,month:incTxM,year:incTxY,type:'income',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+    const data={amount:amt,amtNGN:incAmtNGN,currency:incIsUSD?'USD':'NGN',category:document.getElementById('i-cat2')?.value||'Other',bank:incBank,notes:document.getElementById('e-notes').value,date:incDateVal,month:incTxM,year:incTxY,type:'income'};
     // Save as recurring if set
     const freq=document.getElementById('e-recur')?.value;
     if(freq){const rl=getRecurring();rl.push({payee:data.category,amount:amt,incCat:data.category,bank:data.bank,notes:data.notes,frequency:freq,type:'income',nextRun:nextRunDate(freq,data.date),lastPosted:data.date});saveRecurring(rl);}
-    try{
-      const ref=await db.collection('income').add(data);
-      S.income.unshift({...data,id:ref.id});
-      cSet(CK.inc(incTxM,incTxY),S.income);
-      _adjustCash(incBank, amt, incTxM, incTxY, 'income');
-      const hist=cGet('sw3_history')||[];
-      const hIdx=hist.findIndex(h=>h.year===incTxY&&h.month===incTxM);
-      const totalInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-      if(hIdx>=0){hist[hIdx].income=totalInc;}
-      else{const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];hist.push({year:incTxY,month:incTxM,label:MS2[incTxM-1]+" '"+String(incTxY).slice(2),income:totalInc,expenses:S.txns.reduce((s,t)=>s+(t.amount||0),0)});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
-      cSet('sw3_history',hist);
-      closeMod('exp-modal');toast(`Income recorded · ${incBank} updated`);haptic([8,40,8]);setSyncStatus('synced');renderDashboard();renderCashPage();renderIncome();
-    }
-    catch(e){
-      // Queue for retry when back online; apply local state so the entry stays visible
-      const qd={...data};delete qd.createdAt; // FieldValue sentinel doesn't survive JSON
-      const offId='offline_inc_'+Date.now();
-      oqAdd('income',offId,qd,true);
-      S.income.unshift({...qd,id:offId});
-      cSet(CK.inc(incTxM,incTxY),S.income);
-      _adjustCash(incBank, amt, incTxM, incTxY);
-      closeMod('exp-modal');toast('Saved offline — will sync when connected');
-      renderIncome();renderDashboard();renderCashPage();
-    }
-    finally{S.saving=false;btn.textContent='Record Income';btn.disabled=false;}
+
+    // Apply locally + adjust cash right away — instant no matter how poor the
+    // connection is. The doc ID is generated client-side (no network round-trip);
+    // the actual write is fired in the background below and never awaited here.
+    const ref=db.collection('income').doc();
+    S.income.unshift({...data,id:ref.id});
+    cSet(CK.inc(incTxM,incTxY),S.income);
+    _adjustCash(incBank, amt, incTxM, incTxY, 'income');
+    const hist=cGet('sw3_history')||[];
+    const hIdx=hist.findIndex(h=>h.year===incTxY&&h.month===incTxM);
+    const totalInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
+    if(hIdx>=0){hist[hIdx].income=totalInc;}
+    else{const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];hist.push({year:incTxY,month:incTxM,label:MS2[incTxM-1]+" '"+String(incTxY).slice(2),income:totalInc,expenses:S.txns.reduce((s,t)=>s+(t.amount||0),0)});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
+    cSet('sw3_history',hist);
+    closeMod('exp-modal');toast(`Income recorded · ${incBank} updated`);haptic([8,40,8]);renderDashboard();renderCashPage();renderIncome();
+
+    // Sync to Firestore in the background. Never awaited, so a slow or flaky
+    // connection can't stall the save; Firestore's own offline persistence
+    // carries the write through automatically. The offline queue below is a
+    // fallback for genuine failures (not just a slow write).
+    setSyncStatus('syncing');
+    ref.set({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()})
+      .then(()=>setSyncStatus('synced'))
+      .catch(e=>{
+        console.warn('[income] background save failed — queued for retry',e);
+        oqAdd('income',ref.id,data,true);
+        toast('Sync issue — will retry automatically');
+      });
     return;
   }
 
@@ -4183,7 +4185,6 @@ async function saveExpense(){
     const _dup=_pool.find(t=>t.payee===payee&&t.amount===amt&&t.date===_dupDate);
     if(_dup&&!confirm(`Possible duplicate: "${payee}" for ${isUSDCashAccount(_dupBank)?'$'+amt:fN(amt)} is already recorded on ${fmtDate(_dupDate)}.\n\nSave anyway?`))return;
   }
-  S.saving=true;const btn=document.getElementById('e-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
   const editId=document.getElementById('e-edit-id').value;
   const freq=document.getElementById('e-recur')?.value;
   const expBank=document.getElementById('e-bank').value;
@@ -4198,56 +4199,42 @@ async function saveExpense(){
     rl.push({payee,amount:amt,category:data.category,bank:data.bank,notes:data.notes,frequency:freq,type:'expense',nextRun:nextRunDate(freq,data.date),lastPosted:data.date});
     saveRecurring(rl);renderRecurringCard();
   }
-  // Capture before the try so the catch block can compute the correct net delta.
   const _editTx=editId?S.txns.find(t=>t.id===editId):null;
-  try{
-    if(editId){
-      await db.collection('transactions').doc(editId).update(data);
-      const idx=S.txns.findIndex(t=>t.id===editId);if(idx>=0)S.txns[idx]={...S.txns[idx],...data};
-      // Both adjustments AFTER the await — no snapshot can fire between them.
-      // Same bank: single net delta (one Firestore increment, zero intermediate state).
-      // Different banks: two independent fields on different-or-same doc, no ordering race.
-      const _eOldBank=_editTx?.bank||'', _eOldAmt=_editTx?.amount||0;
-      if(_eOldBank===data.bank&&_eOldBank){
-        const _net=_eOldAmt-amt; // positive = expense reduced, negative = expense increased
-        if(_net!==0) _adjustCash(data.bank, _net, expTxM, expTxY, 'expense-edit');
-      }else{
-        if(_eOldBank&&_eOldAmt) _adjustCash(_eOldBank, _eOldAmt, _editTx.month||expTxM, _editTx.year||expTxY, 'expense-edit-reverse');
-        if(data.bank) _adjustCash(data.bank, -amt, expTxM, expTxY, 'expense-edit');
-      }
-    } else {
-      data.createdAt=firebase.firestore.FieldValue.serverTimestamp();
-      const ref=await db.collection('transactions').add(data);
-      S.txns.unshift({...data,id:ref.id});
-      if(data.bank) _adjustCash(data.bank, -amt, expTxM, expTxY, 'expense');                     // deduct
-    }
-    cSet(CK.txns(expTxM,expTxY),S.txns);closeMod('exp-modal');const _ep=document.getElementById('e-payee-emoji');if(_ep)_ep.textContent='📦';toast(editId?'Updated':'Saved');haptic([8,40,8]);setSyncStatus('synced');renderExpenses();renderDashboard();
-  }catch(e){
-    // Queue for retry when back online; apply local state so the entry stays visible
-    const qData={...data};delete qData.createdAt; // FieldValue sentinel doesn't survive JSON
-    const offId=editId||('offline_'+Date.now());
-    oqAdd('transactions',offId,qData,true);
-    if(editId){
-      const idx=S.txns.findIndex(t=>t.id===editId);
-      if(idx>=0)S.txns[idx]={...S.txns[idx],...qData};
-      // Neither cash adjustment ran yet (both are after the failed await).
-      const _ceOldBank=_editTx?.bank||'', _ceOldAmt=_editTx?.amount||0;
-      if(_ceOldBank===data.bank&&_ceOldBank){
-        const _cnet=_ceOldAmt-amt;
-        if(_cnet!==0) _adjustCash(data.bank, _cnet, expTxM, expTxY, 'expense-edit');
-      }else{
-        if(_ceOldBank&&_ceOldAmt) _adjustCash(_ceOldBank, _ceOldAmt, _editTx?.month||expTxM, _editTx?.year||expTxY, 'expense-edit-reverse');
-        if(data.bank) _adjustCash(data.bank, -amt, expTxM, expTxY, 'expense-edit');
-      }
+  // Doc ref generated client-side (no network round-trip) so the id is known
+  // immediately, whether this is a new doc or an existing one being edited.
+  const docRef=editId?db.collection('transactions').doc(editId):db.collection('transactions').doc();
+
+  // Apply locally + adjust cash right away — instant no matter how poor the
+  // connection is. The actual Firestore write happens in the background below.
+  if(editId){
+    const idx=S.txns.findIndex(t=>t.id===editId);if(idx>=0)S.txns[idx]={...S.txns[idx],...data};
+    // Same bank: single net delta (one cash update). Different banks: reverse
+    // the old bank's debit, then debit the new bank — back-to-back, synchronous.
+    const _eOldBank=_editTx?.bank||'', _eOldAmt=_editTx?.amount||0;
+    if(_eOldBank===data.bank&&_eOldBank){
+      const _net=_eOldAmt-amt; // positive = expense reduced, negative = expense increased
+      if(_net!==0) _adjustCash(data.bank, _net, expTxM, expTxY, 'expense-edit');
     }else{
-      S.txns.unshift({...qData,id:offId});
-      if(data.bank) _adjustCash(data.bank, -amt, expTxM, expTxY, 'expense');
+      if(_eOldBank&&_eOldAmt) _adjustCash(_eOldBank, _eOldAmt, _editTx.month||expTxM, _editTx.year||expTxY, 'expense-edit-reverse');
+      if(data.bank) _adjustCash(data.bank, -amt, expTxM, expTxY, 'expense-edit');
     }
-    cSet(CK.txns(expTxM,expTxY),S.txns);
-    closeMod('exp-modal');toast('Saved offline — will sync when connected');
-    renderExpenses();renderDashboard();
+  } else {
+    S.txns.unshift({...data,id:docRef.id});
+    if(data.bank) _adjustCash(data.bank, -amt, expTxM, expTxY, 'expense');                     // deduct
   }
-  finally{S.saving=false;btn.textContent='Save Expense';btn.disabled=false;}
+  cSet(CK.txns(expTxM,expTxY),S.txns);closeMod('exp-modal');const _ep=document.getElementById('e-payee-emoji');if(_ep)_ep.textContent='📦';toast(editId?'Updated':'Saved');haptic([8,40,8]);renderExpenses();renderDashboard();
+
+  // Sync to Firestore in the background. Never awaited, so a slow or flaky
+  // connection can't stall the save; Firestore's own offline persistence
+  // carries the write through automatically. The offline queue below is a
+  // fallback for genuine failures (not just a slow write).
+  setSyncStatus('syncing');
+  const _write=editId?docRef.update(data):docRef.set({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+  _write.then(()=>setSyncStatus('synced')).catch(e=>{
+    console.warn('[expense] background save failed — queued for retry',e);
+    oqAdd('transactions',docRef.id,data,true);
+    toast('Sync issue — will retry automatically');
+  });
 }
 function delExpense(id){
   const idx=S.txns.findIndex(t=>t.id===id);
@@ -4296,11 +4283,10 @@ function openIncModal(){
   openMod('inc-modal');
   setTimeout(()=>document.getElementById('i-amt').focus(),300);
 }
-async function saveIncome(){
-  if(S.saving) return;
+function saveIncome(){
+  if(S.saving) return; // respects an in-flight save elsewhere (e.g. a debtor/loan form still on the old awaited-write path)
   const amt=parseFloat(document.getElementById('i-amt').value);
   if(!amt||amt<=0){toast('Enter a valid amount');return;}
-  S.saving=true;const btn=document.getElementById('i-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
   const bank=document.getElementById('i-bank').value;
   const isUSD=isUSDCashAccount(bank);
   const dateVal=document.getElementById('i-date').value||todayStr();
@@ -4309,70 +4295,52 @@ async function saveIncome(){
   const amtNGN=isUSD?Math.round(amt*fxRates.USD):amt;
   const editId=document.getElementById('i-edit-id')?.value||'';
   const data={amount:amt,amtNGN,currency:isUSD?'USD':'NGN',category:document.getElementById('i-cat').value,bank,notes:document.getElementById('i-notes').value,date:dateVal,month:txM,year:txY};
-  // Capture before the try so the catch can compute the correct net delta.
   const _editInc=editId?S.income.find(i=>i.id===editId):null;
-  try{
-    if(editId){
-      await db.collection('income').doc(editId).update(data);
-      const idx=S.income.findIndex(i=>i.id===editId);
-      if(idx>=0) S.income[idx]={...S.income[idx],...data};
-      else S.income.unshift({...data,id:editId});
-      cSet(CK.inc(txM,txY),S.income);
-      // Both adjustments AFTER the await — same net-delta pattern as saveExpense.
-      const _iOldBank=_editInc?.bank||'', _iOldAmt=_editInc?.amount||0;
-      if(_iOldBank===bank&&_iOldBank){
-        const _inet=amt-_iOldAmt; // positive = income increased, negative = decreased
-        if(_inet!==0) _adjustCash(bank, _inet, txM, txY, 'income-edit');
-      }else{
-        if(_iOldBank&&_iOldAmt) _adjustCash(_iOldBank, -_iOldAmt, _editInc?.month||txM, _editInc?.year||txY, 'income-edit-reverse');
-        _adjustCash(bank, amt, txM, txY, 'income-edit');
-      }
-      toast(`Income updated · ${bank} adjusted`);
-    } else {
-      const ref=await db.collection('income').add({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
-      S.income.unshift({...data,id:ref.id});
-      cSet(CK.inc(txM,txY),S.income);
-      _adjustCash(bank, amt, txM, txY, 'income');
-      toast(`Income recorded · ${bank} updated`);
-    }
-    const hist=cGet('sw3_history')||[];
-    const hIdx=hist.findIndex(h=>h.year===txY&&h.month===txM);
-    const totalInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-    if(hIdx>=0){hist[hIdx].income=totalInc;}
-    else{const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];hist.push({year:txY,month:txM,label:MS2[txM-1]+" '"+String(txY).slice(2),income:totalInc,expenses:S.txns.reduce((s,t)=>s+(t.amount||0),0)});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
-    cSet('sw3_history',hist);
-    haptic([8,40,8]);setSyncStatus('synced');
-    closeMod('inc-modal');
-    _resetIncModal();
-    renderIncome();renderDashboard();renderCashPage();
-  }catch(e){
-    // Queue for retry when back online; apply local state so the entry stays visible
-    const qd={...data};
-    if(editId){
-      oqAdd('income',editId,qd,true);
-      const idx=S.income.findIndex(i=>i.id===editId);
-      if(idx>=0)S.income[idx]={...S.income[idx],...qd};else S.income.unshift({...qd,id:editId});
-      // Neither cash adjustment ran yet (both are now after the failed await).
-      const _ciOldBank=_editInc?.bank||'', _ciOldAmt=_editInc?.amount||0;
-      if(_ciOldBank===bank&&_ciOldBank){
-        const _cinet=amt-_ciOldAmt;
-        if(_cinet!==0) _adjustCash(bank, _cinet, txM, txY, 'income-edit');
-      }else{
-        if(_ciOldBank&&_ciOldAmt) _adjustCash(_ciOldBank, -_ciOldAmt, _editInc?.month||txM, _editInc?.year||txY, 'income-edit-reverse');
-        _adjustCash(bank, amt, txM, txY, 'income-edit');
-      }
+  const docRef=editId?db.collection('income').doc(editId):db.collection('income').doc();
+
+  // Apply locally + adjust cash right away — instant no matter how poor the
+  // connection is. The actual Firestore write happens in the background below.
+  if(editId){
+    const idx=S.income.findIndex(i=>i.id===editId);
+    if(idx>=0) S.income[idx]={...S.income[idx],...data};
+    else S.income.unshift({...data,id:editId});
+    const _iOldBank=_editInc?.bank||'', _iOldAmt=_editInc?.amount||0;
+    if(_iOldBank===bank&&_iOldBank){
+      const _inet=amt-_iOldAmt; // positive = income increased, negative = decreased
+      if(_inet!==0) _adjustCash(bank, _inet, txM, txY, 'income-edit');
     }else{
-      const offId='offline_inc_'+Date.now();
-      oqAdd('income',offId,qd,true);
-      S.income.unshift({...qd,id:offId});
-      _adjustCash(bank, amt, txM, txY, 'income');
+      if(_iOldBank&&_iOldAmt) _adjustCash(_iOldBank, -_iOldAmt, _editInc?.month||txM, _editInc?.year||txY, 'income-edit-reverse');
+      _adjustCash(bank, amt, txM, txY, 'income-edit');
     }
-    cSet(CK.inc(txM,txY),S.income);
-    closeMod('inc-modal');_resetIncModal();
-    toast('Saved offline — will sync when connected');
-    renderIncome();renderDashboard();renderCashPage();
+    toast(`Income updated · ${bank} adjusted`);
+  } else {
+    S.income.unshift({...data,id:docRef.id});
+    _adjustCash(bank, amt, txM, txY, 'income');
+    toast(`Income recorded · ${bank} updated`);
   }
-  finally{S.saving=false;btn.textContent=document.getElementById('i-edit-id')?.value?'Update Income':'Record Income';btn.disabled=false;}
+  cSet(CK.inc(txM,txY),S.income);
+  const hist=cGet('sw3_history')||[];
+  const hIdx=hist.findIndex(h=>h.year===txY&&h.month===txM);
+  const totalInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
+  if(hIdx>=0){hist[hIdx].income=totalInc;}
+  else{const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];hist.push({year:txY,month:txM,label:MS2[txM-1]+" '"+String(txY).slice(2),income:totalInc,expenses:S.txns.reduce((s,t)=>s+(t.amount||0),0)});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
+  cSet('sw3_history',hist);
+  haptic([8,40,8]);
+  closeMod('inc-modal');
+  _resetIncModal();
+  renderIncome();renderDashboard();renderCashPage();
+
+  // Sync to Firestore in the background. Never awaited, so a slow or flaky
+  // connection can't stall the save; Firestore's own offline persistence
+  // carries the write through automatically. The offline queue below is a
+  // fallback for genuine failures (not just a slow write).
+  setSyncStatus('syncing');
+  const _write=editId?docRef.update(data):docRef.set({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+  _write.then(()=>setSyncStatus('synced')).catch(e=>{
+    console.warn('[income] background save failed — queued for retry',e);
+    oqAdd('income',docRef.id,data,true);
+    toast('Sync issue — will retry automatically');
+  });
 }
 function _resetIncModal(){
   const editIdEl=document.getElementById('i-edit-id');
@@ -7270,7 +7238,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.2</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.2: You can now save multiple AI API keys (More → Data → AI API Keys) and pick which one is active, plus edit or delete any of them. Also: fixed an edit-expense bug where changing an expense's source bank didn't reverse the old bank's balance, and Notes fields now wrap and grow as you type instead of scrolling sideways.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.3</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.3: Saving an expense, income, or transfer is now instant even on a poor connection — it applies immediately and syncs to the cloud in the background instead of making you wait.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8131,7 +8099,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.2';
+const APP_VERSION='v4.4.3';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
