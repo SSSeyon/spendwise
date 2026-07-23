@@ -1142,7 +1142,7 @@ function initFirebase(){
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadAiChats(),loadGoals(),loadRules()]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadAiChats(),loadGoals(),loadRules(),loadAiKeys()]);
 }
 
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
@@ -1163,6 +1163,7 @@ let _catsListener=null;
 let _debListener=null;
 let _loanListener=null;
 let _aiChatListener=null;
+let _aiKeysListener=null;
 
 function startRealtimeListeners(){
   stopRealtimeListeners();
@@ -1358,6 +1359,21 @@ function startRealtimeListeners(){
       renderProjAI();
       const inp=document.getElementById('ai-input');if(inp&&draft)inp.value=draft;
     },err=>console.warn('aiChats listener:',err));
+
+  // AI API keys — real-time cross-device sync. Compare against the local cache
+  // so Firestore's own server-ack echo of our write is a no-op instead of a
+  // re-render that would clear the "add key" inputs mid-typing.
+  if(_aiKeysListener){_aiKeysListener();_aiKeysListener=null;}
+  _aiKeysListener=db.collection('appConfig').doc('aiKeys')
+    .onSnapshot(snap=>{
+      if(!snap.exists||snap.metadata.hasPendingWrites) return;
+      const d=snap.data()||{};
+      if(!Array.isArray(d.list)) return;
+      let changed=false;
+      if(JSON.stringify(d.list)!==JSON.stringify(_aiKeys())){ S.aiKeys=d.list; cSet(AI_KEYS_LS,d.list); changed=true; }
+      if(typeof d.activeId==='string' && d.activeId!==(cGet(AI_ACTIVE_KEY_LS)||'')){ cSet(AI_ACTIVE_KEY_LS,d.activeId); changed=true; }
+      if(changed){ renderSettData(); renderProjAI(); }
+    },err=>console.warn('aiKeys listener:',err));
 }
 
 function stopRealtimeListeners(){
@@ -1376,6 +1392,7 @@ function stopRealtimeListeners(){
   if(_debListener){_debListener();_debListener=null;}
   if(_loanListener){_loanListener();_loanListener=null;}
   if(_aiChatListener){_aiChatListener();_aiChatListener=null;}
+  if(_aiKeysListener){_aiKeysListener();_aiKeysListener=null;}
 }
 
 async function loadTxns(m,y){
@@ -7238,7 +7255,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.3</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.3: Saving an expense, income, or transfer is now instant even on a poor connection — it applies immediately and syncs to the cloud in the background instead of making you wait.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.4</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.4: AI API keys now sync across all your devices through the cloud and survive a hard refresh — add a key once and it's there everywhere.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8099,7 +8116,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.3';
+const APP_VERSION='v4.4.4';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
@@ -8585,8 +8602,10 @@ var _aiNewMode=false;
 
 // ── Multi-key store (Data tab) ──────────────────────────────────────────────
 // Several Gemini API keys can be saved (e.g. separate Google accounts to work
-// around free-tier rate limits); one is "active" at a time. Device-local only
-// — same rule as the old single key, never synced to Firestore.
+// around free-tier rate limits); one is "active" at a time. Synced across
+// devices via appConfig/aiKeys (same pattern as recurring/goals/rules), with
+// localStorage as the offline-first cache — so keys survive a hard refresh /
+// storage eviction because they're reloaded from Firestore on every boot.
 function _aiNewKeyId(){return 'k'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
 function _aiKeys(){
   if(!Array.isArray(S.aiKeys)){
@@ -8602,7 +8621,34 @@ function _aiKeys(){
   }
   return S.aiKeys;
 }
-function _aiSaveKeys(){cSet(AI_KEYS_LS,_aiKeys());}
+// Write-through: cache locally, then push the whole list + active pointer to
+// Firestore so every device stays in sync. Called only on explicit user edits
+// (add/edit/delete/switch) — never on load, so a fresh device can't blank the
+// cloud copy before it has fetched it.
+function _aiSyncKeys(){
+  cSet(AI_KEYS_LS,_aiKeys());
+  if(db) db.collection('appConfig').doc('aiKeys')
+    .set({list:_aiKeys(),activeId:cGet(AI_ACTIVE_KEY_LS)||'',updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .catch(e=>console.warn('aiKeys sync failed',e));
+}
+async function loadAiKeys(){
+  if(!db) return;
+  try{
+    const doc=await db.collection('appConfig').doc('aiKeys').get();
+    if(doc.exists){
+      const d=doc.data()||{};
+      if(Array.isArray(d.list)){
+        cSet(AI_KEYS_LS,d.list);
+        S.aiKeys=d.list;
+        if(typeof d.activeId==='string'&&d.activeId) cSet(AI_ACTIVE_KEY_LS,d.activeId);
+      }
+    }else{
+      // No cloud copy yet — seed it from whatever this device already holds so
+      // pre-existing local keys start syncing instead of being stranded.
+      if(_aiKeys().length) _aiSyncKeys();
+    }
+  }catch(e){_warnLoad('loadAiKeys',e);}
+}
 function _aiActiveKeyId(){
   const keys=_aiKeys();
   const id=cGet(AI_ACTIVE_KEY_LS)||'';
@@ -8635,7 +8681,7 @@ function renderApiKeysCard(){
   }).join('')||'<div style="font-size:0.7rem;color:var(--text3);padding:2px 0 6px">No API keys saved yet.</div>';
   return`<div class="exp-card" style="margin-top:10px">
     <div class="exp-card-title" style="margin-bottom:6px">AI API Keys</div>
-    <div class="exp-card-sub" style="margin-bottom:10px">Gemini API keys for the AI Analyst (Analytics → AI). Stored only on this device, never synced. Pick which one is active — switch any time.</div>
+    <div class="exp-card-sub" style="margin-bottom:10px">Gemini API keys for the AI Analyst (Analytics → AI). Synced across your devices via the cloud. Pick which one is active — switch any time.</div>
     ${rows}
     <div style="display:flex;gap:6px;margin-top:10px">
       <input class="ifield" id="new-ai-key-label" placeholder="Label (e.g. Personal)" style="flex:1;font-size:0.74rem;padding:6px 10px">
@@ -8655,14 +8701,15 @@ function addAiKey(){
   const keys=_aiKeys();
   const id=_aiNewKeyId();
   keys.push({id,label:label||`Key ${keys.length+1}`,key});
-  _aiSaveKeys();
   if(!cGet(AI_ACTIVE_KEY_LS)) cSet(AI_ACTIVE_KEY_LS,id); // first key ever — make it active
+  _aiSyncKeys();
   if(labelEl)labelEl.value='';if(valEl)valEl.value='';
   toast('API key saved');haptic([8]);
   renderSettData();renderProjAI();
 }
 function setActiveAiKey(id){
   cSet(AI_ACTIVE_KEY_LS,id);
+  _aiSyncKeys();
   toast('Active key switched');haptic([8]);
   renderSettData();renderProjAI();
 }
@@ -8675,7 +8722,7 @@ function editAiKey(id){
   const v=newKey.trim();
   if(!v){toast('API key cannot be empty');return;}
   k.label=newLabel.trim()||k.label;k.key=v;
-  _aiSaveKeys();
+  _aiSyncKeys();
   toast('API key updated');
   renderSettData();renderProjAI();
 }
@@ -8685,8 +8732,8 @@ function deleteAiKey(id){
   const k=keys[idx];
   if(!confirm(`Delete API key "${k.label||'Untitled'}"?`))return;
   keys.splice(idx,1);
-  _aiSaveKeys();
   if(cGet(AI_ACTIVE_KEY_LS)===id) cSet(AI_ACTIVE_KEY_LS,keys[0]?.id||'');
+  _aiSyncKeys();
   toast('API key deleted');haptic([8]);
   renderSettData();renderProjAI();
 }
