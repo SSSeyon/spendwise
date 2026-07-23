@@ -8834,7 +8834,7 @@ function renderProjAI(){
     'How has my spending trended over the last 6 months?',
     'Am I on track this month?',
   ].map(q=>`<button class="ai-chip" onclick="aiAsk('${jsq(q)}')">${esc(q)}</button>`).join('')}</div>`;
-  const model=cGet(AI_MODEL_LS)||AI_MODELS[0];
+  const model=AI_MODELS[0];
   // Conversation picker — shown once there is at least one saved chat (or a new
   // one being composed alongside existing ones).
   const opts=chats.map(c=>`<option value="${esc(c.id)}"${active&&active.id===c.id?' selected':''}>${esc(c.title||'Conversation')}</option>`).join('');
@@ -8949,13 +8949,18 @@ async function aiRetry(){
 // Calls Gemini's generateContent REST API, falling back through AI_MODELS on
 // 404/5xx and 429 (key tiers differ in which models they can access, and each
 // model has its own separate rate limit — a 429 on the preferred/flagship
-// model doesn't mean a lower tier is also exhausted). Remembers the first
-// model that answers. Only a bad-key error (400/401/403) aborts immediately;
-// everything else is tried against every model before giving up.
+// model doesn't mean a lower tier is also exhausted). Only a bad-key error
+// (400/401/403) aborts immediately; everything else is tried against every
+// model before giving up.
+//
+// The chain is always tried in its declared best-first order. An earlier
+// version remembered whichever model last answered and tried THAT first, but
+// that permanently pinned a device to an older model once it answered — after
+// prepending a newer flagship (e.g. gemini-3.6-flash) the remembered older
+// model kept winning and the new one was never reached. Best-first, every time.
 async function _aiFetch(body){
   const key=_aiKey();if(!key)throw new Error('No API key saved — open Keys… settings');
-  const pref=cGet(AI_MODEL_LS);
-  const models=pref?[pref,...AI_MODELS.filter(m=>m!==pref)]:AI_MODELS.slice();
+  const models=AI_MODELS.slice();
   let lastErr='no models reachable',allRateLimited=true;
   for(const model of models){
     const url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
@@ -9001,7 +9006,6 @@ async function _aiFetch(body){
       if(!nx.text.trim())break;
       text+=nx.text;seg=nx.text;reason=nx.reason;
     }
-    cSet(AI_MODEL_LS,model);
     return {text:text.trim(),model};
   }
   if(allRateLimited)throw new Error('Gemini rate limit reached on every available model ('+models.join(', ')+') — try again in a bit.');
