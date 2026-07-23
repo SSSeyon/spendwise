@@ -7255,7 +7255,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.4</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.4: AI API keys now sync across all your devices through the cloud and survive a hard refresh — add a key once and it's there everywhere.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.5</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), and every AI reply now shows which model wrote it.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8116,7 +8116,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.4';
+const APP_VERSION='v4.4.5';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
@@ -8595,7 +8595,7 @@ var AI_KEY_LS='sw3_gemini_key', AI_CHAT_LS='sw3_ai_chat', AI_MODEL_LS='sw3_gemin
 var AI_CHATS_LS='sw3_ai_chats', AI_ACTIVE_LS='sw3_ai_active';
 var AI_KEYS_LS='sw3_gemini_keys', AI_ACTIVE_KEY_LS='sw3_gemini_active_key';
 // Tried in order until one answers; the winner is remembered per device.
-var AI_MODELS=['gemini-2.5-flash','gemini-2.0-flash','gemini-1.5-flash'];
+var AI_MODELS=['gemini-3.6-flash','gemini-3.5-flash','gemini-2.5-flash','gemini-2.0-flash'];
 var _aiCtx=null,_aiCtxAt=0,_aiBusy=false;
 // True while composing a brand-new, not-yet-sent conversation (device-local).
 var _aiNewMode=false;
@@ -8824,7 +8824,7 @@ function renderProjAI(){
   const msgs=list.map(m=>
     m.r==='u'?`<div class="ai-msg ai-u">${esc(m.t)}</div>`
     :m.r==='e'?`<div class="ai-msg ai-err">⚠ ${esc(m.t)}</div>`
-    :`<div class="ai-msg ai-m">${_aiMd(m.t)}</div>`).join('');
+    :`<div class="ai-msg ai-m">${_aiMd(m.t)}${m.mdl?`<div style="font-size:0.58rem;color:var(--text3);margin-top:6px;text-align:right">${esc(m.mdl.replace('gemini-','Gemini '))}</div>`:''}</div>`).join('');
   // Offer a one-tap retry when the conversation ended on a failed reply
   const retryBtn=(!_aiBusy&&list.length&&list[list.length-1].r==='e')
     ?`<div style="margin:4px 0 2px"><button class="btn btn-g btn-sm" onclick="aiRetry()" title="Send the last question again">↻ Retry</button></div>`:'';
@@ -8928,7 +8928,7 @@ async function _aiRun(cid){
       contents,
       generationConfig:{temperature:0.35,maxOutputTokens:8192},
     });
-    _aiPush(cid,{r:'m',t:reply});
+    _aiPush(cid,{r:'m',t:reply.text,mdl:reply.model});
   }catch(e){
     _aiPush(cid,{r:'e',t:e&&e.message?e.message:'Request failed — check your connection'});
   }
@@ -9002,7 +9002,7 @@ async function _aiFetch(body){
       text+=nx.text;seg=nx.text;reason=nx.reason;
     }
     cSet(AI_MODEL_LS,model);
-    return text.trim();
+    return {text:text.trim(),model};
   }
   if(allRateLimited)throw new Error('Gemini rate limit reached on every available model ('+models.join(', ')+') — try again in a bit.');
   throw new Error('Gemini request failed: '+lastErr);
