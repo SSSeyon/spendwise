@@ -433,7 +433,7 @@ datalist option{background:var(--bg2);color:var(--text)}
   .ai-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;}
   .ai-chip{background:var(--bg2);border:1px solid var(--border2);color:var(--text2);border-radius:999px;padding:5px 11px;font-size:0.66rem;cursor:pointer;font-family:var(--font);}
   .ai-chip:active{background:var(--adim);border-color:var(--ab);color:var(--text);}
-  .ai-inrow{display:flex;gap:6px;align-items:center;}
+  .ai-inrow{display:flex;gap:6px;align-items:flex-end;}
   .ai-chatbar{display:flex;gap:6px;align-items:center;margin:2px 0 2px;}
   .ai-chatsel{flex:1;font-size:0.72rem;padding:6px 9px;min-width:0;}
   .ai-badge{font-family:var(--mono);font-size:0.54rem;color:var(--text3);border:1px solid var(--border);border-radius:999px;padding:1px 7px;margin-left:6px;text-transform:none;letter-spacing:0;}

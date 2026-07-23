@@ -7255,7 +7255,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.5</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), and every AI reply now shows which model wrote it.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.5</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8842,7 +8842,7 @@ function renderProjAI(){
   const showBar=chats.length>0;
   const chatBar=showBar?`<div class="ai-chatbar">
       <select class="ifield ai-chatsel" onchange="aiSelectChat(this.value)" ${_aiBusy?'disabled':''}>${newOpt}${opts}</select>
-      ${active?`<button class="btn btn-g btn-sm" onclick="aiRenameChat()" title="Rename this conversation">✎</button><button class="btn btn-g btn-sm" onclick="aiDeleteChat()" title="Delete this conversation on all your devices">🗑</button>`:''}
+      ${active?`<button class="btn btn-g btn-sm" onclick="aiShareChat()" title="Share this conversation (WhatsApp, etc.)">📤</button><button class="btn btn-g btn-sm" onclick="aiRenameChat()" title="Rename this conversation">✎</button><button class="btn btn-g btn-sm" onclick="aiDeleteChat()" title="Delete this conversation on all your devices">🗑</button>`:''}
     </div>`:'';
   el.innerHTML=`<div class="card" style="padding:12px 14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
@@ -8857,7 +8857,7 @@ function renderProjAI(){
     <div class="ai-log" id="ai-log">${msgs||`<div class="empty" style="padding:16px 0"><div class="empty-i">✦</div>Ask anything about your money.<br>Your entire history is the context.</div>`}${retryBtn}${_aiBusy?'<div class="ai-msg ai-m ai-typing"><span></span><span></span><span></span></div>':''}</div>
     ${chips}
     <div class="ai-inrow">
-      <input class="ifield" id="ai-input" placeholder="Ask about your finances…" style="flex:1;font-size:0.76rem" ${_aiBusy?'disabled':''} onkeydown="if(event.key==='Enter')aiSend()">
+      <textarea class="ifield" id="ai-input" rows="1" placeholder="Ask about your finances…" style="flex:1;font-size:0.76rem" ${_aiBusy?'disabled':''} onkeydown="aiInputKey(event)" oninput="aiGrowInput(this)"></textarea>
       <button class="btn btn-p" onclick="aiSend()" ${_aiBusy?'disabled':''} style="padding:9px 16px">➤</button>
     </div>
   </div>`;
@@ -8898,7 +8898,43 @@ function aiDeleteChat(){
   _aiNewMode=!chats.length;_aiSetActive(chats[0]?chats[0].id:'');
   haptic([8]);renderProjAI();
 }
-function aiSend(){const inp=document.getElementById('ai-input');if(!inp)return;const v=inp.value;inp.value='';aiAsk(v);}
+// Flatten a chat to plain text for sharing. Gemini replies are markdown; do a
+// light pass to WhatsApp-friendly formatting (**bold** → *bold*, strip heading
+// hashes) so it reads cleanly in a message rather than showing raw markup.
+function _aiChatToText(c){
+  const md=t=>String(t||'')
+    .replace(/\*\*(.+?)\*\*/g,'*$1*')       // **bold** → *bold* (WhatsApp bold)
+    .replace(/^#{1,6}\s+/gm,'')             // drop ATX heading hashes
+    .trim();
+  const body=c.msgs.filter(m=>m.r!=='e').map(m=>
+    (m.r==='u'?'🙋 Me:':'✦ SpendWise AI:')+'\n'+md(m.t)).join('\n\n');
+  return (c.title?c.title+'\n':'')+'— SpendWise AI conversation —\n\n'+body;
+}
+// Share the active conversation. On mobile this opens the native share sheet
+// (WhatsApp appears there and it handles long text without URL limits); on
+// desktop / browsers without navigator.share it falls back to WhatsApp's web
+// link, and to the clipboard if that popup is blocked.
+async function aiShareChat(){
+  const c=_aiResolveActive();
+  if(!c||!c.msgs.some(m=>m.r!=='e')){toast('Nothing to share yet');return;}
+  const text=_aiChatToText(c);
+  if(navigator.share){
+    try{await navigator.share({title:c.title||'SpendWise AI chat',text});}
+    catch(e){/* user dismissed the sheet — not an error */}
+    return;
+  }
+  const w=window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank','noopener');
+  if(!w){
+    try{await navigator.clipboard.writeText(text);toast('Chat copied — paste it into WhatsApp');}
+    catch(e){toast('Could not open WhatsApp');}
+  }
+}
+function aiSend(){const inp=document.getElementById('ai-input');if(!inp)return;const v=inp.value;inp.value='';aiGrowInput(inp);aiAsk(v);}
+// Auto-grow the chat textarea as the user types (wraps + expands, capped by the
+// textarea.ifield max-height in CSS, which then scrolls).
+function aiGrowInput(t){if(!t)return;t.style.height='auto';t.style.height=Math.min(t.scrollHeight,200)+'px';}
+// Enter sends; Shift+Enter inserts a newline (standard chat convention).
+function aiInputKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();aiSend();}}
 async function aiAsk(text){
   if(_aiBusy)return;
   text=String(text||'').trim();if(!text)return;
