@@ -434,6 +434,11 @@ datalist option{background:var(--bg2);color:var(--text)}
   .ai-chip{background:var(--bg2);border:1px solid var(--border2);color:var(--text2);border-radius:999px;padding:5px 11px;font-size:0.66rem;cursor:pointer;font-family:var(--font);}
   .ai-chip:active{background:var(--adim);border-color:var(--ab);color:var(--text);}
   .ai-inrow{display:flex;gap:6px;align-items:flex-end;}
+  .sb-cmp{width:100%;border-collapse:collapse;font-size:0.68rem;}
+  .sb-cmp th,.sb-cmp td{padding:6px 8px;border-bottom:1px solid var(--border);white-space:nowrap;}
+  .sb-cmp th{font-weight:600;color:var(--text2);}
+  .sb-cmp td:first-child,.sb-cmp th:first-child{white-space:normal;color:var(--text2);}
+  .sb-cmp-tot td{border-top:2px solid var(--border);font-weight:800;color:var(--accent);}
   .ai-chatbar{display:flex;gap:6px;align-items:center;margin:2px 0 2px;}
   .ai-chatsel{flex:1;font-size:0.72rem;padding:6px 9px;min-width:0;}
   .ai-badge{font-family:var(--mono);font-size:0.54rem;color:var(--text3);border:1px solid var(--border);border-radius:999px;padding:1px 7px;margin-left:6px;text-transform:none;letter-spacing:0;}

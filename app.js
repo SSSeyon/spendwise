@@ -1142,7 +1142,7 @@ function initFirebase(){
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadAiChats(),loadGoals(),loadRules(),loadAiKeys()]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadAiChats(),loadGoals(),loadRules(),loadAiKeys(),loadSpecialBudgets()]);
 }
 
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
@@ -1164,6 +1164,7 @@ let _debListener=null;
 let _loanListener=null;
 let _aiChatListener=null;
 let _aiKeysListener=null;
+let _sbListener=null;
 
 function startRealtimeListeners(){
   stopRealtimeListeners();
@@ -1374,6 +1375,20 @@ function startRealtimeListeners(){
       if(typeof d.activeId==='string' && d.activeId!==(cGet(AI_ACTIVE_KEY_LS)||'')){ cSet(AI_ACTIVE_KEY_LS,d.activeId); changed=true; }
       if(changed){ renderSettData(); renderProjAI(); }
     },err=>console.warn('aiKeys listener:',err));
+
+  // Special budgets — real-time cross-device sync. Skip our own pending writes,
+  // and don't re-render while a field in the pane is focused (that would drop
+  // an edit in progress); the pane is display:none unless its tab is on screen.
+  if(_sbListener){_sbListener();_sbListener=null;}
+  _sbListener=db.collection('specialBudgets')
+    .onSnapshot(snap=>{
+      if(snap.metadata.hasPendingWrites) return;
+      const list=snap.docs.map(d=>({id:d.id,...d.data()}));
+      _sbSortList(list);
+      S.specialBudgets=list;cSet(SB_LS,list);
+      const pane=document.getElementById('special-pane');
+      if(pane&&pane.style.display!=='none'&&!pane.contains(document.activeElement))renderSpecial();
+    },err=>console.warn('specialBudgets listener:',err));
 }
 
 function stopRealtimeListeners(){
@@ -1393,6 +1408,7 @@ function stopRealtimeListeners(){
   if(_loanListener){_loanListener();_loanListener=null;}
   if(_aiChatListener){_aiChatListener();_aiChatListener=null;}
   if(_aiKeysListener){_aiKeysListener();_aiKeysListener=null;}
+  if(_sbListener){_sbListener();_sbListener=null;}
 }
 
 async function loadTxns(m,y){
@@ -3241,13 +3257,320 @@ function renderCatChart(catSpend,cur,m,y){
 // EXPENSES
 // ══════════════════════════════════════════════════════════════════════════
 function switchExpTab(tab, btn){
-  document.getElementById('exp-pane').style.display=tab==='expenses'?'block':'none';
-  document.getElementById('inc-pane').style.display=tab==='income'?'block':'none';
-  document.getElementById('exp-page-title').textContent=tab==='expenses'?'Expenses':'Income';
-  document.querySelectorAll('#exp-tab-btn,#inc-tab-btn').forEach(b=>b.classList.remove('active'));
+  const isExp=tab==='expenses',isInc=tab==='income',isSp=tab==='special';
+  document.getElementById('exp-pane').style.display=isExp?'block':'none';
+  document.getElementById('inc-pane').style.display=isInc?'block':'none';
+  const sp=document.getElementById('special-pane');if(sp)sp.style.display=isSp?'block':'none';
+  document.getElementById('exp-page-title').textContent=isExp?'Expenses':isInc?'Income':'Special Budget';
+  // The month strip and the global NGN/USD/GBP selector only apply to
+  // Expenses/Income — Special Budget carries its own per-budget currency.
+  const mrow=document.getElementById('exp-months');if(mrow)mrow.style.display=isSp?'none':'';
+  const csel=document.getElementById('exp-currency');if(csel)csel.style.display=isSp?'none':'';
+  document.querySelectorAll('#exp-tab-btn,#inc-tab-btn,#special-tab-btn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
-  if(tab==='income') renderIncome();
+  if(isInc) renderIncome();
+  else if(isSp) renderSpecial();
   else renderExpenses();
+}
+
+// ─── SPECIAL BUDGET ─────────────────────────────────────────────────────────
+// Standalone, currency-switchable budgets for one-off things — a trip, an event.
+// Each budget is one Firestore doc in `specialBudgets`; the budget list, the
+// single-budget editor and the side-by-side comparison are three views of the
+// same #special-pane. Unit costs are stored in the budget's base currency
+// (default NGN); switching the display currency just re-divides by a user-typed
+// FX rate (exactly like the old spreadsheet's "change cell C7"). The maths:
+//   line total   = qty × cost/unit
+//   subtotal     = Σ line totals
+//   contingency  = subtotal × contingency%
+//   total        = subtotal + contingency ; per-head = total ÷ travelers
+var SB_LS='sw3_special_budgets';
+var _sbMode='list';        // 'list' | 'detail' | 'compare'
+var _sbActiveId='';        // budget open in the editor
+var _sbCur='';             // display currency ('' → the budget's own base)
+var _sbCompareSel=[];      // budget ids ticked in the compare view
+const SB_CURS=['NGN','USD','GBP'];
+
+function _sbList(){if(!Array.isArray(S.specialBudgets))S.specialBudgets=cGet(SB_LS)||[];return S.specialBudgets;}
+function _sbById(id){return _sbList().find(b=>b.id===id)||null;}
+function _sbNewId(){return 'sb'+Date.now().toString(36)+Math.random().toString(36).slice(2,8);}
+function _sbSortList(a){a.sort((x,y)=>(y.updatedAt||0)-(x.updatedAt||0));return a;}
+function _sbSaveCache(){cSet(SB_LS,_sbList());}
+// Mirror one budget to Firestore so it follows the user across every device.
+function _sbSave(b){
+  if(!b)return;
+  b.updatedAt=Date.now();
+  _sbSortList(_sbList());
+  _sbSaveCache();
+  if(db)db.collection('specialBudgets').doc(b.id).set({
+    title:b.title||'',type:b.type||'travel',base:b.base||'NGN',fx:b.fx||{},
+    travelers:_sbNum(b.travelers),nights:_sbNum(b.nights),departure:b.departure||'',
+    contingencyPct:_sbNum(b.contingencyPct),items:b.items||[],
+    createdAt:b.createdAt||Date.now(),updatedAt:b.updatedAt
+  },{merge:true}).catch(e=>console.warn('special budget sync failed',e));
+}
+
+// ── Money maths (all in base currency; converted only for display) ──
+function _sbNum(v){const n=parseFloat(String(v==null?'':v).replace(/[, ]/g,''));return isFinite(n)?n:0;}
+function _sbItemTotal(it){return _sbNum(it.qty)*_sbNum(it.unit);}
+function _sbSubtotal(b){return (b.items||[]).reduce((s,it)=>s+_sbItemTotal(it),0);}
+function _sbContingency(b){return _sbSubtotal(b)*(_sbNum(b.contingencyPct)/100);}
+function _sbTotal(b){return _sbSubtotal(b)+_sbContingency(b);}
+function _sbPerHead(b){const t=_sbNum(b.travelers);return t>0?_sbTotal(b)/t:_sbTotal(b);}
+function _sbDispCur(b){return _sbCur||b.base||'NGN';}
+function _sbSym(c){return c==='USD'?'$':c==='GBP'?'£':c==='NGN'?'₦':c+' ';}
+// fx[c] = how many units of base equal 1 unit of currency c, so base→c divides;
+// the base currency itself always has an implicit factor of 1.
+function _sbConv(amtBase,b,cur){const base=b.base||'NGN';if(cur===base)return amtBase;const r=_sbNum((b.fx||{})[cur]);return r>0?amtBase/r:amtBase;}
+function _sbFmt(amtBase,b,cur){cur=cur||_sbDispCur(b);return _sbSym(cur)+Math.round(_sbConv(amtBase,b,cur)).toLocaleString('en-US');}
+// Arrival = departure + nights (checkout convention). Built and read entirely in
+// UTC so a positive local offset (e.g. WAT, UTC+1) can't roll the date back a day.
+function _sbArrival(b){if(!b.departure)return'';const p=b.departure.slice(0,10).split('-').map(Number);if(p.length<3||!p[0])return'';const d=new Date(Date.UTC(p[0],p[1]-1,p[2]+_sbNum(b.nights)));return isNaN(d.getTime())?'':d.toISOString().slice(0,10);}
+
+// A line item's "basis" is a convenience that fills its qty from the trip
+// parameters (× travelers / × nights). Editing qty directly switches it to
+// 'custom' so a manual override (e.g. 11 days of transport for a 9-night trip)
+// is never silently overwritten when travelers or nights later change.
+function _sbApplyBasis(b,it){
+  if(it.basis==='traveler')it.qty=_sbNum(b.travelers)||1;
+  else if(it.basis==='night'||it.basis==='day')it.qty=_sbNum(b.nights)||1;
+  else if(it.basis==='flat')it.qty=1;
+  // 'custom' → leave qty untouched
+}
+function _sbSyncQtys(b){(b.items||[]).forEach(it=>_sbApplyBasis(b,it));}
+function _sbTravelItems(){
+  const mk=(name,basis)=>({id:_sbNewId(),name,basis,qty:1,unit:0,status:'outstanding'});
+  return [mk('Flight','traveler'),mk('Hotel','night'),mk('Visa','traveler'),
+    mk('Feeding','day'),mk('Local transport','day'),mk('Touring','traveler'),mk('Shopping','traveler')];
+}
+
+// ── Loading + realtime (wired into syncAll / start-stopRealtimeListeners) ──
+async function loadSpecialBudgets(){
+  if(!db)return;
+  try{
+    const snap=await db.collection('specialBudgets').get();
+    const list=snap.docs.map(d=>({id:d.id,...d.data()}));
+    _sbSortList(list);
+    S.specialBudgets=list;cSet(SB_LS,list);
+  }catch(e){_warnLoad('loadSpecialBudgets',e);}
+}
+
+// ── Create / duplicate / delete ──
+function sbNewBudget(type){
+  type=type||'travel';
+  const b={id:_sbNewId(),title:type==='travel'?'New trip':'New budget',type,
+    base:'NGN',fx:{USD:DEF_RATES.USD,GBP:DEF_RATES.GBP},
+    travelers:type==='travel'?2:1,nights:type==='travel'?7:0,
+    departure:type==='travel'?new Date().toISOString().slice(0,10):'',
+    contingencyPct:5,items:type==='travel'?_sbTravelItems():[],
+    createdAt:Date.now(),updatedAt:Date.now()};
+  _sbSyncQtys(b);
+  _sbList().unshift(b);_sbSave(b);
+  _sbActiveId=b.id;_sbCur='';_sbMode='detail';renderSpecial();
+}
+function sbDuplicate(id){
+  const src=_sbById(id);if(!src)return;
+  const copy=JSON.parse(JSON.stringify(src));
+  copy.id=_sbNewId();
+  copy.items=(copy.items||[]).map(it=>({...it,id:_sbNewId()}));
+  copy.title=(src.title||'Budget')+' (copy)';
+  copy.createdAt=Date.now();copy.updatedAt=Date.now();
+  _sbList().unshift(copy);_sbSave(copy);
+  _sbActiveId=copy.id;_sbCur='';_sbMode='detail';renderSpecial();
+  toast('Duplicated — tweak this copy, then Compare the two');
+}
+function sbDelete(id){
+  const b=_sbById(id);if(!b)return;
+  if(!confirm('Delete “'+(b.title||'this budget')+'” on all your devices?'))return;
+  const l=_sbList();const i=l.findIndex(x=>x.id===id);if(i>=0)l.splice(i,1);
+  _sbSaveCache();
+  if(db)db.collection('specialBudgets').doc(id).delete().catch(e=>console.warn('special budget delete failed',e));
+  _sbCompareSel=_sbCompareSel.filter(x=>x!==id);
+  _sbMode='list';_sbActiveId='';renderSpecial();
+}
+
+// ── Field / item edits ──
+function sbRename(id){
+  const b=_sbById(id);if(!b)return;
+  const v=prompt('Budget name',b.title||'');if(v===null)return;
+  const t=String(v).trim().replace(/\s+/g,' ');if(!t)return;
+  b.title=t.length>60?t.slice(0,60)+'…':t;_sbSave(b);renderSpecial();
+}
+function sbEditField(id,field,val){
+  const b=_sbById(id);if(!b)return;
+  if(field==='travelers'||field==='nights')b[field]=Math.max(0,Math.round(_sbNum(val)));
+  else if(field==='contingencyPct')b.contingencyPct=Math.max(0,_sbNum(val));
+  else if(field==='fxUSD'){b.fx=b.fx||{};b.fx.USD=_sbNum(val);}
+  else if(field==='fxGBP'){b.fx=b.fx||{};b.fx.GBP=_sbNum(val);}
+  else b[field]=val;
+  if(field==='travelers'||field==='nights')_sbSyncQtys(b);
+  _sbSave(b);renderSpecial();
+}
+function sbEditItem(id,itemId,field,val){
+  const b=_sbById(id);if(!b)return;
+  const it=(b.items||[]).find(x=>x.id===itemId);if(!it)return;
+  if(field==='qty'){it.qty=_sbNum(val);it.basis='custom';}  // manual override
+  else if(field==='unit')it.unit=_sbNum(val);
+  else it[field]=val;                                       // name, status
+  _sbSave(b);renderSpecial();
+}
+function sbSetBasis(id,itemId,basis){
+  const b=_sbById(id);if(!b)return;
+  const it=(b.items||[]).find(x=>x.id===itemId);if(!it)return;
+  it.basis=basis;_sbApplyBasis(b,it);_sbSave(b);renderSpecial();
+}
+function sbAddItem(id){
+  const b=_sbById(id);if(!b)return;
+  (b.items=b.items||[]).push({id:_sbNewId(),name:'New item',basis:'flat',qty:1,unit:0,status:'outstanding'});
+  _sbSave(b);renderSpecial();
+}
+function sbDelItem(id,itemId){
+  const b=_sbById(id);if(!b)return;
+  b.items=(b.items||[]).filter(x=>x.id!==itemId);
+  _sbSave(b);renderSpecial();
+}
+
+// ── Navigation ──
+function sbOpen(id){_sbActiveId=id;_sbCur='';_sbMode='detail';renderSpecial();}
+function sbBack(){_sbMode='list';_sbActiveId='';renderSpecial();}
+function sbSetCur(c){_sbCur=c;renderSpecial();}
+function sbEnterCompare(){_sbMode='compare';renderSpecial();}
+function sbExitCompare(){_sbMode='list';renderSpecial();}
+function sbToggleCompare(id){const i=_sbCompareSel.indexOf(id);if(i>=0)_sbCompareSel.splice(i,1);else _sbCompareSel.push(id);renderSpecial();}
+
+// ── Render ──
+function renderSpecial(){
+  const el=document.getElementById('special-pane');if(!el)return;
+  if(_sbMode==='detail'){const b=_sbById(_sbActiveId);if(b){el.innerHTML=_sbDetailHTML(b);return;}_sbMode='list';}
+  if(_sbMode==='compare'){el.innerHTML=_sbCompareHTML();return;}
+  el.innerHTML=_sbListHTML();
+}
+function _sbListHTML(){
+  const l=_sbList();
+  const cards=l.map(b=>{
+    const sub=b.type==='travel'
+      ?`${_sbNum(b.travelers)} traveller(s) · ${_sbNum(b.nights)} night(s)${b.departure?' · '+fmtDate(b.departure):''}`
+      :`${(b.items||[]).length} item(s)`;
+    return `<div class="exp-card" style="margin-bottom:10px;cursor:pointer" onclick="sbOpen('${b.id}')">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div style="min-width:0">
+          <div class="exp-card-title" style="margin-bottom:2px">${esc(b.title||'Untitled budget')}</div>
+          <div style="font-size:0.64rem;color:var(--text3)">${b.type==='travel'?'✈ Travel':'★ Event'} · ${esc(sub)}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div style="font-size:0.6rem;color:var(--text3)">Total (${b.base||'NGN'})</div>
+          <div style="font-weight:700;font-size:0.9rem;color:var(--accent)">${_sbFmt(_sbTotal(b),b,b.base||'NGN')}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  const empty=`<div class="empty" style="padding:26px 0"><div class="empty-i">✈</div>No special budgets yet.<br>Create one for a trip or an event.</div>`;
+  return `<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-p btn-sm" onclick="sbNewBudget('travel')">＋ Travel budget</button>
+      <button class="btn btn-g btn-sm" onclick="sbNewBudget('event')">＋ Event budget</button>
+      ${l.length>1?`<button class="btn btn-g btn-sm" onclick="sbEnterCompare()" style="margin-left:auto">⇄ Compare</button>`:''}
+    </div>
+    ${l.length?cards:empty}`;
+}
+function _sbTotRow(label,val,strong){
+  return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;${strong?'border-top:1px solid var(--line,rgba(128,128,128,.25));margin-top:4px;padding-top:8px':''}">
+    <div style="font-size:${strong?'0.8rem':'0.72rem'};color:${strong?'var(--text)':'var(--text2)'};font-weight:${strong?'700':'400'}">${label}</div>
+    <div style="font-weight:${strong?'800':'600'};font-size:${strong?'1rem':'0.8rem'};color:${strong?'var(--accent)':'var(--text)'}">${val}</div>
+  </div>`;
+}
+function _sbDetailHTML(b){
+  const cur=_sbDispCur(b),base=b.base||'NGN',isTravel=b.type==='travel';
+  const curBtns=SB_CURS.map(c=>`<button class="btn btn-sm ${c===cur?'btn-p':'btn-g'}" style="padding:4px 10px;font-size:0.62rem" onclick="sbSetCur('${c}')">${_sbSym(c)} ${c}</button>`).join('');
+  const fxRows=SB_CURS.filter(c=>c!==base).map(c=>
+    `<div class="ig" style="flex:1;min-width:120px"><label class="ilabel">1 ${c} = ${_sbSym(base)}</label><input class="ifield" inputmode="decimal" value="${_sbNum((b.fx||{})[c])||''}" onchange="sbEditField('${b.id}','fx${c}',this.value)"></div>`).join('');
+  const basisOpts=sel=>['flat','traveler','night','day','custom'].map(x=>`<option value="${x}"${x===(sel||'custom')?' selected':''}>${x==='flat'?'Flat':x==='traveler'?'× travellers':x==='night'?'× nights':x==='day'?'× days':'Custom'}</option>`).join('');
+  const rows=(b.items||[]).map(it=>{
+    const paid=it.status==='paid';
+    return `<div class="exp-card" style="margin-bottom:8px;padding:10px">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+        <input class="ifield" style="flex:1;font-weight:600;font-size:0.74rem" value="${esc(it.name||'')}" onchange="sbEditItem('${b.id}','${it.id}','name',this.value)">
+        <button class="btn btn-g btn-sm" style="padding:4px 8px" onclick="sbDelItem('${b.id}','${it.id}')" title="Remove item">🗑</button>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end">
+        <div class="ig" style="flex:1;min-width:60px"><label class="ilabel">Qty</label><input class="ifield" inputmode="decimal" value="${_sbNum(it.qty)}" onchange="sbEditItem('${b.id}','${it.id}','qty',this.value)"></div>
+        <div class="ig" style="flex:2;min-width:96px"><label class="ilabel">Cost/unit (${base})</label><input class="ifield" inputmode="decimal" value="${_sbNum(it.unit)}" onchange="sbEditItem('${b.id}','${it.id}','unit',this.value)"></div>
+        <div class="ig" style="flex:1;min-width:82px"><label class="ilabel">Basis</label><select class="sfield" onchange="sbSetBasis('${b.id}','${it.id}',this.value)">${basisOpts(it.basis)}</select></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+        <button class="btn btn-sm ${paid?'btn-p':'btn-g'}" style="padding:3px 9px;font-size:0.6rem" onclick="sbEditItem('${b.id}','${it.id}','status','${paid?'outstanding':'paid'}')">${paid?'✓ Paid':'Outstanding'}</button>
+        <div style="font-weight:700;font-size:0.82rem">${_sbFmt(_sbItemTotal(it),b,cur)}</div>
+      </div>
+    </div>`;
+  }).join('');
+  const sub=_sbSubtotal(b),cont=_sbContingency(b),tot=_sbTotal(b);
+  const paidSum=(b.items||[]).filter(it=>it.status==='paid').reduce((s,it)=>s+_sbItemTotal(it),0);
+  const outstanding=tot-paidSum;
+  return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <button class="btn btn-g btn-sm" style="padding:5px 10px" onclick="sbBack()">← All budgets</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-g btn-sm" style="padding:5px 9px" onclick="sbDuplicate('${b.id}')" title="Duplicate to compare scenarios">⧉ Duplicate</button>
+    </div>
+    <div class="exp-card" style="margin-bottom:10px">
+      <div class="exp-card-title" style="margin:0 0 8px;cursor:pointer" onclick="sbRename('${b.id}')" title="Tap to rename">${esc(b.title||'Untitled')} <span style="font-size:0.6rem;color:var(--text3)">✎</span></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">${curBtns}</div>
+      ${isTravel?`<div style="display:flex;gap:6px;flex-wrap:wrap">
+        <div class="ig" style="flex:1;min-width:70px"><label class="ilabel">Travellers</label><input class="ifield" inputmode="numeric" value="${_sbNum(b.travelers)}" onchange="sbEditField('${b.id}','travelers',this.value)"></div>
+        <div class="ig" style="flex:1;min-width:70px"><label class="ilabel">Nights</label><input class="ifield" inputmode="numeric" value="${_sbNum(b.nights)}" onchange="sbEditField('${b.id}','nights',this.value)"></div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+        <div class="ig" style="flex:1;min-width:120px"><label class="ilabel">Departure</label><input class="ifield" type="date" value="${b.departure||''}" onchange="sbEditField('${b.id}','departure',this.value)"></div>
+        <div class="ig" style="flex:1;min-width:120px"><label class="ilabel">Arrival (auto)</label><input class="ifield" type="date" value="${_sbArrival(b)}" disabled></div>
+      </div>`:''}
+      ${fxRows?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${fxRows}</div><div class="csub" style="margin-top:4px;font-size:0.58rem">Rates convert the display only — costs are stored in ${base}.</div>`:''}
+    </div>
+
+    <div class="clabel" style="margin:2px 0 8px">Line items</div>
+    ${rows||'<div class="csub" style="margin-bottom:8px">No items yet — add your first below.</div>'}
+    <button class="btn btn-g btn-full btn-sm" style="margin-bottom:12px" onclick="sbAddItem('${b.id}')">＋ Add line item</button>
+
+    <div class="exp-card" style="margin-bottom:10px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <div class="ig" style="flex:1"><label class="ilabel">Contingency %</label><input class="ifield" inputmode="decimal" value="${_sbNum(b.contingencyPct)}" onchange="sbEditField('${b.id}','contingencyPct',this.value)"></div>
+        <div style="flex:1;text-align:right"><div style="font-size:0.6rem;color:var(--text3)">Contingency</div><div style="font-weight:600">${_sbFmt(cont,b,cur)}</div></div>
+      </div>
+      ${_sbTotRow('Subtotal',_sbFmt(sub,b,cur))}
+      ${_sbTotRow('Outstanding',_sbFmt(outstanding,b,cur))}
+      ${_sbTotRow('Total',_sbFmt(tot,b,cur),true)}
+      ${isTravel?_sbTotRow('Per traveller',_sbFmt(_sbPerHead(b),b,cur)):''}
+    </div>
+    <button class="btn btn-g btn-full btn-sm" style="margin-bottom:20px" onclick="sbDelete('${b.id}')">Delete this budget</button>`;
+}
+function _sbCompareHTML(){
+  const l=_sbList();
+  const sel=_sbCompareSel.filter(id=>_sbById(id));
+  const picker=l.map(b=>`<label style="display:flex;align-items:center;gap:8px;font-size:0.72rem;padding:5px 0;cursor:pointer">
+      <input type="checkbox" ${sel.includes(b.id)?'checked':''} onchange="sbToggleCompare('${b.id}')"> ${esc(b.title||'Untitled')}
+      <span style="margin-left:auto;color:var(--text3);font-size:0.62rem">${_sbFmt(_sbTotal(b),b,b.base||'NGN')}</span>
+    </label>`).join('');
+  let table;
+  if(sel.length>=1){
+    const budgets=sel.map(id=>_sbById(id));
+    const cur=budgets[0].base||'NGN';
+    const names=[];budgets.forEach(b=>(b.items||[]).forEach(it=>{if(it.name&&!names.includes(it.name))names.push(it.name);}));
+    const head=`<th style="text-align:left">Item</th>`+budgets.map(b=>`<th style="text-align:right">${esc(b.title||'—')}</th>`).join('');
+    const bodyRows=names.map(nm=>{
+      const cells=budgets.map(b=>{const it=(b.items||[]).find(x=>x.name===nm);return `<td style="text-align:right">${it?_sbFmt(_sbItemTotal(it),b,cur):'—'}</td>`;}).join('');
+      return `<tr><td>${esc(nm)}</td>${cells}</tr>`;
+    }).join('');
+    const contRow=`<tr><td>Contingency</td>${budgets.map(b=>`<td style="text-align:right">${_sbFmt(_sbContingency(b),b,cur)}</td>`).join('')}</tr>`;
+    const totRow=`<tr class="sb-cmp-tot"><td>Total</td>${budgets.map(b=>`<td style="text-align:right">${_sbFmt(_sbTotal(b),b,cur)}</td>`).join('')}</tr>`;
+    const phRow=`<tr style="font-weight:600"><td>Per traveller</td>${budgets.map(b=>`<td style="text-align:right">${_sbFmt(_sbPerHead(b),b,cur)}</td>`).join('')}</tr>`;
+    table=`<div style="overflow-x:auto;margin-top:12px"><table class="sb-cmp"><thead><tr>${head}</tr></thead><tbody>${bodyRows}${contRow}${totRow}${phRow}</tbody></table></div>
+      <div class="csub" style="margin-top:6px">All figures in ${cur}, each budget converted with its own FX rates.</div>`;
+  }else{
+    table=`<div class="csub" style="margin-top:12px">Tick budgets above to compare them side by side.</div>`;
+  }
+  return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <button class="btn btn-g btn-sm" style="padding:5px 10px" onclick="sbExitCompare()">← Back</button>
+      <div class="clabel" style="margin:0">Compare budgets</div>
+    </div>
+    <div class="exp-card">${picker}</div>
+    ${table}`;
 }
 
 function renderIncome(){
@@ -7255,7 +7578,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.5</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.6</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8116,7 +8439,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.5';
+const APP_VERSION='v4.4.6';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
