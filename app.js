@@ -963,13 +963,20 @@ function _makeNumInput(el){
   el.parentNode.insertBefore(wrap,el);wrap.appendChild(el);
   const disp=document.createElement('div');disp.className='num-display';
   disp.textContent='';wrap.appendChild(disp);
+  // While NOT focused: hide the raw text and show the comma-formatted overlay.
+  // While focused: reveal the raw (unformatted) text and hide the overlay, so
+  // the caret lands exactly where it's clicked. The overlay shows "1,000,000"
+  // (9 chars) while the input's real value is "1000000" (7 chars); leaving it
+  // visible during editing made the caret map to the raw text and appear in the
+  // wrong place — the reported "cursor doesn't match the text" bug.
   el.style.color='transparent';el.style.caretColor='var(--text)';
   el.addEventListener('input',()=>_syncNumDisplay(el));
-  el.addEventListener('focus',()=>{if(disp)disp.style.opacity='0.4';});
+  el.addEventListener('focus',()=>{el.style.color='var(--text)';if(disp)disp.style.opacity='0';});
   el.addEventListener('blur',()=>{
     // Evaluate any expression, then reformat
     const evaled=_evalExpr(el.value);
     if(evaled!==el.value) el.value=evaled;
+    el.style.color='transparent';
     if(disp)disp.style.opacity='1';
     _syncNumDisplay(el);
   });
@@ -3286,7 +3293,11 @@ function switchExpTab(tab, btn){
 //   total        = subtotal + contingency ; per-head = total ÷ travelers
 var SB_LS='sw3_special_budgets';
 var _sbMode='list';        // 'list' | 'detail' | 'compare'
-var _sbActiveId='';        // budget open in the editor
+var _sbActiveId='';        // id of the budget open in the editor
+var _sbDraft=null;         // working copy being edited — nothing persists until Save
+var _sbIsNew=false;        // draft is a brand-new budget not yet in the list/Firestore
+var _sbDirty=false;        // draft has unsaved edits (drives the Save button)
+var _sbOptItem='';         // line-item id whose cost-options editor is expanded
 var _sbCur='';             // display currency ('' → the budget's own base)
 var _sbCompareSel=[];      // budget ids ticked in the compare view
 const SB_CURS=['NGN','USD','GBP'];
@@ -3355,6 +3366,25 @@ async function loadSpecialBudgets(){
   }catch(e){_warnLoad('loadSpecialBudgets',e);}
 }
 
+// ── Draft model ────────────────────────────────────────────────────────────
+// Editing never touches Firestore. All edits mutate the in-memory _sbDraft;
+// only Save (sbSave → _sbCommit) writes it to the list + Firestore. This is
+// what makes the explicit Save button meaningful — leaving without saving
+// discards the changes.
+function _sbCommit(){
+  const b=_sbDraft;if(!b)return;
+  b.updatedAt=Date.now();
+  const l=_sbList();const i=l.findIndex(x=>x.id===b.id);
+  if(i>=0)l[i]=b;else l.unshift(b);
+  _sbIsNew=false;_sbDirty=false;
+  _sbSave(b);                 // sorts, caches, mirrors to Firestore
+}
+function sbSave(){
+  if(!_sbDraft||!_sbDirty)return;
+  _sbCommit();renderSpecial();toast('Saved to all your devices');
+}
+function _sbFindItem(itemId){return _sbDraft?(_sbDraft.items||[]).find(x=>x.id===itemId):null;}
+
 // ── Create / duplicate / delete ──
 function sbNewBudget(type){
   type=type||'travel';
@@ -3365,75 +3395,125 @@ function sbNewBudget(type){
     contingencyPct:5,items:type==='travel'?_sbTravelItems():[],
     createdAt:Date.now(),updatedAt:Date.now()};
   _sbSyncQtys(b);
-  _sbList().unshift(b);_sbSave(b);
-  _sbActiveId=b.id;_sbCur='';_sbMode='detail';renderSpecial();
+  _sbDraft=b;_sbActiveId=b.id;_sbIsNew=true;_sbDirty=true;_sbOptItem='';
+  _sbCur='';_sbMode='detail';renderSpecial();
 }
-function sbDuplicate(id){
-  const src=_sbById(id);if(!src)return;
+function sbDuplicate(){
+  if(!_sbDraft)return;
+  _sbCommit();                 // persist the current budget so it isn't lost
+  const src=_sbDraft;
   const copy=JSON.parse(JSON.stringify(src));
   copy.id=_sbNewId();
-  copy.items=(copy.items||[]).map(it=>({...it,id:_sbNewId()}));
+  copy.items=(copy.items||[]).map(it=>({...it,id:_sbNewId(),
+    options:(it.options||[]).map(o=>({...o,id:_sbNewId()}))}));
   copy.title=(src.title||'Budget')+' (copy)';
   copy.createdAt=Date.now();copy.updatedAt=Date.now();
-  _sbList().unshift(copy);_sbSave(copy);
-  _sbActiveId=copy.id;_sbCur='';_sbMode='detail';renderSpecial();
-  toast('Duplicated — tweak this copy, then Compare the two');
+  _sbDraft=copy;_sbActiveId=copy.id;_sbIsNew=true;_sbDirty=true;_sbOptItem='';
+  renderSpecial();
+  toast('Copy created — tweak it, then Save. Compare from the list.');
 }
-function sbDelete(id){
-  const b=_sbById(id);if(!b)return;
-  if(!confirm('Delete “'+(b.title||'this budget')+'” on all your devices?'))return;
-  const l=_sbList();const i=l.findIndex(x=>x.id===id);if(i>=0)l.splice(i,1);
-  _sbSaveCache();
-  if(db)db.collection('specialBudgets').doc(id).delete().catch(e=>console.warn('special budget delete failed',e));
-  _sbCompareSel=_sbCompareSel.filter(x=>x!==id);
-  _sbMode='list';_sbActiveId='';renderSpecial();
+function sbDelete(){
+  const b=_sbDraft;if(!b)return;
+  if(_sbIsNew){
+    if(!confirm('Discard this unsaved budget?'))return;
+  }else{
+    if(!confirm('Delete “'+(b.title||'this budget')+'” on all your devices?'))return;
+    const l=_sbList();const i=l.findIndex(x=>x.id===b.id);if(i>=0)l.splice(i,1);
+    _sbSaveCache();
+    if(db)db.collection('specialBudgets').doc(b.id).delete().catch(e=>console.warn('special budget delete failed',e));
+    _sbCompareSel=_sbCompareSel.filter(x=>x!==b.id);
+  }
+  _sbDraft=null;_sbIsNew=false;_sbDirty=false;_sbMode='list';_sbActiveId='';renderSpecial();
 }
 
-// ── Field / item edits ──
-function sbRename(id){
-  const b=_sbById(id);if(!b)return;
+// ── Field / item edits (all mutate the draft; Save persists) ──
+function sbRename(){
+  const b=_sbDraft;if(!b)return;
   const v=prompt('Budget name',b.title||'');if(v===null)return;
   const t=String(v).trim().replace(/\s+/g,' ');if(!t)return;
-  b.title=t.length>60?t.slice(0,60)+'…':t;_sbSave(b);renderSpecial();
+  b.title=t.length>60?t.slice(0,60)+'…':t;_sbDirty=true;renderSpecial();
 }
-function sbEditField(id,field,val){
-  const b=_sbById(id);if(!b)return;
+function sbEditField(field,val){
+  const b=_sbDraft;if(!b)return;
   if(field==='travelers'||field==='nights')b[field]=Math.max(0,Math.round(_sbNum(val)));
   else if(field==='contingencyPct')b.contingencyPct=Math.max(0,_sbNum(val));
   else if(field==='fxUSD'){b.fx=b.fx||{};b.fx.USD=_sbNum(val);}
   else if(field==='fxGBP'){b.fx=b.fx||{};b.fx.GBP=_sbNum(val);}
   else b[field]=val;
   if(field==='travelers'||field==='nights')_sbSyncQtys(b);
-  _sbSave(b);renderSpecial();
+  _sbDirty=true;renderSpecial();
 }
-function sbEditItem(id,itemId,field,val){
-  const b=_sbById(id);if(!b)return;
+function sbEditItem(itemId,field,val){
+  const b=_sbDraft;if(!b)return;
   const it=(b.items||[]).find(x=>x.id===itemId);if(!it)return;
   if(field==='qty'){it.qty=_sbNum(val);it.basis='custom';}  // manual override
   else if(field==='unit')it.unit=_sbNum(val);
   else it[field]=val;                                       // name, status
-  _sbSave(b);renderSpecial();
+  _sbDirty=true;renderSpecial();
 }
-function sbSetBasis(id,itemId,basis){
-  const b=_sbById(id);if(!b)return;
+function sbSetBasis(itemId,basis){
+  const b=_sbDraft;if(!b)return;
   const it=(b.items||[]).find(x=>x.id===itemId);if(!it)return;
-  it.basis=basis;_sbApplyBasis(b,it);_sbSave(b);renderSpecial();
+  it.basis=basis;_sbApplyBasis(b,it);_sbDirty=true;renderSpecial();
 }
-function sbAddItem(id){
-  const b=_sbById(id);if(!b)return;
-  (b.items=b.items||[]).push({id:_sbNewId(),name:'New item',basis:'flat',qty:1,unit:0,status:'outstanding'});
-  _sbSave(b);renderSpecial();
+function sbAddItem(){
+  const b=_sbDraft;if(!b)return;
+  (b.items=b.items||[]).push({id:_sbNewId(),name:'New item',basis:'flat',qty:1,unit:0,status:'outstanding',options:[]});
+  _sbDirty=true;renderSpecial();
 }
-function sbDelItem(id,itemId){
-  const b=_sbById(id);if(!b)return;
+function sbDelItem(itemId){
+  const b=_sbDraft;if(!b)return;
   b.items=(b.items||[]).filter(x=>x.id!==itemId);
-  _sbSave(b);renderSpecial();
+  if(_sbOptItem===itemId)_sbOptItem='';
+  _sbDirty=true;renderSpecial();
+}
+
+// ── Line-item cost options (e.g. compare airlines / hotels in place) ──
+// An item can carry a list of named options {id,label,unit}; the picked one
+// (it.optId) drives it.unit, so selecting a different option instantly re-totals
+// the whole budget without leaving the editor.
+function sbToggleOpts(itemId){_sbOptItem=_sbOptItem===itemId?'':itemId;renderSpecial();}
+function sbAddOption(itemId){
+  const it=_sbFindItem(itemId);if(!it)return;
+  it.options=it.options||[];
+  const o={id:_sbNewId(),label:'Option '+(it.options.length+1),unit:_sbNum(it.unit)};
+  it.options.push(o);
+  if(!it.optId){it.optId=o.id;it.unit=_sbNum(o.unit);}
+  _sbOptItem=itemId;_sbDirty=true;renderSpecial();
+}
+function sbEditOption(itemId,optId,field,val){
+  const it=_sbFindItem(itemId);if(!it)return;
+  const o=(it.options||[]).find(x=>x.id===optId);if(!o)return;
+  if(field==='unit'){o.unit=_sbNum(val);if(it.optId===optId)it.unit=_sbNum(val);}
+  else o.label=val;
+  _sbDirty=true;renderSpecial();
+}
+function sbSelectOption(itemId,optId){
+  const it=_sbFindItem(itemId);if(!it)return;
+  const o=(it.options||[]).find(x=>x.id===optId);if(!o)return;
+  it.optId=optId;it.unit=_sbNum(o.unit);_sbDirty=true;renderSpecial();
+}
+function sbDelOption(itemId,optId){
+  const it=_sbFindItem(itemId);if(!it)return;
+  it.options=(it.options||[]).filter(x=>x.id!==optId);
+  if(it.optId===optId){
+    if(it.options.length){it.optId=it.options[0].id;it.unit=_sbNum(it.options[0].unit);}
+    else it.optId='';
+  }
+  _sbDirty=true;renderSpecial();
 }
 
 // ── Navigation ──
-function sbOpen(id){_sbActiveId=id;_sbCur='';_sbMode='detail';renderSpecial();}
-function sbBack(){_sbMode='list';_sbActiveId='';renderSpecial();}
-function sbSetCur(c){_sbCur=c;renderSpecial();}
+function sbOpen(id){
+  const src=_sbById(id);if(!src)return;
+  _sbDraft=JSON.parse(JSON.stringify(src));
+  _sbActiveId=id;_sbIsNew=false;_sbDirty=false;_sbOptItem='';_sbCur='';_sbMode='detail';renderSpecial();
+}
+function sbBack(){
+  if(_sbDirty&&!confirm('Discard unsaved changes?'))return;
+  _sbDraft=null;_sbIsNew=false;_sbDirty=false;_sbMode='list';_sbActiveId='';renderSpecial();
+}
+function sbSetCur(c){_sbCur=c;renderSpecial();}   // display-only; not a saved edit
 function sbEnterCompare(){_sbMode='compare';renderSpecial();}
 function sbExitCompare(){_sbMode='list';renderSpecial();}
 function sbToggleCompare(id){const i=_sbCompareSel.indexOf(id);if(i>=0)_sbCompareSel.splice(i,1);else _sbCompareSel.push(id);renderSpecial();}
@@ -3441,7 +3521,7 @@ function sbToggleCompare(id){const i=_sbCompareSel.indexOf(id);if(i>=0)_sbCompar
 // ── Render ──
 function renderSpecial(){
   const el=document.getElementById('special-pane');if(!el)return;
-  if(_sbMode==='detail'){const b=_sbById(_sbActiveId);if(b){el.innerHTML=_sbDetailHTML(b);return;}_sbMode='list';}
+  if(_sbMode==='detail'){if(_sbDraft){el.innerHTML=_sbDetailHTML(_sbDraft);return;}_sbMode='list';}
   if(_sbMode==='compare'){el.innerHTML=_sbCompareHTML();return;}
   el.innerHTML=_sbListHTML();
 }
@@ -3482,22 +3562,49 @@ function _sbDetailHTML(b){
   const cur=_sbDispCur(b),base=b.base||'NGN',isTravel=b.type==='travel';
   const curBtns=SB_CURS.map(c=>`<button class="btn btn-sm ${c===cur?'btn-p':'btn-g'}" style="padding:4px 10px;font-size:0.62rem" onclick="sbSetCur('${c}')">${_sbSym(c)} ${c}</button>`).join('');
   const fxRows=SB_CURS.filter(c=>c!==base).map(c=>
-    `<div class="ig" style="flex:1;min-width:120px"><label class="ilabel">1 ${c} = ${_sbSym(base)}</label><input class="ifield" inputmode="decimal" value="${_sbNum((b.fx||{})[c])||''}" onchange="sbEditField('${b.id}','fx${c}',this.value)"></div>`).join('');
+    `<div class="ig" style="flex:1;min-width:120px"><label class="ilabel">1 ${c} = ${_sbSym(base)}</label><input class="ifield" inputmode="decimal" value="${_sbNum((b.fx||{})[c])||''}" onchange="sbEditField('fx${c}',this.value)"></div>`).join('');
   const basisOpts=sel=>['flat','traveler','night','day','custom'].map(x=>`<option value="${x}"${x===(sel||'custom')?' selected':''}>${x==='flat'?'Flat':x==='traveler'?'× travellers':x==='night'?'× nights':x==='day'?'× days':'Custom'}</option>`).join('');
+  const travOpts=Array.from({length:20},(_,i)=>i+1).map(n=>`<option value="${n}"${n===_sbNum(b.travelers)?' selected':''}>${n}</option>`).join('');
+  const nightOpts=Array.from({length:61},(_,i)=>i).map(n=>`<option value="${n}"${n===_sbNum(b.nights)?' selected':''}>${n}</option>`).join('');
   const rows=(b.items||[]).map(it=>{
     const paid=it.status==='paid';
+    const hasOpts=Array.isArray(it.options)&&it.options.length>0;
+    const optsOpen=_sbOptItem===it.id;
+    // Active-option picker (shown inline when the item carries saved options)
+    const optSel=hasOpts?`<div class="ig" style="flex:1;min-width:120px"><label class="ilabel">Option</label>
+        <select class="sfield" onchange="sbSelectOption('${it.id}',this.value)">
+          ${it.options.map(o=>`<option value="${o.id}"${o.id===it.optId?' selected':''}>${esc(o.label||'Option')} — ${_sbFmt(_sbNum(o.unit),b,cur)}</option>`).join('')}
+        </select></div>`:'';
+    // When options exist their picker drives the cost, so lock the free-text cost
+    const unitField=hasOpts
+      ? `<div class="ig" style="flex:2;min-width:96px"><label class="ilabel">Cost/unit (${base})</label><input class="ifield" value="${_sbNum(it.unit)}" disabled title="Set by the selected option"></div>`
+      : `<div class="ig" style="flex:2;min-width:96px"><label class="ilabel">Cost/unit (${base})</label><input class="ifield" inputmode="decimal" value="${_sbNum(it.unit)}" onchange="sbEditItem('${it.id}','unit',this.value)"></div>`;
+    // Expandable editor for adding/renaming/pricing options
+    const optEditor=optsOpen?`<div style="margin-top:8px;padding:8px;border:1px dashed var(--border);border-radius:var(--rsm)">
+        <div class="ilabel" style="margin-bottom:6px">Options — different airlines / hotels, etc.</div>
+        ${(it.options||[]).map(o=>`<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+            <input class="ifield" style="flex:2;min-width:80px" value="${esc(o.label||'')}" placeholder="e.g. Emirates" onchange="sbEditOption('${it.id}','${o.id}','label',this.value)">
+            <input class="ifield" style="flex:1;min-width:70px" inputmode="decimal" value="${_sbNum(o.unit)}" onchange="sbEditOption('${it.id}','${o.id}','unit',this.value)">
+            <button class="btn btn-sm ${o.id===it.optId?'btn-p':'btn-g'}" style="padding:4px 8px;font-size:0.58rem" onclick="sbSelectOption('${it.id}','${o.id}')" title="Use this option">${o.id===it.optId?'✓':'Use'}</button>
+            <button class="btn btn-g btn-sm" style="padding:4px 7px" onclick="sbDelOption('${it.id}','${o.id}')" title="Remove option">✕</button>
+          </div>`).join('')||'<div class="csub" style="margin-bottom:6px">No options yet.</div>'}
+        <button class="btn btn-g btn-sm btn-full" style="font-size:0.62rem" onclick="sbAddOption('${it.id}')">＋ Add option</button>
+      </div>`:'';
     return `<div class="exp-card" style="margin-bottom:8px;padding:10px">
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
-        <input class="ifield" style="flex:1;font-weight:600;font-size:0.74rem" value="${esc(it.name||'')}" onchange="sbEditItem('${b.id}','${it.id}','name',this.value)">
-        <button class="btn btn-g btn-sm" style="padding:4px 8px" onclick="sbDelItem('${b.id}','${it.id}')" title="Remove item">🗑</button>
+        <input class="ifield" style="flex:1;font-weight:600;font-size:0.74rem" value="${esc(it.name||'')}" onchange="sbEditItem('${it.id}','name',this.value)">
+        <button class="btn btn-sm ${optsOpen?'btn-p':'btn-g'}" style="padding:4px 8px;font-size:0.58rem" onclick="sbToggleOpts('${it.id}')" title="Saved cost options">⚙${hasOpts?' '+it.options.length:''}</button>
+        <button class="btn btn-g btn-sm" style="padding:4px 8px" onclick="sbDelItem('${it.id}')" title="Remove item">🗑</button>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end">
-        <div class="ig" style="flex:1;min-width:60px"><label class="ilabel">Qty</label><input class="ifield" inputmode="decimal" value="${_sbNum(it.qty)}" onchange="sbEditItem('${b.id}','${it.id}','qty',this.value)"></div>
-        <div class="ig" style="flex:2;min-width:96px"><label class="ilabel">Cost/unit (${base})</label><input class="ifield" inputmode="decimal" value="${_sbNum(it.unit)}" onchange="sbEditItem('${b.id}','${it.id}','unit',this.value)"></div>
-        <div class="ig" style="flex:1;min-width:82px"><label class="ilabel">Basis</label><select class="sfield" onchange="sbSetBasis('${b.id}','${it.id}',this.value)">${basisOpts(it.basis)}</select></div>
+        <div class="ig" style="flex:1;min-width:60px"><label class="ilabel">Qty</label><input class="ifield" inputmode="decimal" value="${_sbNum(it.qty)}" onchange="sbEditItem('${it.id}','qty',this.value)"></div>
+        ${unitField}
+        <div class="ig" style="flex:1;min-width:82px"><label class="ilabel">Basis</label><select class="sfield" onchange="sbSetBasis('${it.id}',this.value)">${basisOpts(it.basis)}</select></div>
+        ${optSel}
       </div>
+      ${optEditor}
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
-        <button class="btn btn-sm ${paid?'btn-p':'btn-g'}" style="padding:3px 9px;font-size:0.6rem" onclick="sbEditItem('${b.id}','${it.id}','status','${paid?'outstanding':'paid'}')">${paid?'✓ Paid':'Outstanding'}</button>
+        <button class="btn btn-sm ${paid?'btn-p':'btn-g'}" style="padding:3px 9px;font-size:0.6rem" onclick="sbEditItem('${it.id}','status','${paid?'outstanding':'paid'}')">${paid?'✓ Paid':'Outstanding'}</button>
         <div style="font-weight:700;font-size:0.82rem">${_sbFmt(_sbItemTotal(it),b,cur)}</div>
       </div>
     </div>`;
@@ -3505,20 +3612,23 @@ function _sbDetailHTML(b){
   const sub=_sbSubtotal(b),cont=_sbContingency(b),tot=_sbTotal(b);
   const paidSum=(b.items||[]).filter(it=>it.status==='paid').reduce((s,it)=>s+_sbItemTotal(it),0);
   const outstanding=tot-paidSum;
+  const saveLbl=_sbIsNew?'Save':(_sbDirty?'Save changes':'Saved ✓');
   return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
       <button class="btn btn-g btn-sm" style="padding:5px 10px" onclick="sbBack()">← All budgets</button>
       <div style="flex:1"></div>
-      <button class="btn btn-g btn-sm" style="padding:5px 9px" onclick="sbDuplicate('${b.id}')" title="Duplicate to compare scenarios">⧉ Duplicate</button>
+      <button class="btn btn-g btn-sm" style="padding:5px 9px" onclick="sbDuplicate()" title="Duplicate to compare scenarios">⧉ Duplicate</button>
+      <button class="btn ${_sbDirty?'btn-p':'btn-g'} btn-sm" style="padding:5px 14px" onclick="sbSave()" ${_sbDirty?'':'disabled'}>${saveLbl}</button>
     </div>
+    ${_sbDirty?'<div class="csub" style="margin:-4px 0 8px;color:var(--accent)">Unsaved changes — tap Save to sync across your devices.</div>':''}
     <div class="exp-card" style="margin-bottom:10px">
-      <div class="exp-card-title" style="margin:0 0 8px;cursor:pointer" onclick="sbRename('${b.id}')" title="Tap to rename">${esc(b.title||'Untitled')} <span style="font-size:0.6rem;color:var(--text3)">✎</span></div>
+      <div class="exp-card-title" style="margin:0 0 8px;cursor:pointer" onclick="sbRename()" title="Tap to rename">${esc(b.title||'Untitled')} <span style="font-size:0.6rem;color:var(--text3)">✎</span></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">${curBtns}</div>
       ${isTravel?`<div style="display:flex;gap:6px;flex-wrap:wrap">
-        <div class="ig" style="flex:1;min-width:70px"><label class="ilabel">Travellers</label><input class="ifield" inputmode="numeric" value="${_sbNum(b.travelers)}" onchange="sbEditField('${b.id}','travelers',this.value)"></div>
-        <div class="ig" style="flex:1;min-width:70px"><label class="ilabel">Nights</label><input class="ifield" inputmode="numeric" value="${_sbNum(b.nights)}" onchange="sbEditField('${b.id}','nights',this.value)"></div>
+        <div class="ig" style="flex:1;min-width:70px"><label class="ilabel">Travellers</label><select class="sfield" onchange="sbEditField('travelers',this.value)">${travOpts}</select></div>
+        <div class="ig" style="flex:1;min-width:70px"><label class="ilabel">Nights</label><select class="sfield" onchange="sbEditField('nights',this.value)">${nightOpts}</select></div>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
-        <div class="ig" style="flex:1;min-width:120px"><label class="ilabel">Departure</label><input class="ifield" type="date" value="${b.departure||''}" onchange="sbEditField('${b.id}','departure',this.value)"></div>
+        <div class="ig" style="flex:1;min-width:120px"><label class="ilabel">Departure</label><input class="ifield" type="date" value="${b.departure||''}" onchange="sbEditField('departure',this.value)"></div>
         <div class="ig" style="flex:1;min-width:120px"><label class="ilabel">Arrival (auto)</label><input class="ifield" type="date" value="${_sbArrival(b)}" disabled></div>
       </div>`:''}
       ${fxRows?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${fxRows}</div><div class="csub" style="margin-top:4px;font-size:0.58rem">Rates convert the display only — costs are stored in ${base}.</div>`:''}
@@ -3526,11 +3636,11 @@ function _sbDetailHTML(b){
 
     <div class="clabel" style="margin:2px 0 8px">Line items</div>
     ${rows||'<div class="csub" style="margin-bottom:8px">No items yet — add your first below.</div>'}
-    <button class="btn btn-g btn-full btn-sm" style="margin-bottom:12px" onclick="sbAddItem('${b.id}')">＋ Add line item</button>
+    <button class="btn btn-g btn-full btn-sm" style="margin-bottom:12px" onclick="sbAddItem()">＋ Add line item</button>
 
     <div class="exp-card" style="margin-bottom:10px">
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-        <div class="ig" style="flex:1"><label class="ilabel">Contingency %</label><input class="ifield" inputmode="decimal" value="${_sbNum(b.contingencyPct)}" onchange="sbEditField('${b.id}','contingencyPct',this.value)"></div>
+        <div class="ig" style="flex:1"><label class="ilabel">Contingency %</label><input class="ifield" inputmode="decimal" value="${_sbNum(b.contingencyPct)}" onchange="sbEditField('contingencyPct',this.value)"></div>
         <div style="flex:1;text-align:right"><div style="font-size:0.6rem;color:var(--text3)">Contingency</div><div style="font-weight:600">${_sbFmt(cont,b,cur)}</div></div>
       </div>
       ${_sbTotRow('Subtotal',_sbFmt(sub,b,cur))}
@@ -3538,7 +3648,8 @@ function _sbDetailHTML(b){
       ${_sbTotRow('Total',_sbFmt(tot,b,cur),true)}
       ${isTravel?_sbTotRow('Per traveller',_sbFmt(_sbPerHead(b),b,cur)):''}
     </div>
-    <button class="btn btn-g btn-full btn-sm" style="margin-bottom:20px" onclick="sbDelete('${b.id}')">Delete this budget</button>`;
+    <button class="btn ${_sbDirty?'btn-p':'btn-g'} btn-full" style="margin-bottom:10px" onclick="sbSave()" ${_sbDirty?'':'disabled'}>${saveLbl}</button>
+    <button class="btn btn-g btn-full btn-sm" style="margin-bottom:20px" onclick="sbDelete()">${_sbIsNew?'Discard':'Delete this budget'}</button>`;
 }
 function _sbCompareHTML(){
   const l=_sbList();
@@ -7578,7 +7689,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.6</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.7</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8439,7 +8550,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.6';
+const APP_VERSION='v4.4.7';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
