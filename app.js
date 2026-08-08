@@ -2622,7 +2622,10 @@ async function _pushDeviceNotifs(alerts){
       icon:'icon-192.png',
       badge:'icon-192.png',
       tag:id,
-      silent:false
+      silent:false,
+      // Where the SW's notificationclick handler should send the user. Path only
+      // (no hash) so it matches/opens the app root cleanly.
+      data:{url:location.origin+location.pathname}
     };
     try{
       if(reg&&reg.showNotification) await reg.showNotification(title,opts);
@@ -7689,7 +7692,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.7</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.8</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8550,7 +8553,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.7';
+const APP_VERSION='v4.4.8';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});

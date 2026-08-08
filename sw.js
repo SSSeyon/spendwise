@@ -1,7 +1,7 @@
 // SpendWise Service Worker
 // Stale-while-revalidate for the HTML shell (instant boot, refreshed in the
 // background); cache-first for version-queried assets, fonts and CDN libs.
-const CACHE = 'spendwise-v18';
+const CACHE = 'spendwise-v19';
 
 // Only truly-static, rarely-changing assets are pre-cached. index.html,
 // app.js and styles.css are intentionally NOT pre-cached here: index.html is
@@ -36,6 +36,33 @@ const NETWORK_ONLY = [
 // ── Skip waiting when told to (used by Force Hard Refresh and update banner)
 self.addEventListener('message', event => {
   if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
+// ── Notification click: bring the app to the foreground ────────────────────
+// The alerts are shown with ServiceWorkerRegistration.showNotification(), so on
+// Android the notification belongs to THIS service worker — and a tap does
+// nothing unless the SW handles `notificationclick`. Without this listener the
+// notification just dismisses and the app never opens (the reported bug).
+// Behaviour: focus an already-open app window if one exists (navigating it to
+// the target if needed), otherwise open a fresh window.
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const scope = self.registration.scope;                     // e.g. …/spendwise/
+  const target = (event.notification.data && event.notification.data.url) || scope;
+  event.waitUntil((async () => {
+    const wins = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    // Prefer a window already within our scope: focus and (if needed) navigate it.
+    for (const c of wins) {
+      if (c.url && c.url.startsWith(scope)) {
+        try { await c.focus(); } catch (e) {}
+        if ('navigate' in c && c.url !== target) { try { await c.navigate(target); } catch (e) {} }
+        return;
+      }
+    }
+    // Fall back to any client, then to opening a new window.
+    if (wins.length && 'focus' in wins[0]) { try { await wins[0].focus(); return; } catch (e) {} }
+    if (clients.openWindow) { try { await clients.openWindow(target); } catch (e) {} }
+  })());
 });
 
 // ── Install: pre-cache static assets ──────────────────────────────────────
