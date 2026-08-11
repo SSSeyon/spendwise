@@ -1176,7 +1176,7 @@ function initFirebase(){
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadCustomLines(),loadAiChats(),loadGoals(),loadRules(),loadAiKeys(),loadSpecialBudgets()]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadCustomLines(),loadAiChats(),loadGoals(),loadRules(),loadAiKeys(),loadSpecialBudgets(),loadInterestPosts()]);
 }
 
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
@@ -3757,6 +3757,7 @@ function renderIncome(){
   const summEl=document.getElementById('inc-summary');
   const listEl=document.getElementById('inc-list');
   if(!summEl||!listEl) return;
+  _renderInterestCard();
   summEl.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center">
     <div><div class="clabel">Total Income — ${MONTHS[m-1]} ${y}${eyeBtn('inc-summary','renderIncome')}</div><div class="cval" style="color:var(--accent)">${maskIf('inc-summary',fmtCur(totalNGN,cur,m,y))}</div></div>
     <div style="text-align:right"><div class="clabel">Count</div><div class="cval">${inc.length}</div></div>
@@ -4488,6 +4489,160 @@ function _invWithdraw(pKey, ngnAmt, m, y){
   S.investments=inv;cSet(CK.inv(m,y),inv);
   if(db)db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(()=>{});
   return true;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// INTEREST INCOME POSTING
+// ══════════════════════════════════════════════════════════════════════════
+// Interest-bearing accounts (Renmoney = cash, Piggy = investment, and any other
+// account you've set a rate on) accrue daily. SpendWise has no server, so it
+// can't post while closed — instead, when a calendar month completes, the
+// Income tab offers a one-tap "Post" (confirm-gated: nothing posts on its own).
+// Posting creates ONE income entry ("Interest Income") for the month it's
+// credited (the current month), and credits the account's balance. A synced
+// ledger (sw3_interest_posts) records which earned-months have been posted so
+// the same month can't be double-posted. Amounts are estimates from the rate;
+// the created entry is a normal, editable income record.
+const INT_POSTS_KEY='sw3_interest_posts';
+function getInterestPosts(){return cGet(INT_POSTS_KEY)||{};}
+function saveInterestPosts(obj){
+  cSet(INT_POSTS_KEY,obj);
+  if(db)db.collection('appConfig').doc('interestPosts')
+    .set({posts:obj,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .catch(e=>console.warn('interestPosts sync failed',e));
+}
+async function loadInterestPosts(){
+  if(!db)return;
+  try{
+    const doc=await db.collection('appConfig').doc('interestPosts').get();
+    const obj=doc.exists?doc.data()?.posts:null;
+    if(obj&&typeof obj==='object')cSet(INT_POSTS_KEY,obj);
+  }catch(e){_warnLoad('loadInterestPosts',e);}
+}
+function _daysInMonth(m,y){return new Date(y,m,0).getDate();}
+// Simple daily accrual (or daily compounding) over `days` on a flat balance.
+function _interestOnBalance(bal,ratePct,ct,days){
+  bal=_sbNum(bal);ratePct=_sbNum(ratePct);days=Math.max(0,days|0);
+  if(bal<=0||ratePct<=0||days<=0)return 0;
+  const r=ratePct/100;
+  return Math.round(ct==='daily_compound'?bal*(Math.pow(1+r/365,days)-1):bal*(r/365)*days);
+}
+// Candidate accounts: cash accounts with an interest rate set, plus investment
+// platforms whose subs carry a rate.
+function _interestAccounts(){
+  const list=[];
+  const im=getCashInterestMeta();
+  getCashAccounts().forEach(name=>{
+    const ci=im[name];
+    if(ci&&_sbNum(ci.interestRate)>0)
+      list.push({key:'cash:'+name,kind:'cash',name,rate:_sbNum(ci.interestRate),compoundType:ci.compoundType||'daily_accrual',startDate:ci.startDate||''});
+  });
+  (typeof PLATFORMS!=='undefined'?PLATFORMS:[]).forEach(p=>{
+    const subs=getSubsForPlatform(p.key)||[];
+    const wr=subs.find(s=>_sbNum(s.rate)>0);
+    if(wr)
+      list.push({key:'inv:'+p.key,kind:'inv',name:p.label||p.key,pKey:p.key,rate:_sbNum(wr.rate),compoundType:wr.compoundType||'daily_accrual',startDate:wr.startDate||''});
+  });
+  return list;
+}
+function _acctBalanceFor(acct,m,y){
+  if(acct.kind==='cash'){
+    const c=cGet(CK.cash(m,y))||((m===S.cashMonth&&y===S.cashYear)?(S.cash||{}):{});
+    return _sbNum(c[acct.name]);
+  }
+  const iv=cGet(CK.inv(m,y))||(S.investments||{});
+  return _sbNum(iv[acct.pKey]);
+}
+// Running interest for the in-progress (current) month — display only.
+function _accruedSoFar(acct){
+  const now=new Date();const cm=now.getMonth()+1,cy=now.getFullYear();
+  let elapsed=now.getDate();
+  if(acct.startDate){
+    const sd=new Date(acct.startDate);
+    if(sd>now)elapsed=0;
+    else if(sd.getFullYear()===cy&&sd.getMonth()+1===cm)elapsed=Math.max(0,now.getDate()-sd.getDate());
+  }
+  return {amount:_interestOnBalance(_acctBalanceFor(acct,cm,cy),acct.rate,acct.compoundType,elapsed),cm,cy};
+}
+// The most recent COMPLETED month, if it's on/after the interest start date.
+// Returns {pMonth,pYear,amount,sid,posted} or null.
+function _postableMonth(acct){
+  const now=new Date();
+  let pMonth=now.getMonth(),pYear=now.getFullYear();   // getMonth() is prev month in 1-based terms
+  if(pMonth===0){pMonth=12;pYear--;}
+  if(acct.startDate){
+    const lastDay=`${pYear}-${String(pMonth).padStart(2,'0')}-${String(_daysInMonth(pMonth,pYear)).padStart(2,'0')}`;
+    if(lastDay<acct.startDate)return null;             // month ended before interest began
+  }
+  const sidP=`${pYear}-${String(pMonth).padStart(2,'0')}`;
+  const posts=getInterestPosts()[acct.key]||{};
+  if(posts[sidP])return {pMonth,pYear,amount:_sbNum(posts[sidP].amount),sid:sidP,posted:true};
+  const amount=_interestOnBalance(_acctBalanceFor(acct,pMonth,pYear),acct.rate,acct.compoundType,_daysInMonth(pMonth,pYear));
+  if(amount<=0)return null;
+  return {pMonth,pYear,amount,sid:sidP,posted:false};
+}
+function postInterest(acctKey){
+  const acct=_interestAccounts().find(a=>a.key===acctKey);
+  if(!acct){toast('Account not found');return;}
+  const pm=_postableMonth(acct);
+  if(!pm||pm.posted||pm.amount<=0){toast('Nothing to post');renderIncome();return;}
+  const now=new Date();const cm=now.getMonth()+1,cy=now.getFullYear();
+  const monName=MONTHS[pm.pMonth-1];
+  if(!confirm(`Post ${fN(pm.amount)} as ${acct.name} interest income for ${monName} ${pm.pYear}, and credit ${acct.name}?`))return;
+  const dateStr=`${cy}-${String(cm).padStart(2,'0')}-01`;
+  const id=db?db.collection('income').doc().id:'int_'+Date.now().toString(36);
+  const entry={id,amount:pm.amount,amtNGN:pm.amount,currency:'NGN',category:'Interest Income',
+    bank:acct.name,notes:`${monName} ${pm.pYear} interest`,date:dateStr,month:cm,year:cy,
+    type:'income',source:'interest',intAcct:acctKey};
+  // Upsert into the current month's income (local + Firestore)
+  const isView=(S.expMonth===cm&&S.expYear===cy);
+  const arr=isView?S.income:(cGet(CK.inc(cm,cy))||[]);
+  arr.unshift(entry);cSet(CK.inc(cm,cy),arr);if(isView)S.income=arr;
+  if(db)db.collection('income').doc(id).set({...entry,createdAt:firebase.firestore.FieldValue.serverTimestamp()}).catch(e=>console.warn('interest income sync failed',e));
+  // Keep the month's history income total current
+  const hist=cGet('sw3_history')||[];const hi=hist.findIndex(h=>h.year===cy&&h.month===cm);
+  const totalInc=arr.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
+  if(hi>=0)hist[hi].income=totalInc;
+  else{hist.push({year:cy,month:cm,label:MS[cm-1]+" '"+String(cy).slice(2),income:totalInc,expenses:(cGet(CK.txns(cm,cy))||[]).reduce((s,t)=>s+(t.amount||0),0)});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
+  cSet('sw3_history',hist);
+  // Credit the account balance
+  if(acct.kind==='cash')_adjustCash(acct.name,pm.amount,cm,cy,'interest');
+  else _invDeposit(acct.pKey,pm.amount,cm,cy);
+  // Record so this earned-month can't be posted twice
+  const posts=getInterestPosts();posts[acctKey]=posts[acctKey]||{};
+  posts[acctKey][pm.sid]={amount:pm.amount,incomeId:id,month:pm.pMonth,year:pm.pYear,postedAt:Date.now()};
+  saveInterestPosts(posts);
+  toast(`${acct.name} interest posted · ${fN(pm.amount)}`);
+  renderIncome();renderDashboard();
+}
+function _renderInterestCard(){
+  const el=document.getElementById('inc-interest');if(!el)return;
+  const accts=_interestAccounts();
+  if(!accts.length){el.innerHTML='';return;}
+  const rows=accts.map(a=>{
+    const acc=_accruedSoFar(a);
+    const pm=_postableMonth(a);
+    const monName=pm?MONTHS[pm.pMonth-1]:'';
+    let action;
+    if(pm&&!pm.posted&&pm.amount>0)
+      action=`<button class="btn btn-p btn-sm" style="padding:5px 11px;font-size:0.62rem" onclick="postInterest('${a.key}')">Post ${fN(pm.amount)} · ${monName}</button>`;
+    else if(pm&&pm.posted)
+      action=`<span style="font-size:0.6rem;color:var(--text3)">✓ ${monName} posted</span>`;
+    else
+      action=`<span style="font-size:0.6rem;color:var(--text3)">—</span>`;
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);gap:8px">
+      <div style="min-width:0">
+        <div style="font-size:0.74rem;font-weight:600">${esc(a.name)} <span style="font-size:0.54rem;color:var(--text3);text-transform:uppercase;letter-spacing:0.04em">${a.kind==='cash'?'cash':'invest'} · ${a.rate}%/yr</span></div>
+        <div style="font-size:0.6rem;color:var(--gold);font-family:var(--mono)">≈${fN(acc.amount)} accruing this month</div>
+      </div>
+      <div style="flex-shrink:0;text-align:right">${action}</div>
+    </div>`;
+  }).join('');
+  el.innerHTML=`<div class="card" style="margin-bottom:10px">
+    <div class="clabel" style="margin-bottom:2px">Interest</div>
+    ${rows}
+    <div style="font-size:0.58rem;color:var(--text3);margin-top:8px;line-height:1.5">Posts one income entry for the completed month and credits the account. Figures are estimates from your rate — edit the income entry if your statement differs.</div>
+  </div>`;
 }
 
 // ── TRANSFER HISTORY (view / reverse / delete) ────────────────────────────
@@ -6835,9 +6990,12 @@ function renderProjHistory(){
         <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:var(--accent);text-align:right;cursor:pointer" onclick="histSort('income')">Income ↕</div>
         <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:var(--red);text-align:right;cursor:pointer" onclick="histSort('expenses')">Expenses ↕</div>
       </div>
-      <div id="hist-rows">${buildHistRows(getHistory())}</div>
+      <div id="hist-rows">${buildHistRows(_histByRecent())}</div>
     </div>`;
 }
+// History defaults to most-recent month first. (getHistory() is stored oldest-
+// first for charts/trends; the tab wants the newest month at the top.)
+function _histByRecent(){return [...getHistory()].sort((a,b)=>b.year!==a.year?b.year-a.year:b.month-a.month);}
 function buildHistRows(data){
   const cur=S.dashCurrency||'NGN';
   return data.map((d,i)=>{
@@ -7755,7 +7913,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.10</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.10: The emoji picker now has a "Type or pick any emoji" box — tap it and use your keyboard's emoji key to choose any emoji, not just the preset ones. Quick-pick grid is still there below.</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.11</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.11: History now lists the most recent month first. The Income tab has a new Interest card: Renmoney (cash) and Piggy (investment) show interest accruing this month, and when a month completes you can post that month's interest as income in one tap (confirm first) — it credits the account and appears in Income and History.</div><div style="color:var(--text3);margin-top:4px">v4.4.10: The emoji picker now has a "Type or pick any emoji" box — tap it and use your keyboard's emoji key to choose any emoji, not just the preset ones. Quick-pick grid is still there below.</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8616,7 +8774,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.10';
+const APP_VERSION='v4.4.11';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
