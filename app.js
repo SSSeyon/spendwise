@@ -2332,6 +2332,28 @@ const EMOJI_GROUPS = {
 };
 const ALL_EMOJIS=Object.values(EMOJI_GROUPS).flat();
 
+// Pull the first emoji grapheme out of arbitrary typed text, keeping ZWJ
+// sequences (👨‍👩‍👧‍👦), skin-tone modifiers and variation selectors intact — so the
+// whole emoji survives, not just its first code point. Lets the picker accept
+// anything the user types from their device's emoji keyboard.
+function _firstEmoji(str){
+  str=(str||'').trim();
+  if(!str) return '';
+  try{
+    if(typeof Intl!=='undefined'&&Intl.Segmenter){
+      const seg=new Intl.Segmenter('en',{granularity:'grapheme'});
+      for(const s of seg.segment(str)){
+        // Extended_Pictographic covers most emoji; Regional_Indicator covers
+        // country flags (🇳🇬), which are pairs and not pictographic themselves.
+        if(/[\p{Extended_Pictographic}\p{Regional_Indicator}]/u.test(s.segment)) return s.segment;
+      }
+      return '';
+    }
+  }catch(e){}
+  const m=str.match(/\p{Regional_Indicator}\p{Regional_Indicator}|\p{Extended_Pictographic}(?:‍\p{Extended_Pictographic}|[️\u{1f3fb}-\u{1f3ff}])*/u);
+  return m?m[0]:'';
+}
+
 let _emojiCb=null, _emojiPanel=null, _emojiScrim=null, _emojiGroup=null, _emojiSearch='';
 
 function openEmojiPicker(triggerEl, callback){
@@ -2348,11 +2370,27 @@ function openEmojiPicker(triggerEl, callback){
   _emojiPanel=document.createElement('div');
   _emojiPanel.className='emoji-panel';
 
-  const search=document.createElement('input');
-  search.className='emoji-search';
-  search.placeholder='Search emoji…';
-  search.oninput=e=>{_emojiSearch=e.target.value.toLowerCase();_renderEmojiGrid();};
-  _emojiPanel.appendChild(search);
+  // Full-keyboard entry: focusing this input lets the user open their device's
+  // (or OS's) emoji keyboard and pick ANY emoji — not just the curated grid.
+  const typeRow=document.createElement('div');
+  typeRow.className='emoji-typerow';
+  const emInput=document.createElement('input');
+  emInput.className='emoji-search';
+  emInput.placeholder='Type or pick any emoji 😀';
+  emInput.setAttribute('autocomplete','off');
+  emInput.setAttribute('autocapitalize','none');
+  emInput.setAttribute('autocorrect','off');
+  const useBtn=document.createElement('button');
+  useBtn.className='emoji-use-btn';
+  useBtn.textContent='Use';
+  useBtn.disabled=true;
+  const applyTyped=()=>{const em=_firstEmoji(emInput.value);if(em&&_emojiCb){_emojiCb(em);closeEmojiPicker();}};
+  emInput.oninput=()=>{const em=_firstEmoji(emInput.value);useBtn.disabled=!em;useBtn.textContent=em?('Use '+em):'Use';};
+  emInput.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();applyTyped();}};
+  useBtn.onclick=applyTyped;
+  typeRow.appendChild(emInput);
+  typeRow.appendChild(useBtn);
+  _emojiPanel.appendChild(typeRow);
 
   const groups=document.createElement('div');
   groups.className='emoji-groups';
@@ -2361,7 +2399,7 @@ function openEmojiPicker(triggerEl, callback){
     btn.className='emoji-group-btn'+(i===0?' active':'');
     btn.textContent=g;
     btn.onclick=()=>{
-      _emojiGroup=g;_emojiSearch='';search.value='';
+      _emojiGroup=g;
       groups.querySelectorAll('.emoji-group-btn').forEach(b=>b.classList.remove('active'));
       btn.classList.add('active');
       _renderEmojiGrid();
@@ -2388,15 +2426,13 @@ function openEmojiPicker(triggerEl, callback){
   _emojiPanel.style.left=left+'px';
   _emojiPanel.style.top=top+'px';
   _emojiPanel.style.width=panelW+'px';
-  setTimeout(()=>search.focus(),50);
+  setTimeout(()=>emInput.focus(),50);
 }
 
 function _renderEmojiGrid(){
   const grid=document.getElementById('emoji-grid');
   if(!grid) return;
-  const list=_emojiSearch
-    ? ALL_EMOJIS.filter(e=>e.includes(_emojiSearch))
-    : (EMOJI_GROUPS[_emojiGroup]||ALL_EMOJIS);
+  const list=EMOJI_GROUPS[_emojiGroup]||ALL_EMOJIS;
   grid.innerHTML='';
   list.forEach(emoji=>{
     const btn=document.createElement('button');
@@ -7719,7 +7755,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.9</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.10</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.10: The emoji picker now has a "Type or pick any emoji" box — tap it and use your keyboard's emoji key to choose any emoji, not just the preset ones. Quick-pick grid is still there below.</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8580,7 +8616,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.9';
+const APP_VERSION='v4.4.10';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
