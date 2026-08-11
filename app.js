@@ -7384,9 +7384,48 @@ function startEditPayee(cat,payee){
   rowEl.appendChild(inp);rowEl.appendChild(saveBtn);rowEl.appendChild(cancelBtn);
   inp.focus();inp.select();
 }
+// Rewrite the `payee` field on every past transaction of one category from
+// oldPayee → newPayee, so a rename (or a merge onto an existing name) reflects
+// historically — not just in the dropdown. Mirrors the category migrations:
+// updates all cached months + the live S.txns immediately, then updates
+// Firestore in the background (single-field `payee` query, so no composite
+// index is needed; category is filtered client-side). Returns the count of
+// locally-updated transactions for the toast.
+function _rewritePayeeHistory(cat, oldPayee, newPayee){
+  let n=0;
+  Object.keys(localStorage).filter(k=>/^sw3_txns_/.test(k)).forEach(k=>{
+    let arr; try{arr=JSON.parse(localStorage.getItem(k));}catch(e){return;}
+    if(!Array.isArray(arr))return;
+    let changed=false;
+    arr.forEach(t=>{ if(t.category===cat && t.payee===oldPayee){ t.payee=newPayee; changed=true; n++; } });
+    if(changed) localStorage.setItem(k, JSON.stringify(arr));
+  });
+  if(Array.isArray(S.txns)) S.txns.forEach(t=>{ if(t.category===cat && t.payee===oldPayee) t.payee=newPayee; });
+  if(db){
+    db.collection('transactions').where('payee','==',oldPayee).get().then(async snap=>{
+      const docs=snap.docs.filter(d=>d.data().category===cat);
+      for(let i=0;i<docs.length;i+=400){
+        const batch=db.batch();
+        docs.slice(i,i+400).forEach(d=>batch.update(d.ref,{payee:newPayee}));
+        await batch.commit();
+      }
+    }).catch(e=>console.warn('payee history rewrite failed',e));
+  }
+  return n;
+}
 function commitEditPayee(cat,oldPayee,newPayee,src){
   if(!newPayee){toast('Payee name cannot be empty');return;}
   if(newPayee===oldPayee){renderSettBudget();return;}
+  // Count how many past transactions this touches so the confirm is informed.
+  let hist=0;
+  Object.keys(localStorage).filter(k=>/^sw3_txns_/.test(k)).forEach(k=>{
+    let arr; try{arr=JSON.parse(localStorage.getItem(k));}catch(e){return;}
+    if(Array.isArray(arr)) hist+=arr.filter(t=>t.category===cat&&t.payee===oldPayee).length;
+  });
+  const merging=[...(CAT_LINES[cat]||[]),...((S.customExpLines[cat]||[]))].includes(newPayee);
+  const msg=(merging?`Merge "${oldPayee}" into existing "${newPayee}"`:`Rename "${oldPayee}" to "${newPayee}"`)
+    +(hist?` and update ${hist} past transaction${hist===1?'':'s'}?`:'?');
+  if(!confirm(msg)) return;
   // Remove old, add new in the correct list
   if(src==='builtin'){
     CAT_LINES[cat]=(CAT_LINES[cat]||[]).map(p=>p===oldPayee?newPayee:p);
@@ -7397,13 +7436,17 @@ function commitEditPayee(cat,oldPayee,newPayee,src){
     if(!S.customExpLines[cat]) S.customExpLines[cat]=[];
     if(!S.customExpLines[cat].includes(newPayee)) S.customExpLines[cat].push(newPayee);
   } else {
-    S.customExpLines[cat]=(S.customExpLines[cat]||[]).map(p=>p===oldPayee?newPayee:p);
+    // Map old→new and dedupe (so a merge onto an existing line doesn't leave two)
+    S.customExpLines[cat]=[...new Set((S.customExpLines[cat]||[]).map(p=>p===oldPayee?newPayee:p))];
   }
   saveCustomLines();
+  const updated=_rewritePayeeHistory(cat,oldPayee,newPayee);
   const key=cat.replace(/[^a-z0-9]/gi,'_');
   renderSettBudget();
+  if(typeof renderExpenses==='function')renderExpenses();
+  if(typeof renderDashboard==='function')renderDashboard();
   setTimeout(()=>{ const el=document.getElementById('cat-acc-'+key); if(el&&!el.classList.contains('open')) toggleCatAcc(cat); },0);
-  toast(`Renamed to "${newPayee}"`);
+  toast(updated?`Renamed to "${newPayee}" · ${updated} transaction${updated===1?'':'s'} updated`:`Renamed to "${newPayee}"`);
 }
 function renderPayeeLines(){} // kept as no-op for any stale call sites
 function addPayeeLine(){} // kept as no-op
@@ -7913,7 +7956,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.11</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.11: History now lists the most recent month first. The Income tab has a new Interest card: Renmoney (cash) and Piggy (investment) show interest accruing this month, and when a month completes you can post that month's interest as income in one tap (confirm first) — it credits the account and appears in Income and History.</div><div style="color:var(--text3);margin-top:4px">v4.4.10: The emoji picker now has a "Type or pick any emoji" box — tap it and use your keyboard's emoji key to choose any emoji, not just the preset ones. Quick-pick grid is still there below.</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.12</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.12: Renaming an expense line (payee) now updates your past transactions too — across every month and on all devices — not just the dropdown. Renaming onto an existing line merges them. You're shown how many transactions will change before it happens.</div><div style="color:var(--text3);margin-top:4px">v4.4.11: History now lists the most recent month first. The Income tab has a new Interest card: Renmoney (cash) and Piggy (investment) show interest accruing this month, and when a month completes you can post that month's interest as income in one tap (confirm first) — it credits the account and appears in Income and History.</div><div style="color:var(--text3);margin-top:4px">v4.4.10: The emoji picker now has a "Type or pick any emoji" box — tap it and use your keyboard's emoji key to choose any emoji, not just the preset ones. Quick-pick grid is still there below.</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8774,7 +8817,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.11';
+const APP_VERSION='v4.4.12';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
