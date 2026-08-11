@@ -114,6 +114,18 @@ function saveCustomCats(arr){
     .set({cats:arr,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('customCats sync failed',e));
 }
+// The user-added "actual expense" lines (payees per category, kept in
+// S.customExpLines, including the __removed__ map) used to be localStorage-only,
+// so they never left the device they were created on — added lines "vanished"
+// on any other device or after a cache clear. This mirrors saveCustomCats so
+// they live in Firestore too. Persists the whole map (last-write-wins), which is
+// fine for a low-frequency config edited one line at a time.
+function saveCustomLines(){
+  try{localStorage.setItem('sw3_custom_lines',JSON.stringify(S.customExpLines||{}));}catch{}
+  if(db)db.collection('appConfig').doc('customLines')
+    .set({lines:S.customExpLines||{},updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .catch(e=>console.warn('customLines sync failed',e));
+}
 // Every loadX() below deliberately swallows its own error rather than throwing,
 // so that one failed Firestore read cannot reject syncAll()'s Promise.all and
 // leave the entire app unsynced. That part is intentional — keep it.
@@ -132,6 +144,21 @@ async function loadCustomCats(){
     const arr=doc.exists?doc.data()?.cats:null;
     if(Array.isArray(arr)){try{localStorage.setItem('sw3_custom_cats',JSON.stringify(arr));}catch{}}
   }catch(e){_warnLoad('loadCustomCats',e);}
+}
+async function loadCustomLines(){
+  if(!db) return;
+  try{
+    const doc=await db.collection('appConfig').doc('customLines').get();
+    const obj=doc.exists?doc.data()?.lines:null;
+    if(obj&&typeof obj==='object'){
+      S.customExpLines=obj;
+      try{localStorage.setItem('sw3_custom_lines',JSON.stringify(obj));}catch{}
+    }else if(S.customExpLines&&Object.keys(S.customExpLines).length){
+      // First run after the fix: nothing in Firestore yet, but this device has
+      // lines from the old localStorage-only era — back them up now.
+      saveCustomLines();
+    }
+  }catch(e){_warnLoad('loadCustomLines',e);}
 }
 function getAllCats(){return[..._BASE_CATS,...getCustomCats().filter(c=>!_BASE_CATS.includes(c))];}
 // CATS: evaluated lazily after full script init via getter so cGet is always available
@@ -1149,7 +1176,7 @@ function initFirebase(){
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadAiChats(),loadGoals(),loadRules(),loadAiKeys(),loadSpecialBudgets()]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadCustomLines(),loadAiChats(),loadGoals(),loadRules(),loadAiKeys(),loadSpecialBudgets()]);
 }
 
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
@@ -4628,7 +4655,7 @@ async function saveExpense(){
     const cat=document.getElementById('e-cat').value;
     if(!S.customExpLines[cat])S.customExpLines[cat]=[];
     if(!S.customExpLines[cat].includes(payee))S.customExpLines[cat].push(payee);
-    cSet(CK.customLines,S.customExpLines);
+    saveCustomLines();
   }
   // Duplicate guard — same payee + amount + date is almost always a double-tap
   if(!document.getElementById('e-edit-id').value){
@@ -7136,7 +7163,7 @@ function addPayeeToCategory(cat){
   if(existing.map(p=>p.toLowerCase()).includes(name.toLowerCase())){toast('Actual expense already exists in this category');return;}
   if(!S.customExpLines[cat]) S.customExpLines[cat]=[];
   S.customExpLines[cat].push(name);
-  cSet(CK.customLines,S.customExpLines);
+  saveCustomLines();
   inp.value='';
   renderSettBudget();
   // Re-open this category after re-render
@@ -7178,7 +7205,7 @@ function commitEditPayee(cat,oldPayee,newPayee,src){
   } else {
     S.customExpLines[cat]=(S.customExpLines[cat]||[]).map(p=>p===oldPayee?newPayee:p);
   }
-  cSet(CK.customLines,S.customExpLines);
+  saveCustomLines();
   const key=cat.replace(/[^a-z0-9]/gi,'_');
   renderSettBudget();
   setTimeout(()=>{ const el=document.getElementById('cat-acc-'+key); if(el&&!el.classList.contains('open')) toggleCatAcc(cat); },0);
@@ -7194,12 +7221,12 @@ function removePayeeLine(cat,payee,src){
     if(!S.customExpLines['__removed__']) S.customExpLines['__removed__']={};
     if(!S.customExpLines['__removed__'][cat]) S.customExpLines['__removed__'][cat]=[];
     if(!S.customExpLines['__removed__'][cat].includes(payee)) S.customExpLines['__removed__'][cat].push(payee);
-    cSet(CK.customLines,S.customExpLines);
+    saveCustomLines();
   } else {
     if(!S.customExpLines[cat]) return;
     S.customExpLines[cat]=S.customExpLines[cat].filter(p=>p!==payee);
     if(!S.customExpLines[cat].length) delete S.customExpLines[cat];
-    cSet(CK.customLines,S.customExpLines);
+    saveCustomLines();
   }
   renderPayeeLines();
   toast(`Removed "${payee}"`);
@@ -7692,7 +7719,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.8</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.9</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8553,7 +8580,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.8';
+const APP_VERSION='v4.4.9';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
@@ -8897,7 +8924,7 @@ async function execMergeCat(){
       if(!S.customExpLines[_mergeInto]) S.customExpLines[_mergeInto]=[];
       srcCustom.forEach(l=>{if(!S.customExpLines[_mergeInto].includes(l))S.customExpLines[_mergeInto].push(l);});
       delete S.customExpLines[_mergeFrom];
-      cSet(CK.customLines,S.customExpLines);
+      saveCustomLines();
     }
 
     // ── 3. Merge budgets across all historical Firestore budget docs ───
