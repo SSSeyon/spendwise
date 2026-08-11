@@ -121,10 +121,19 @@ function saveCustomCats(arr){
 // they live in Firestore too. Persists the whole map (last-write-wins), which is
 // fine for a low-frequency config edited one line at a time.
 function saveCustomLines(){
-  try{localStorage.setItem('sw3_custom_lines',JSON.stringify(S.customExpLines||{}));}catch{}
-  if(db)db.collection('appConfig').doc('customLines')
-    .set({lines:S.customExpLines||{},updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
-    .catch(e=>console.warn('customLines sync failed',e));
+  const all=S.customExpLines||{};
+  try{localStorage.setItem('sw3_custom_lines',JSON.stringify(all));}catch{}
+  if(!db)return;
+  // Firestore rejects field names that both start and end with "__", so the
+  // __removed__ map (deleted built-in lines) can't ride inside `lines` — it
+  // gets its own `removed` field and is recombined on load. Without this the
+  // whole customLines write throws and nothing syncs.
+  const {__removed__:removed, ...lines}=all;
+  try{
+    db.collection('appConfig').doc('customLines')
+      .set({lines,removed:removed||{},updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+      .catch(e=>console.warn('customLines sync failed',e));
+  }catch(e){console.warn('customLines sync failed',e);}
 }
 // Every loadX() below deliberately swallows its own error rather than throwing,
 // so that one failed Firestore read cannot reject syncAll()'s Promise.all and
@@ -149,8 +158,11 @@ async function loadCustomLines(){
   if(!db) return;
   try{
     const doc=await db.collection('appConfig').doc('customLines').get();
-    const obj=doc.exists?doc.data()?.lines:null;
-    if(obj&&typeof obj==='object'){
+    const data=doc.exists?doc.data():null;
+    const obj=data&&data.lines&&typeof data.lines==='object'?{...data.lines}:null;
+    if(obj){
+      // Recombine the separately-stored __removed__ map (see saveCustomLines)
+      if(data.removed&&typeof data.removed==='object')obj.__removed__=data.removed;
       S.customExpLines=obj;
       try{localStorage.setItem('sw3_custom_lines',JSON.stringify(obj));}catch{}
     }else if(S.customExpLines&&Object.keys(S.customExpLines).length){
@@ -7274,6 +7286,18 @@ function renderSettBudget(){
       <button class="btn btn-d btn-full" onclick="openMergeCatModal()" style="font-size:0.76rem">Merge & Reassign</button>
     </div>
     <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:14px">
+      <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Merge Expense Lines</div>
+      <div class="csub" style="margin-bottom:10px">Combine two actual-expense lines within a category into one. Past transactions are updated too, across every month and device.</div>
+      ${(()=>{const c0=getAllCats()[0]||'';const lines=_payeeLinesForCat(c0);const lopts=lines.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('');return`
+      <div style="margin-bottom:8px"><label class="ilabel">Category</label><select class="sfield" id="pmerge-cat" style="font-size:0.75rem" onchange="_pmergeFillLines()">${getAllCats().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></div>
+      <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:6px;align-items:center;margin-bottom:8px">
+        <div><label class="ilabel">From (merged away)</label><select class="sfield" id="pmerge-from" style="font-size:0.75rem">${lopts}</select></div>
+        <div style="font-size:1rem;color:var(--text3);padding-top:18px">→</div>
+        <div><label class="ilabel">Into (kept)</label><select class="sfield" id="pmerge-into" style="font-size:0.75rem">${lopts}</select></div>
+      </div>`;})()}
+      <button class="btn btn-d btn-full" onclick="mergePayeeLines()" style="font-size:0.76rem">Merge Lines</button>
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:14px">
       <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Auto-Categorization Rules</div>
       <div class="csub" style="margin-bottom:10px">When an expense name contains the text below, its category is filled in automatically (first match wins, overrides the built-in suggestions). Applies everywhere, in both design modes.</div>
       ${getRules().map((r,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
@@ -7286,7 +7310,8 @@ function renderSettBudget(){
         <button class="btn btn-p btn-sm" onclick="addRule()">+ Add</button>
       </div>
     </div>`;
-  setTimeout(()=>{initNumInputs(document.getElementById('sett-budget'));},0);
+  setTimeout(()=>{initNumInputs(document.getElementById('sett-budget'));
+    const pi=document.getElementById('pmerge-into');if(pi&&pi.options.length>1)pi.selectedIndex=1;},0);
 }
 function copyLastBudget(){
   const prevM=S.expMonth===1?12:S.expMonth-1,prevY=S.expMonth===1?S.expYear-1:S.expYear;
@@ -7467,6 +7492,88 @@ function removePayeeLine(cat,payee,src){
   }
   renderPayeeLines();
   toast(`Removed "${payee}"`);
+}
+// ── Merge two expense lines (payees) within a category ─────────────────────
+function _payeeLinesForCat(c){
+  const removed=(S.customExpLines['__removed__']||{})[c]||[];
+  return [...new Set([...(CAT_LINES[c]||[]),...(S.customExpLines[c]||[])])].filter(p=>!removed.includes(p));
+}
+function _removeLineFromList(cat,payee){
+  if((CAT_LINES[cat]||[]).includes(payee)){
+    CAT_LINES[cat]=(CAT_LINES[cat]||[]).filter(p=>p!==payee);
+    S.customExpLines['__removed__']=S.customExpLines['__removed__']||{};
+    S.customExpLines['__removed__'][cat]=S.customExpLines['__removed__'][cat]||[];
+    if(!S.customExpLines['__removed__'][cat].includes(payee))S.customExpLines['__removed__'][cat].push(payee);
+  }
+  if(S.customExpLines[cat]) S.customExpLines[cat]=S.customExpLines[cat].filter(p=>p!==payee);
+}
+// Repopulate the From/Into line pickers when the category dropdown changes.
+function _pmergeFillLines(){
+  const cat=document.getElementById('pmerge-cat')?.value;
+  const lines=cat?_payeeLinesForCat(cat):[];
+  const opts=lines.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('');
+  const fromEl=document.getElementById('pmerge-from'),intoEl=document.getElementById('pmerge-into');
+  if(fromEl)fromEl.innerHTML=opts;
+  if(intoEl){intoEl.innerHTML=opts;if(lines.length>1)intoEl.selectedIndex=1;}
+}
+// Core of a payee merge: rewrite history, drop the old line, ensure the kept
+// line exists. Callable programmatically (bulk cleanups) as well as from the UI.
+function _mergePayeeCore(cat,from,into){
+  const updated=_rewritePayeeHistory(cat,from,into);
+  _removeLineFromList(cat,from);
+  if(!(CAT_LINES[cat]||[]).includes(into)&&!((S.customExpLines[cat]||[]).includes(into)))
+    (S.customExpLines[cat]=S.customExpLines[cat]||[]).push(into);
+  saveCustomLines();
+  return updated;
+}
+// Move every transaction with `payee` out of fromCat and into toCat, across all
+// months (local caches + Firestore) — the payee-scoped counterpart to the
+// whole-category merge. Also moves the payee's line into the target category.
+function movePayeeCategory(payee,fromCat,toCat){
+  let n=0;
+  Object.keys(localStorage).filter(k=>/^sw3_txns_/.test(k)).forEach(k=>{
+    let arr;try{arr=JSON.parse(localStorage.getItem(k));}catch(e){return;}
+    if(!Array.isArray(arr))return;
+    let changed=false;
+    arr.forEach(t=>{ if(t.category===fromCat&&t.payee===payee){ t.category=toCat; changed=true; n++; } });
+    if(changed) localStorage.setItem(k,JSON.stringify(arr));
+  });
+  if(Array.isArray(S.txns)) S.txns.forEach(t=>{ if(t.category===fromCat&&t.payee===payee) t.category=toCat; });
+  // Move the line definition across too
+  _removeLineFromList(fromCat,payee);
+  if(!(CAT_LINES[toCat]||[]).includes(payee)&&!((S.customExpLines[toCat]||[]).includes(payee)))
+    (S.customExpLines[toCat]=S.customExpLines[toCat]||[]).push(payee);
+  saveCustomLines();
+  if(db){
+    return db.collection('transactions').where('payee','==',payee).get().then(async snap=>{
+      const docs=snap.docs.filter(d=>d.data().category===fromCat);
+      for(let i=0;i<docs.length;i+=400){
+        const batch=db.batch();
+        docs.slice(i,i+400).forEach(d=>batch.update(d.ref,{category:toCat}));
+        await batch.commit();
+      }
+      return docs.length;
+    });
+  }
+  return Promise.resolve(n);
+}
+function mergePayeeLines(){
+  const cat=document.getElementById('pmerge-cat')?.value;
+  const from=document.getElementById('pmerge-from')?.value;
+  const into=document.getElementById('pmerge-into')?.value;
+  if(!cat||!from||!into){toast('Pick a category and two lines');return;}
+  if(from===into){toast('Pick two different lines to merge');return;}
+  let hist=0;
+  Object.keys(localStorage).filter(k=>/^sw3_txns_/.test(k)).forEach(k=>{
+    let a;try{a=JSON.parse(localStorage.getItem(k));}catch(e){return;}
+    if(Array.isArray(a)) hist+=a.filter(t=>t.category===cat&&t.payee===from).length;
+  });
+  if(!confirm(`Merge "${from}" into "${into}" in ${cat}${hist?` and update ${hist} past transaction${hist===1?'':'s'}`:''}?`))return;
+  const updated=_mergePayeeCore(cat,from,into);
+  renderSettBudget();
+  if(typeof renderExpenses==='function')renderExpenses();
+  if(typeof renderDashboard==='function')renderDashboard();
+  toast(updated?`Merged · ${updated} transaction${updated===1?'':'s'} updated`:`Merged "${from}" into "${into}"`);
 }
 function updateBudgetTotal(){
   const total=getAllCats().reduce((s,c)=>{const v=parseFloat(document.getElementById('b-'+ck(c))?.value)||0;return s+v;},0);
@@ -7956,7 +8063,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.12</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.12: Renaming an expense line (payee) now updates your past transactions too — across every month and on all devices — not just the dropdown. Renaming onto an existing line merges them. You're shown how many transactions will change before it happens.</div><div style="color:var(--text3);margin-top:4px">v4.4.11: History now lists the most recent month first. The Income tab has a new Interest card: Renmoney (cash) and Piggy (investment) show interest accruing this month, and when a month completes you can post that month's interest as income in one tap (confirm first) — it credits the account and appears in Income and History.</div><div style="color:var(--text3);margin-top:4px">v4.4.10: The emoji picker now has a "Type or pick any emoji" box — tap it and use your keyboard's emoji key to choose any emoji, not just the preset ones. Quick-pick grid is still there below.</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.12</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.12: Renaming an expense line (payee) now updates your past transactions too — across every month and on all devices — not just the dropdown. New "Merge Expense Lines" tool in Budget settings combines two lines in a category into one (pick From → Into). Either way you're shown how many transactions will change before it happens. Expense lines can also be moved between categories, and the expense-line sync no longer breaks when built-in lines have been removed.</div><div style="color:var(--text3);margin-top:4px">v4.4.11: History now lists the most recent month first. The Income tab has a new Interest card: Renmoney (cash) and Piggy (investment) show interest accruing this month, and when a month completes you can post that month's interest as income in one tap (confirm first) — it credits the account and appears in Income and History.</div><div style="color:var(--text3);margin-top:4px">v4.4.10: The emoji picker now has a "Type or pick any emoji" box — tap it and use your keyboard's emoji key to choose any emoji, not just the preset ones. Quick-pick grid is still there below.</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
