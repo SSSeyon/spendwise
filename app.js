@@ -5337,6 +5337,16 @@ function openInvAdjModal(pKey, subId, type){
   document.getElementById('inv-adj-amount').value='';
   document.getElementById('inv-adj-date').value=todayStr();
   document.getElementById('inv-adj-notes').value='';
+  // Source account applies to new money only — a gain/loss isn't funded from a
+  // bank. Optional: leaving it on "None" records the inflow without touching cash.
+  const srcWrap=document.getElementById('inv-adj-src-wrap');
+  const srcSel=document.getElementById('inv-adj-src');
+  if(srcWrap) srcWrap.style.display=(type==='inflow')?'block':'none';
+  if(srcSel){
+    // false → no built-in blank option; we supply our own "None" wording.
+    srcSel.innerHTML=`<option value="">— None / Don't deduct —</option>`+cashOptsWithBal(false);
+    srcSel.value='';
+  }
   openMod('inv-adj-modal');
   setTimeout(()=>initNumInputs(document.getElementById('inv-adj-modal')),50);
 }
@@ -5376,13 +5386,33 @@ async function applyInvAdjust(){
   cSet(CK.inv(m,y),invData);
   if(db) db.collection('investments').doc(sid(m,y)).set(invData,{merge:true}).catch(()=>{});
 
+  // Optional funding account (inflow only): move the money out of that account
+  // so the cash side stays honest, and log it like a Cash → Investment transfer
+  // (transfer record + accrual movement) so it shows in the platform's history.
+  let srcAcct='';
+  if(_adjType==='inflow'){
+    srcAcct=document.getElementById('inv-adj-src')?.value||'';
+    if(srcAcct){
+      const usdRate=getFxRates(m,y).USD||1600;
+      const posNGN=Math.abs(amtNGN);
+      // USD cash accounts hold raw dollars; NGN accounts hold naira.
+      const deduct=isUSDCashAccount(srcAcct)
+        ? (isUSD?Math.abs(amt):posNGN/usdRate)
+        : posNGN;
+      const d=new Date(date);const dm=d.getMonth()+1,dy=d.getFullYear();
+      _adjustCash(srcAcct,-deduct,dm,dy,'inv-inflow',_adjPKey);
+      _saveXfrRecord(srcAcct,_adjPKey,deduct,date,dm,dy,notes,posNGN,'cash-inv');
+      if(typeof addInvMovement==='function') addInvMovement(_adjPKey,posNGN,date,notes);
+    }
+  }
+
   const sign=amtNGN>=0?'+':'';
   const dispAmt=isUSD?`${sign}$${Math.abs(amt).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`:`${sign}₦${fNum(Math.abs(amtNGN))}`;
   const label=_adjType==='inflow'?'Inflow':amtNGN>=0?'Gain':'Loss';
   closeMod('inv-adj-modal');
-  toast(`${label}: ${dispAmt} applied`);
+  toast(`${label}: ${dispAmt} applied${srcAcct?' · '+srcAcct+' debited':''}`);
   haptic([8,40,8]);
-  renderInvestments();renderDashboard();
+  renderInvestments();renderDashboard();renderCashPage();
 }
 
 // ── Liquidation ───────────────────────────────────────────────────────────
@@ -8150,7 +8180,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.13</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.13: Loans and Debtors now group by lender/obligor. You can hold several separate loans from the same lender, or several debts from the same person, and record repayments against each one individually — every loan and debt keeps its own balance and payment history. "+ Add Debt" now creates a separate debt instead of adding to one running total.</div><div style="color:var(--text3);margin-top:4px">v4.4.12: Renaming an expense line (payee) now updates your past transactions too — across every month and on all devices — not just the dropdown. New "Merge Expense Lines" tool in Budget settings combines two lines in a category into one (pick From → Into). Either way you're shown how many transactions will change before it happens. Expense lines can also be moved between categories, and the expense-line sync no longer breaks when built-in lines have been removed.</div><div style="color:var(--text3);margin-top:4px">v4.4.11: History now lists the most recent month first. The Income tab has a new Interest card: Renmoney (cash) and Piggy (investment) show interest accruing this month, and when a month completes you can post that month's interest as income in one tap (confirm first) — it credits the account and appears in Income and History.</div><div style="color:var(--text3);margin-top:4px">v4.4.10: The emoji picker now has a "Type or pick any emoji" box — tap it and use your keyboard's emoji key to choose any emoji, not just the preset ones. Quick-pick grid is still there below.</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.14</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.14: Recording an investment Inflow now lets you optionally pick the account the money came from — it's then deducted from that account and shows in the platform's transfer history. Leave it on "None" to just record the inflow as before.</div><div style="color:var(--text3);margin-top:4px">v4.4.13: Loans and Debtors now group by lender/obligor. You can hold several separate loans from the same lender, or several debts from the same person, and record repayments against each one individually — every loan and debt keeps its own balance and payment history. "+ Add Debt" now creates a separate debt instead of adding to one running total.</div><div style="color:var(--text3);margin-top:4px">v4.4.12: Renaming an expense line (payee) now updates your past transactions too — across every month and on all devices — not just the dropdown. New "Merge Expense Lines" tool in Budget settings combines two lines in a category into one (pick From → Into). Either way you're shown how many transactions will change before it happens. Expense lines can also be moved between categories, and the expense-line sync no longer breaks when built-in lines have been removed.</div><div style="color:var(--text3);margin-top:4px">v4.4.11: History now lists the most recent month first. The Income tab has a new Interest card: Renmoney (cash) and Piggy (investment) show interest accruing this month, and when a month completes you can post that month's interest as income in one tap (confirm first) — it credits the account and appears in Income and History.</div><div style="color:var(--text3);margin-top:4px">v4.4.10: The emoji picker now has a "Type or pick any emoji" box — tap it and use your keyboard's emoji key to choose any emoji, not just the preset ones. Quick-pick grid is still there below.</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -9011,7 +9041,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.13';
+const APP_VERSION='v4.4.14';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
