@@ -380,6 +380,23 @@ function saveInvSubs(subs){cSet(INV_SUBS_KEY,subs);_syncInvConfig();}
 function getSubsForPlatform(pKey){return(getInvSubs()[pKey])||[];}
 function saveSubsForPlatform(pKey,arr){const s=getInvSubs();s[pKey]=arr;saveInvSubs(s);}
 
+// Sub principals (sw3_inv_subs) are a SINGLE LIVE SNAPSHOT — they are not
+// bucketed by month, so they only ever describe the real current month. They
+// are preferred there because the month's Firestore total can lag behind edits
+// made on the Accounts page. For any earlier month that preference is wrong:
+// the month's own investments doc is the authoritative record of what the
+// balances were then. Without this guard, viewing a past month showed today's
+// balances on the dashboard.
+function _invIsLiveMonth(m,y){const n=new Date();return m===(n.getMonth()+1)&&y===n.getFullYear();}
+function invBalanceFor(pKey,m,y,monthData){
+  if(_invIsLiveMonth(m,y)){
+    const subs=migrateToSubs(pKey);
+    const st=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
+    if(st>0) return st;
+  }
+  return Number((monthData||{})[pKey])||0;
+}
+
 // ── Sync all investment config to Firestore (debounced) ──────────────────
 let _invConfigSyncTimer=null;
 function _syncInvConfig(){
@@ -2012,20 +2029,13 @@ function renderDashboard(){
     const isFI=meta.assetClass==='fixed_income';
     if(isFI&&_nwCfg.includeFixedIncome===false) return s;
     if(!isFI&&_nwCfg.includeEquities===false) return s;
-    // Use sub principals (same source as accounts page) to avoid stale Firestore totals
-    const subs=getSubsForPlatform(p.key);
-    const bal=subs.length?subs.reduce((ss,sub)=>ss+(Number(sub.principal)||0),0):(S.investments[p.key]||0);
-    return s+bal;
+    return s+invBalanceFor(p.key,m,y,inv);
   },0):0;
   // Full portfolio total — ALL platforms, regardless of the Net Worth include
   // toggles. The Investments stat card always shows the complete figure (the
   // Net Worth number above is what honours the include config). Matches the
   // total shown by drillDown('investments').
-  const invTotalAll=PLATFORMS.reduce((s,p)=>{
-    const subs=getSubsForPlatform(p.key);
-    const bal=subs.length?subs.reduce((ss,sub)=>ss+(Number(sub.principal)||0),0):(S.investments[p.key]||0);
-    return s+bal;
-  },0);
+  const invTotalAll=PLATFORMS.reduce((s,p)=>s+invBalanceFor(p.key,m,y,inv),0);
   const debtNW=_nwCfg.includeDebtors!==false?S.debtors.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0):0;
   const loanNW=nwLoansOutstanding(_nwCfg);   // liability — subtracted
   const nw=invTotal+cashTotal+debtNW-loanNW;
@@ -2134,25 +2144,19 @@ function renderDashboard(){
 
   // Investments (collapsible card) — always use migrateToSubs so legacy flat data is picked up
   PLATFORMS=getPlatforms();
-  const dashInvTotal=PLATFORMS.reduce((s,p)=>{
-    const subs=migrateToSubs(p.key);
-    const subTotal=subs.reduce((ss,sb)=>ss+(Number(sb.principal)||0),0);
-    return s+(subTotal>0?subTotal:(inv[p.key]||0));
-  },0);
+  const dashInvTotal=PLATFORMS.reduce((s,p)=>s+invBalanceFor(p.key,m,y,inv),0);
   document.getElementById('dash-inv-total').innerHTML=dashInvTotal?maskIf('dash-inv-list',fmtCur(dashInvTotal,cur==='NATIVE'?'NGN':cur,m,y)):'—';
   const invEyeEl=document.getElementById('dash-inv-eye');
   if(invEyeEl) invEyeEl.innerHTML=eyeBtn('dash-inv-list','renderDashboard');
   document.getElementById('dash-inv').innerHTML=PLATFORMS.map(p=>{
-    const subs=migrateToSubs(p.key);
-    const subTotal=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
-    const val=subTotal>0?subTotal:(inv[p.key]||0);
+    const val=invBalanceFor(p.key,m,y,inv);
     const pct=dashInvTotal>0?((val/dashInvTotal)*100).toFixed(1):'0.0';
     const dispVal=fmtPlatformVal(val,p.key,cur,m,y);
     const badge=`<span style="font-size:0.56rem;padding:1px 4px;border-radius:3px;background:var(--bg3);color:var(--text3);margin-left:4px">${p.currency}</span>`;
     return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="drillDownInvPlatform('${p.key}')"><div style="display:flex;align-items:center;gap:8px">${platformLogoEl(p.key,p.color,22)}<div><div style="font-size:0.78rem;font-weight:600">${p.label}${badge}</div><div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono)">${pct}%</div></div></div><div style="font-family:var(--mono);font-size:0.84rem;color:${val?p.color:'var(--text3)'};">${val?maskIf('dash-inv-list',dispVal):'—'}</div></div>`;
   }).join('');
-  const active=PLATFORMS.filter(p=>{const subs=migrateToSubs(p.key);const st=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);return(st>0?st:(inv[p.key]||0))>0;});
-  document.getElementById('dash-abar').innerHTML=dashInvTotal&&active.length?active.map(p=>{const subs=migrateToSubs(p.key);const st=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);const val=st>0?st:(inv[p.key]||0);return`<div style="flex:${val};background:${p.color};opacity:0.8"></div>`;}).join(''):'';
+  const active=PLATFORMS.filter(p=>invBalanceFor(p.key,m,y,inv)>0);
+  document.getElementById('dash-abar').innerHTML=dashInvTotal&&active.length?active.map(p=>{const val=invBalanceFor(p.key,m,y,inv);return`<div style="flex:${val};background:${p.color};opacity:0.8"></div>`;}).join(''):'';
 
   // 6-Month Trend
   const recent=getHistory().slice(-6);
@@ -3143,9 +3147,7 @@ function _nwForMonth(m,y){
   const inv=cGet(CK.inv(m,y))||{};
   const cash=cGet(CK.cash(m,y))||{};
   const invT=PLATFORMS.reduce((s,p)=>{
-    const subs=(cGet('sw3_inv_subs')||{})[p.key];
-    const subTotal=Array.isArray(subs)?subs.reduce((ss,sb)=>ss+(Number(sb.principal)||0),0):0;
-    return s+(subTotal>0?subTotal:(inv[p.key]||0));
+    return s+invBalanceFor(p.key,m,y,inv);
   },0);
   const cashT=cashTotalNGN(cash,m,y);
   const _nwCfg=cGet('sw3_nw_config')||{};
@@ -8195,7 +8197,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.15</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.15: The Net Worth card in Settings now has a "Loans (outstanding)" toggle. Switch it on and what you still owe on your loans is subtracted from net worth, and itemised by lender in the Net Worth breakdown. Off by default, so your existing figures don't change until you enable it.</div><div style="color:var(--text3);margin-top:4px">v4.4.14: Recording an investment Inflow now lets you optionally pick the account the money came from — it's then deducted from that account and shows in the platform's transfer history. Leave it on "None" to just record the inflow as before.</div><div style="color:var(--text3);margin-top:4px">v4.4.13: Loans and Debtors now group by lender/obligor. You can hold several separate loans from the same lender, or several debts from the same person, and record repayments against each one individually — every loan and debt keeps its own balance and payment history. "+ Add Debt" now creates a separate debt instead of adding to one running total.</div><div style="color:var(--text3);margin-top:4px">v4.4.12: Renaming an expense line (payee) now updates your past transactions too — across every month and on all devices — not just the dropdown. New "Merge Expense Lines" tool in Budget settings combines two lines in a category into one (pick From → Into). Either way you're shown how many transactions will change before it happens. Expense lines can also be moved between categories, and the expense-line sync no longer breaks when built-in lines have been removed.</div><div style="color:var(--text3);margin-top:4px">v4.4.11: History now lists the most recent month first. The Income tab has a new Interest card: Renmoney (cash) and Piggy (investment) show interest accruing this month, and when a month completes you can post that month's interest as income in one tap (confirm first) — it credits the account and appears in Income and History.</div><div style="color:var(--text3);margin-top:4px">v4.4.10: The emoji picker now has a "Type or pick any emoji" box — tap it and use your keyboard's emoji key to choose any emoji, not just the preset ones. Quick-pick grid is still there below.</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.16</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.16: Fixed the dashboard Investments card showing today's balances when you switched to an earlier month — it now shows what each platform actually held in the month you're viewing. Same fix applied to net worth, the net-worth trend and the Investments/Net Worth breakdowns.</div><div style="color:var(--text3);margin-top:4px">v4.4.15: The Net Worth card in Settings now has a "Loans (outstanding)" toggle. Switch it on and what you still owe on your loans is subtracted from net worth, and itemised by lender in the Net Worth breakdown. Off by default, so your existing figures don't change until you enable it.</div><div style="color:var(--text3);margin-top:4px">v4.4.14: Recording an investment Inflow now lets you optionally pick the account the money came from — it's then deducted from that account and shows in the platform's transfer history. Leave it on "None" to just record the inflow as before.</div><div style="color:var(--text3);margin-top:4px">v4.4.13: Loans and Debtors now group by lender/obligor. You can hold several separate loans from the same lender, or several debts from the same person, and record repayments against each one individually — every loan and debt keeps its own balance and payment history. "+ Add Debt" now creates a separate debt instead of adding to one running total.</div><div style="color:var(--text3);margin-top:4px">v4.4.12: Renaming an expense line (payee) now updates your past transactions too — across every month and on all devices — not just the dropdown. New "Merge Expense Lines" tool in Budget settings combines two lines in a category into one (pick From → Into). Either way you're shown how many transactions will change before it happens. Expense lines can also be moved between categories, and the expense-line sync no longer breaks when built-in lines have been removed.</div><div style="color:var(--text3);margin-top:4px">v4.4.11: History now lists the most recent month first. The Income tab has a new Interest card: Renmoney (cash) and Piggy (investment) show interest accruing this month, and when a month completes you can post that month's interest as income in one tap (confirm first) — it credits the account and appears in Income and History.</div><div style="color:var(--text3);margin-top:4px">v4.4.10: The emoji picker now has a "Type or pick any emoji" box — tap it and use your keyboard's emoji key to choose any emoji, not just the preset ones. Quick-pick grid is still there below.</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8504,9 +8506,7 @@ function drillDown(type){
       const isFI=meta.assetClass==='fixed_income';
       if(isFI&&_nwCfg.includeFixedIncome===false) return s;
       if(!isFI&&_nwCfg.includeEquities===false) return s;
-      const subs=getSubsForPlatform(p.key);
-      const bal=subs.length?subs.reduce((ss,sub)=>ss+(Number(sub.principal)||0),0):(inv[p.key]||0);
-      return s+bal;
+      return s+invBalanceFor(p.key,m,y,inv);
     },0):0;
     const cashTotal=_nwAccts.reduce((s,b)=>{const v=cash[b]||0;return s+(isUSDCashAccount(b)?v*(_fxRNW.USD||1650):v);},0);
     const debtOwed=_nwCfg.includeDebtors!==false?S.debtors.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0):0;
@@ -8522,8 +8522,7 @@ function drillDown(type){
       if(visiblePlats.length){
         body+=`<div style="font-size:0.65rem;font-weight:700;color:var(--text3);text-transform:uppercase;padding:6px 0 4px">Investments</div>`;
         body+=visiblePlats.map(p=>{
-          const subs=getSubsForPlatform(p.key);
-          const bal=subs.length?subs.reduce((ss,sub)=>ss+(Number(sub.principal)||0),0):(inv[p.key]||0);
+          const bal=invBalanceFor(p.key,m,y,inv);
           return fmtRow(p.label+` <span style="font-size:0.58rem;color:var(--text3)">${p.currency}</span>`,fmtPlatformVal(bal,p.key,cur,m,y),p.color);
         }).join('');
       }
@@ -8577,10 +8576,9 @@ function drillDown(type){
   else if(type==='investments'){
     title=`Investments — ${MONTHS[m-1]} ${y}`;
     const inv=S.investments;
-    const total=PLATFORMS.reduce((s,p)=>{const subs=getSubsForPlatform(p.key);return s+(subs.length?subs.reduce((ss,sb)=>ss+(Number(sb.principal)||0),0):(inv[p.key]||0));},0);
+    const total=PLATFORMS.reduce((s,p)=>s+invBalanceFor(p.key,m,y,inv),0);
     body=PLATFORMS.map(p=>{
-      const subs=getSubsForPlatform(p.key);
-      const val=subs.length?subs.reduce((ss,sb)=>ss+(Number(sb.principal)||0),0):(inv[p.key]||0);
+      const val=invBalanceFor(p.key,m,y,inv);
       const pct=total>0?((val/total)*100).toFixed(1):'0.0';
       return`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="drillDownInvPlatform('${p.key}')"><span style="font-size:0.78rem;color:var(--text2)">${p.label} <span style="font-size:0.58rem;color:var(--text3)">${p.currency} · ${pct}%</span> <span style="font-size:0.6rem;color:var(--text3)">›</span></span><span style="font-family:var(--mono);font-size:0.82rem;color:${val?p.color:'var(--text3)'}">${val?fmtPlatformVal(val,p.key,cur,m,y):'—'}</span></div>`;
     }).join('');
@@ -9070,7 +9068,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.15';
+const APP_VERSION='v4.4.16';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
