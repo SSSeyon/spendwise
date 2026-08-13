@@ -5954,32 +5954,70 @@ function renderDebtors(){
   if(!_dstats||!_dlist) return; // elements only exist when Debtors tab is active
   _dstats.innerHTML=`<div class="card card-sm" style="margin-bottom:0"><div class="clabel">Total Loaned${eyeBtn('deb-loaned','renderDebtors')}</div><div class="cval-sm">${maskIf('deb-loaned',fmtCur(totalLoaned,cur,m,y))}</div></div><div class="card card-sm" style="margin-bottom:0"><div class="clabel">Expected Back${eyeBtn('deb-owed','renderDebtors')}</div><div class="cval-sm" style="color:var(--red)">${maskIf('deb-owed',fmtCur(totalOwed,cur,m,y))}</div></div>`;
   if(!dbs.length){_dlist.innerHTML='<div class="empty"><div class="empty-i">⊟</div>No debtors yet</div>';return;}
-  _dlist.innerHTML=dbs.map((d,idx)=>{
-    const expectRepay=d.expectRepayment!==false;
-    const pct=d.amount>0?((d.paid||0)/d.amount)*100:0;
-    const settled=pct>=100||!expectRepay;
-    const owedDisp=fmtCur(d.ngnBalance||0,cur,m,y);
-    return`<div class="dc" style="cursor:pointer;${settled&&expectRepay?'opacity:0.4':''}" onclick="drillDownDebtor('${d.id||idx}')">
-      <div class="dc-top">
-        <div><div class="dc-name">${esc(d.name)} <span style="font-size:0.62rem;color:var(--text3)">›</span></div><div class="dc-sub">${esc(d.category)} · ${d.currency} ${fNum(d.amount)}${d.date?' · '+fmtDate(d.date):''}</div></div>
-        <div class="badge ${!expectRepay?'bgold':settled?'bg':'br'}">${!expectRepay?'Write-off':settled?'Settled':owedDisp+' due'}</div>
+  // Each record is one debt; several debts can share an obligor, so group by
+  // name. A person with a single debt renders exactly as before.
+  const order=[],byName={};
+  dbs.forEach((d,idx)=>{
+    const k=String(d.name||'—').trim();
+    if(!byName[k]){byName[k]={name:k,items:[]};order.push(byName[k]);}
+    byName[k].items.push({d,idx});
+  });
+  _dlist.innerHTML=order.map(g=>g.items.length>1
+    ? _debGroupHTML(g,cur,m,y)
+    : _debCardHTML(g.items[0].d,g.items[0].idx,cur,m,y,false)).join('');
+}
+function _debGroupHTML(g,cur,m,y){
+  // "Active" = still expected back AND not yet fully repaid.
+  const live=g.items.filter(({d})=>d.expectRepayment!==false);
+  const active=live.filter(({d})=>(d.paid||0)<(d.amount||0));
+  const owed=live.reduce((s,{d})=>s+(d.ngnBalance||0),0);
+  const first=g.items[0].d;
+  return `<div class="dc" style="padding-bottom:10px">
+    <div class="dc-top" style="align-items:center">
+      <div><div class="dc-name">${esc(g.name)}</div>
+        <div class="dc-sub">${g.items.length} debts · ${active.length} active</div></div>
+      <div class="badge ${owed>0?'br':'bg'}">${owed>0?fmtCur(owed,cur,m,y)+' due':'All settled'}</div>
+    </div>
+    <div style="margin-top:8px;border-left:2px solid var(--border);padding-left:9px">
+      ${g.items.map(({d,idx})=>_debCardHTML(d,idx,cur,m,y,true)).join('')}
+    </div>
+    <button class="btn btn-g btn-sm" style="margin-top:9px" onclick="event.stopPropagation();openAddDebt('${first.id||g.items[0].idx}')">+ Add another debt for ${esc(g.name)}</button>
+  </div>`;
+}
+function _debCardHTML(d,idx,cur,m,y,inGroup){
+  const expectRepay=d.expectRepayment!==false;
+  const pct=d.amount>0?((d.paid||0)/d.amount)*100:0;
+  const settled=pct>=100||!expectRepay;
+  const owedDisp=fmtCur(d.ngnBalance||0,cur,m,y);
+  const rid=d.id||idx;
+  // Inside a group the obligor's name is already in the header, so each row
+  // leads with what distinguishes the individual debt instead.
+  const title=inGroup
+    ? `${esc(d.category||'Loan')} · ${d.currency} ${fNum(d.amount)}`
+    : `${esc(d.name)} <span style="font-size:0.62rem;color:var(--text3)">›</span>`;
+  const sub=inGroup
+    ? `${d.date?fmtDate(d.date):''}${d.notes?' · '+esc(d.notes):''}`
+    : `${esc(d.category)} · ${d.currency} ${fNum(d.amount)}${d.date?' · '+fmtDate(d.date):''}`;
+  return `<div class="${inGroup?'':'dc'}" style="cursor:pointer;${inGroup?'padding:7px 0;border-bottom:1px solid var(--border);':''}${settled&&expectRepay?'opacity:0.45':''}" onclick="drillDownDebtor('${rid}')">
+    <div class="dc-top">
+      <div><div class="${inGroup?'dc-sub':'dc-name'}" style="${inGroup?'font-weight:600;color:var(--text)':''}">${title}</div><div class="dc-sub">${sub}</div></div>
+      <div class="badge ${!expectRepay?'bgold':settled?'bg':'br'}">${!expectRepay?'Write-off':settled?'Settled':owedDisp+' due'}</div>
+    </div>
+    ${inGroup?'':`<div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
+      <div style="font-size:0.65rem;color:var(--text2)">Expecting repayment</div>
+      <div onclick="event.stopPropagation();toggleRepay('${rid}',${!expectRepay})" style="width:36px;height:20px;border-radius:10px;background:${expectRepay?'var(--accent)':'var(--border2)'};position:relative;cursor:pointer;transition:background 0.2s;flex-shrink:0">
+        <div style="position:absolute;top:2px;${expectRepay?'right:2px':'left:2px'};width:16px;height:16px;border-radius:50%;background:${expectRepay?'var(--bg)':'var(--text3)'};transition:all 0.2s"></div>
       </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:6px">
-        <div style="font-size:0.65rem;color:var(--text2)">Expecting repayment</div>
-        <div onclick="event.stopPropagation();toggleRepay('${d.id||idx}',${!expectRepay})" style="width:36px;height:20px;border-radius:10px;background:${expectRepay?'var(--accent)':'var(--border2)'};position:relative;cursor:pointer;transition:background 0.2s;flex-shrink:0">
-          <div style="position:absolute;top:2px;${expectRepay?'right:2px':'left:2px'};width:16px;height:16px;border-radius:50%;background:${expectRepay?'var(--bg)':'var(--text3)'};transition:all 0.2s"></div>
-        </div>
-      </div>
-      ${expectRepay&&!settled?`<div class="prog" style="margin-top:8px"><div class="pf ok" style="width:${Math.min(pct,100)}%"></div></div>`:''}
-      ${d.notes?`<div style="font-size:0.65rem;color:var(--text2);margin-top:5px">${esc(d.notes)}</div>`:''}
-      <div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">
-        ${expectRepay&&!settled?`<button class="btn btn-g btn-sm" onclick="event.stopPropagation();recordPmt('${d.id||idx}',${d.amount},${d.paid||0},${d.rate||DEF_RATES[d.currency]||1})">Record Payment</button>`:''}
-        <button class="btn btn-g btn-sm" onclick="event.stopPropagation();openAddDebt('${d.id||idx}')">+ Add Debt</button>
-        <button class="btn btn-g btn-sm" onclick="event.stopPropagation();openEditDeb('${d.id||idx}')">Edit</button>
-        <button class="btn btn-d btn-sm" onclick="event.stopPropagation();removeDeb('${d.id||idx}')">Remove</button>
-      </div>
-    </div>`;
-  }).join('');
+    </div>`}
+    ${expectRepay&&!settled?`<div class="prog" style="margin-top:8px"><div class="pf ok" style="width:${Math.min(pct,100)}%"></div></div>`:''}
+    ${!inGroup&&d.notes?`<div style="font-size:0.65rem;color:var(--text2);margin-top:5px">${esc(d.notes)}</div>`:''}
+    <div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">
+      ${expectRepay&&!settled?`<button class="btn btn-g btn-sm" onclick="event.stopPropagation();recordPmt('${rid}',${d.amount},${d.paid||0},${d.rate||DEF_RATES[d.currency]||1})">Record Payment</button>`:''}
+      ${inGroup?'':`<button class="btn btn-g btn-sm" onclick="event.stopPropagation();openAddDebt('${rid}')">+ Add Debt</button>`}
+      <button class="btn btn-g btn-sm" onclick="event.stopPropagation();openEditDeb('${rid}')">Edit</button>
+      <button class="btn btn-d btn-sm" onclick="event.stopPropagation();removeDeb('${rid}')">Remove</button>
+    </div>
+  </div>`;
 }
 async function toggleRepay(id,newVal){
   // Find by id, fall back to index for seed-imported debtors without a Firestore id
@@ -6096,14 +6134,20 @@ async function saveDebtor(){
   catch(e){toast('Error saving');setSyncStatus('error');}
   finally{S.saving=false;btn.textContent=document.getElementById('d-eid').value?'Update':'Add Debtor';btn.disabled=false;}
 }
-// ── ADD ADDITIONAL DEBT TO AN EXISTING DEBTOR ─────────────────────────────
+// ── ADD ANOTHER DEBT UNDER THE SAME OBLIGOR ───────────────────────────────
+// Each debt is its own record (one Firestore doc) so it carries its own
+// balance and payment log; the Debtors list groups records by name. This used
+// to fold the new amount into a single running total per person, which made
+// per-debt repayment tracking impossible.
 function openAddDebt(id){
   const d=S.debtors.find(x=>x.id===id);if(!d){toast('Debtor not found');return;}
   const cashOpts=cashOptsWithBal(true);
-  document.getElementById('drill-title').textContent='Add Debt — '+d.name;
+  const g=S.debtors.filter(x=>x.name===d.name);
+  const gOut=g.reduce((s,x)=>s+((x.amount||0)-(x.paid||0)),0);
+  document.getElementById('drill-title').textContent='New debt — '+d.name;
   document.getElementById('drill-body').innerHTML=`
-    <div class="csub" style="margin-bottom:10px">Current: ${d.currency} ${fNum(d.amount)} loaned · ${fNum((d.amount||0)-(d.paid||0))} outstanding</div>
-    <div class="ig"><label class="ilabel">Additional Amount (${d.currency})</label>
+    <div class="csub" style="margin-bottom:10px">${esc(d.name)} currently has ${g.length} debt${g.length===1?'':'s'} · ${d.currency} ${fNum(gOut)} outstanding. This adds a <strong>separate</strong> debt with its own payment tracking.</div>
+    <div class="ig"><label class="ilabel">Amount (${d.currency})</label>
       <input class="ifield" type="text" id="ad-amt" placeholder="0" style="font-size:1.1rem;font-family:var(--mono)"></div>
     <div class="ig"><label class="ilabel">Disburse from Account (optional)</label>
       <select class="sfield" id="ad-bank"><option value="">— Don't deduct —</option>${cashOpts}</select></div>
@@ -6111,26 +6155,29 @@ function openAddDebt(id){
       <input class="ifield" type="date" id="ad-date" value="${todayStr()}"></div>
     <div class="ig"><label class="ilabel">Note</label>
       <input class="ifield" type="text" id="ad-note" placeholder="Optional"></div>
-    <button class="btn btn-p btn-full" id="ad-save" onclick="_doAddDebt('${id}')">Add to Debt</button>`;
+    <button class="btn btn-p btn-full" id="ad-save" onclick="_doAddDebt('${id}')">Add debt</button>`;
   openMod('drill-modal');
   setTimeout(()=>initNumInputs(document.getElementById('drill-body')),80);
 }
 async function _doAddDebt(id){
   const d=S.debtors.find(x=>x.id===id);if(!d)return;
-  const add=parseFloat(document.getElementById('ad-amt')?.value);
+  const add=parseFloat(String(document.getElementById('ad-amt')?.value||'').replace(/,/g,''));
   if(!add||add<=0){toast('Enter a valid amount');return;}
   const bank=document.getElementById('ad-bank')?.value||'';
   const dDate=document.getElementById('ad-date')?.value||todayStr();
   const note=document.getElementById('ad-note')?.value||'';
   const rate=d.rate||DEF_RATES[d.currency]||1;
-  const newAmt=(d.amount||0)+add;
-  const newBal=newAmt-(d.paid||0);
-  const entry={date:dDate,amount:add,note,disbursedFrom:bank||null};
-  const log=[...(d.addLog||[]),entry];
   const btn=document.getElementById('ad-save');
   if(btn){btn.textContent='Saving…';btn.disabled=true;}
+  // A brand-new sibling record inheriting the obligor's name/currency/rate.
+  const data={name:d.name,currency:d.currency,amount:add,paid:0,balance:add,rate,
+    ngnBalance:add*rate,category:d.category||'Loan',notes:note,date:dDate,
+    expectRepayment:true,disbursedFrom:bank||''};
   try{
-    await db.collection('debtors').doc(id).update({amount:newAmt,balance:newBal,ngnBalance:newBal*rate,addLog:log,expectRepayment:true});
+    const newId=db.collection('debtors').doc().id;
+    await db.collection('debtors').doc(newId).set({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+    S.debtors=[{...data,id:newId},...(S.debtors||[])];
+    cSet(CK.debtors,S.debtors);
     if(bank){
       // Mirror the payment-credit currency rules, in the deduction direction
       const isUSDAcct=isUSDCashAccount(bank);
@@ -6138,14 +6185,14 @@ async function _doAddDebt(id){
       if(isUSDAcct) delta=(d.currency==='USD')?add:add/rate;
       else delta=(d.currency==='NGN'||!d.currency)?add:add*rate;
       const txD=new Date(dDate);const dm=txD.getMonth()+1,dy=txD.getFullYear();
-      _adjustCash(bank,-delta,dm,dy,'debt-add');
+      _adjustCash(bank,-delta,dm,dy,'debt-add',newId);
     }
     closeMod('drill-modal');
-    toast(`Debt increased by ${d.currency} ${fNum(add)}${bank?' · '+bank+' deducted':''}`);
+    toast(`New debt for ${d.name} · ${d.currency} ${fNum(add)}${bank?' · '+bank+' deducted':''}`);
     haptic([8,40,8]);
     await loadDebtors();renderDebtors();renderDashboard();
   }catch(e){toast('Error adding debt');}
-  finally{if(btn){btn.textContent='Add to Debt';btn.disabled=false;}}
+  finally{if(btn){btn.textContent='Add debt';btn.disabled=false;}}
 }
 async function recordPmt(id,amt,paid,rate){
   const d=S.debtors.find(x=>x.id===id);if(!d)return;
@@ -6458,7 +6505,43 @@ function renderLoans(){
     return (b.startDate||'')>(a.startDate||'')?1:-1;
   });
 
-  _llist.innerHTML=sorted.map(l=>{
+  // Several loans can share a lender, so group by lender name. A lender with a
+  // single loan renders exactly as before. Each loan keeps its own repayment
+  // log and "Record Repayment" button.
+  const order=[],byLender={};
+  sorted.forEach(l=>{
+    const k=String(l.lender||'—').trim();
+    if(!byLender[k]){byLender[k]={lender:k,items:[]};order.push(byLender[k]);}
+    byLender[k].items.push(l);
+  });
+  _llist.innerHTML=order.map(g=>{
+    if(g.items.length===1) return _loanCardHTML(g.items[0],cur,m,y,false);
+    const active=g.items.filter(l=>l.status!=='settled');
+    const out=active.reduce((s,l)=>s+Math.max(0,(l.amtNGN||l.amount||0)-(l.repaid||0)),0);
+    return `<div class="dc" style="padding-bottom:10px">
+      <div class="dc-top" style="align-items:center">
+        <div><div class="dc-name">${esc(g.lender)}</div>
+          <div class="dc-sub">${g.items.length} loans · ${active.length} active</div></div>
+        <div class="badge ${out>0?'br':'bg'}">${out>0?fmtCur(out,cur,m,y)+' left':'All settled'}</div>
+      </div>
+      <div style="margin-top:8px;border-left:2px solid var(--border);padding-left:9px">
+        ${g.items.map(l=>_loanCardHTML(l,cur,m,y,true)).join('')}
+      </div>
+      <button class="btn btn-g btn-sm" style="margin-top:9px" onclick="event.stopPropagation();openLoanModFor('${jsq(g.lender)}')">+ Add another loan from ${esc(g.lender)}</button>
+    </div>`;
+  }).join('');
+}
+// Prefill the Add Loan form with an existing lender so a second, separate loan
+// can be recorded under them (each loan keeps its own balance + repayments).
+function openLoanModFor(lender){
+  openLoanMod();
+  const el=document.getElementById('ln-lender');
+  if(el) el.value=lender;
+  const t=document.getElementById('loan-mod-title');
+  if(t) t.textContent='Add Loan — '+lender;
+}
+function _loanCardHTML(l,cur,m,y,inGroup){
+  {
     const principal=l.amtNGN||l.amount||0;
     const repaid=l.repaid||0;
     const outstanding=Math.max(0,principal-repaid);
@@ -6478,13 +6561,17 @@ function renderLoans(){
       const accrued=principal*(l.ratePA/100)*(days/365);
       if(accrued>0) accruedStr=`<div style="font-size:0.6rem;color:var(--gold);font-family:var(--mono);margin-top:3px">≈${fmtCur(accrued,cur,m,y)} interest accrued over ${days}d (estimate, not saved)</div>`;
     }
-    return`<div class="dc" style="cursor:pointer;${settled?'opacity:0.5':''}" onclick="drillDownLoan('${l.id}')">
+    // Inside a lender group the name sits in the header, so each row leads with
+    // what distinguishes the individual loan.
+    const head=inGroup
+      ? `<div class="dc-sub" style="font-weight:600;color:var(--text)">${esc(l.loanType||'Loan')} · ${l.currency} ${fNum(l.amount||0)}${rateStr}</div>
+         <div class="dc-sub">${l.startDate?fmtDate(l.startDate):''}${dueStr}${disbTo}</div>`
+      : `<div class="dc-name">${esc(l.lender)} <span style="font-size:0.62rem;color:var(--text3)">›</span></div>
+         <div class="dc-sub">${esc(l.loanType||'Loan')} · ${l.currency} ${fNum(l.amount||0)}${rateStr}${dueStr}</div>
+         <div class="dc-sub" style="margin-top:2px">${l.startDate?fmtDate(l.startDate):''}${disbTo}</div>`;
+    return`<div class="${inGroup?'':'dc'}" style="cursor:pointer;${inGroup?'padding:7px 0;border-bottom:1px solid var(--border);':''}${settled?'opacity:0.5':''}" onclick="drillDownLoan('${l.id}')">
       <div class="dc-top">
-        <div>
-          <div class="dc-name">${esc(l.lender)} <span style="font-size:0.62rem;color:var(--text3)">›</span></div>
-          <div class="dc-sub">${esc(l.loanType||'Loan')} · ${l.currency} ${fNum(l.amount||0)}${rateStr}${dueStr}</div>
-          <div class="dc-sub" style="margin-top:2px">${l.startDate?fmtDate(l.startDate):''}${disbTo}</div>
-        </div>
+        <div>${head}</div>
         <div class="badge ${settled?'bg':'br'}">${settled?'Settled':fmtCur(outstanding,cur,m,y)+' left'}</div>
       </div>
       ${!settled?`<div class="prog" style="margin-top:8px"><div class="pf ok" style="width:${pct.toFixed(1)}%"></div></div>
@@ -6495,7 +6582,7 @@ function renderLoans(){
         <button class="btn btn-g btn-sm" onclick="event.stopPropagation();openEditLoan('${l.id}')">Edit</button>
         <button class="btn btn-d btn-sm" onclick="event.stopPropagation();removeLoan('${l.id}')">Remove</button>
       </div></div>`
-  }).join('');
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -8063,7 +8150,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.12</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.12: Renaming an expense line (payee) now updates your past transactions too — across every month and on all devices — not just the dropdown. New "Merge Expense Lines" tool in Budget settings combines two lines in a category into one (pick From → Into). Either way you're shown how many transactions will change before it happens. Expense lines can also be moved between categories, and the expense-line sync no longer breaks when built-in lines have been removed.</div><div style="color:var(--text3);margin-top:4px">v4.4.11: History now lists the most recent month first. The Income tab has a new Interest card: Renmoney (cash) and Piggy (investment) show interest accruing this month, and when a month completes you can post that month's interest as income in one tap (confirm first) — it credits the account and appears in Income and History.</div><div style="color:var(--text3);margin-top:4px">v4.4.10: The emoji picker now has a "Type or pick any emoji" box — tap it and use your keyboard's emoji key to choose any emoji, not just the preset ones. Quick-pick grid is still there below.</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.13</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.13: Loans and Debtors now group by lender/obligor. You can hold several separate loans from the same lender, or several debts from the same person, and record repayments against each one individually — every loan and debt keeps its own balance and payment history. "+ Add Debt" now creates a separate debt instead of adding to one running total.</div><div style="color:var(--text3);margin-top:4px">v4.4.12: Renaming an expense line (payee) now updates your past transactions too — across every month and on all devices — not just the dropdown. New "Merge Expense Lines" tool in Budget settings combines two lines in a category into one (pick From → Into). Either way you're shown how many transactions will change before it happens. Expense lines can also be moved between categories, and the expense-line sync no longer breaks when built-in lines have been removed.</div><div style="color:var(--text3);margin-top:4px">v4.4.11: History now lists the most recent month first. The Income tab has a new Interest card: Renmoney (cash) and Piggy (investment) show interest accruing this month, and when a month completes you can post that month's interest as income in one tap (confirm first) — it credits the account and appears in Income and History.</div><div style="color:var(--text3);margin-top:4px">v4.4.10: The emoji picker now has a "Type or pick any emoji" box — tap it and use your keyboard's emoji key to choose any emoji, not just the preset ones. Quick-pick grid is still there below.</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8924,7 +9011,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.12';
+const APP_VERSION='v4.4.13';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
