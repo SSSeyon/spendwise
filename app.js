@@ -4296,10 +4296,13 @@ function _isCashDirty(m,y,bank){return !!_cashDirty[_cashDirtyKey(m,y,bank)];}
 // Also mirrored to Firestore (one doc per month, entries appended via
 // arrayUnion) so the drill-down ledger is visible on every device, not
 // just the one that made the change.
-function _logCashLedger(bank, delta, m, y, source, ref){
+// `dateStr` is the transaction's own date. It matters because these entries are
+// surfaced in the account history — stamping them with today's date would show
+// (and sort) them wrongly. Falls back to today when a caller doesn't pass one.
+function _logCashLedger(bank, delta, m, y, source, ref, dateStr){
   try{
     const key=`sw3_cash_ledger_${y}_${m}`;
-    const entry={ts:Date.now(),date:todayStr(),bank,delta:Math.round(delta*100)/100,source:source||'',ref:ref||''};
+    const entry={ts:Date.now(),date:dateStr||todayStr(),bank,delta:Math.round(delta*100)/100,source:source||'',ref:ref||''};
     const log=cGet(key)||[];
     log.push(entry);
     cSet(key, log.slice(-500)); // cap per month (local cache only)
@@ -4447,7 +4450,7 @@ async function _rippleCashForward(bank,delta,m,y){
   }catch(e){/* offline: local caches were not touched; queue nothing extra */}
 }
 
-function _adjustCash(bank, delta, m, y, source, ref){
+function _adjustCash(bank, delta, m, y, source, ref, dateStr){
   // delta: positive = add, negative = deduct
   if(!bank||!delta) return;
   // Update local state immediately for instant UI (single-device correctness).
@@ -4457,7 +4460,7 @@ function _adjustCash(bank, delta, m, y, source, ref){
   if(m===S.cashMonth&&y===S.cashYear) S.cash=base;
   if(m===S.dashMonth&&y===S.dashYear) S.cash=base;
   cSet(CK.cash(m,y),base);
-  _logCashLedger(bank, delta, m, y, source, ref);
+  _logCashLedger(bank, delta, m, y, source, ref, dateStr);
   // Firestore write is an ATOMIC field increment — commutes with concurrent
   // writes to other fields/devices, so balances can't clobber each other.
   // Seed the month doc first (create-if-missing from the prior closing
@@ -4635,7 +4638,7 @@ function postInterest(acctKey){
   else{hist.push({year:cy,month:cm,label:MS[cm-1]+" '"+String(cy).slice(2),income:totalInc,expenses:(cGet(CK.txns(cm,cy))||[]).reduce((s,t)=>s+(t.amount||0),0)});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
   cSet('sw3_history',hist);
   // Credit the account balance
-  if(acct.kind==='cash')_adjustCash(acct.name,pm.amount,cm,cy,'interest');
+  if(acct.kind==='cash')_adjustCash(acct.name,pm.amount,cm,cy,'interest','',dateStr);
   else _invDeposit(acct.pKey,pm.amount,cm,cy);
   // Record so this earned-month can't be posted twice
   const posts=getInterestPosts();posts[acctKey]=posts[acctKey]||{};
@@ -6232,7 +6235,7 @@ async function _doAddDebt(id){
       if(isUSDAcct) delta=(d.currency==='USD')?add:add/rate;
       else delta=(d.currency==='NGN'||!d.currency)?add:add*rate;
       const txD=new Date(dDate);const dm=txD.getMonth()+1,dy=txD.getFullYear();
-      _adjustCash(bank,-delta,dm,dy,'debt-add',newId);
+      _adjustCash(bank,-delta,dm,dy,'debt-add',newId,dDate);
     }
     closeMod('drill-modal');
     toast(`New debt for ${d.name} · ${d.currency} ${fNum(add)}${bank?' · '+bank+' deducted':''}`);
@@ -6283,12 +6286,10 @@ async function _doRecordPmt(id,amt,paid,rate){
         cashDelta=(d?.currency==='NGN'||!d?.currency)?pmt:pmt*rate;
       }
       const txD=new Date(pmtDate);const dm=txD.getMonth()+1,dy=txD.getFullYear();
-      const cashData={...(cGet(CK.cash(dm,dy))||S.cash)};
-      cashData[bankAcct]=(cashData[bankAcct]||0)+cashDelta;
-      if(dm===S.expMonth&&dy===S.expYear)S.cash=cashData;
-      cSet(CK.cash(dm,dy),cashData);
-      if(db)db.collection('cashBalances').doc(sid(dm,dy)).set({...cashData,month:dm,year:dy},{merge:true}).catch(()=>{});
-      renderCashPage();renderDashboard();
+      // Routed through _adjustCash (rather than writing the balance directly)
+      // so the credit is atomic, ripples into later months, and lands in the
+      // cash ledger — which is what makes it show up in the account's history.
+      _adjustCash(bankAcct,cashDelta,dm,dy,'debt-payment',id,pmtDate);
     }
     toast('Payment recorded'+(bankAcct?' · '+bankAcct+' credited':''));
     closeMod('drill-modal');
@@ -6504,7 +6505,7 @@ async function saveLoanRepayment(){
     if(deductAcct){
       const d=new Date(rpDate);
       const lm=d.getMonth()+1,ly=d.getFullYear();
-      _adjustCash(deductAcct, -amt, lm, ly, 'loan-repayment', id);
+      _adjustCash(deductAcct, -amt, lm, ly, 'loan-repayment', id, rpDate);
     }
     toast('Repayment recorded');haptic([8,40,8]);setSyncStatus('synced');
     closeMod('loan-repay-modal');
@@ -8197,7 +8198,7 @@ function renderSettData(){
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.16</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.16: Fixed the dashboard Investments card showing today's balances when you switched to an earlier month — it now shows what each platform actually held in the month you're viewing. Same fix applied to net worth, the net-worth trend and the Investments/Net Worth breakdowns.</div><div style="color:var(--text3);margin-top:4px">v4.4.15: The Net Worth card in Settings now has a "Loans (outstanding)" toggle. Switch it on and what you still owe on your loans is subtracted from net worth, and itemised by lender in the Net Worth breakdown. Off by default, so your existing figures don't change until you enable it.</div><div style="color:var(--text3);margin-top:4px">v4.4.14: Recording an investment Inflow now lets you optionally pick the account the money came from — it's then deducted from that account and shows in the platform's transfer history. Leave it on "None" to just record the inflow as before.</div><div style="color:var(--text3);margin-top:4px">v4.4.13: Loans and Debtors now group by lender/obligor. You can hold several separate loans from the same lender, or several debts from the same person, and record repayments against each one individually — every loan and debt keeps its own balance and payment history. "+ Add Debt" now creates a separate debt instead of adding to one running total.</div><div style="color:var(--text3);margin-top:4px">v4.4.12: Renaming an expense line (payee) now updates your past transactions too — across every month and on all devices — not just the dropdown. New "Merge Expense Lines" tool in Budget settings combines two lines in a category into one (pick From → Into). Either way you're shown how many transactions will change before it happens. Expense lines can also be moved between categories, and the expense-line sync no longer breaks when built-in lines have been removed.</div><div style="color:var(--text3);margin-top:4px">v4.4.11: History now lists the most recent month first. The Income tab has a new Interest card: Renmoney (cash) and Piggy (investment) show interest accruing this month, and when a month completes you can post that month's interest as income in one tap (confirm first) — it credits the account and appears in Income and History.</div><div style="color:var(--text3);margin-top:4px">v4.4.10: The emoji picker now has a "Type or pick any emoji" box — tap it and use your keyboard's emoji key to choose any emoji, not just the preset ones. Quick-pick grid is still there below.</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.17</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.17: Tapping an account now shows everything that touched it — expenses, income, transfers, plus loan, debt and interest movements that were previously invisible. Each row has a × to delete it and reverse its effect on the balance. Cross-currency transfers now show the converted amount in the receiving account's own currency.</div><div style="color:var(--text3);margin-top:4px">v4.4.16: Fixed the dashboard Investments card showing today's balances when you switched to an earlier month — it now shows what each platform actually held in the month you're viewing. Same fix applied to net worth, the net-worth trend and the Investments/Net Worth breakdowns.</div><div style="color:var(--text3);margin-top:4px">v4.4.15: The Net Worth card in Settings now has a "Loans (outstanding)" toggle. Switch it on and what you still owe on your loans is subtracted from net worth, and itemised by lender in the Net Worth breakdown. Off by default, so your existing figures don't change until you enable it.</div><div style="color:var(--text3);margin-top:4px">v4.4.14: Recording an investment Inflow now lets you optionally pick the account the money came from — it's then deducted from that account and shows in the platform's transfer history. Leave it on "None" to just record the inflow as before.</div><div style="color:var(--text3);margin-top:4px">v4.4.13: Loans and Debtors now group by lender/obligor. You can hold several separate loans from the same lender, or several debts from the same person, and record repayments against each one individually — every loan and debt keeps its own balance and payment history. "+ Add Debt" now creates a separate debt instead of adding to one running total.</div><div style="color:var(--text3);margin-top:4px">v4.4.12: Renaming an expense line (payee) now updates your past transactions too — across every month and on all devices — not just the dropdown. New "Merge Expense Lines" tool in Budget settings combines two lines in a category into one (pick From → Into). Either way you're shown how many transactions will change before it happens. Expense lines can also be moved between categories, and the expense-line sync no longer breaks when built-in lines have been removed.</div><div style="color:var(--text3);margin-top:4px">v4.4.11: History now lists the most recent month first. The Income tab has a new Interest card: Renmoney (cash) and Piggy (investment) show interest accruing this month, and when a month completes you can post that month's interest as income in one tap (confirm first) — it credits the account and appears in Income and History.</div><div style="color:var(--text3);margin-top:4px">v4.4.10: The emoji picker now has a "Type or pick any emoji" box — tap it and use your keyboard's emoji key to choose any emoji, not just the preset ones. Quick-pick grid is still there below.</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8610,56 +8611,116 @@ function drillDown(type){
 // ══════════════════════════════════════════════════════════════════════════
 // ACCOUNT TRANSACTION DRILLDOWN (bank account or investment platform)
 // ══════════════════════════════════════════════════════════════════════════
+// Labels for cash-ledger sources that have no richer record of their own
+// (debtor / loan / interest flows). Expenses, income and transfers are shown
+// from their own records instead, so they are deliberately absent here.
+const LEDGER_SRC_LABELS={
+  'debt-add':'Debt disbursed','debt-edit-adjust':'Debt edit adjustment',
+  'debt-payment':'Debt repayment received',
+  'loan-proceeds':'Loan received','loan-repayment':'Loan repayment',
+  'loan-edit-adjust':'Loan edit adjustment','interest':'Interest posted',
+};
 function drillDownAccount(bankName){
   const m=S.dashMonth,y=S.dashYear,cur=S.dashCurrency;
-  const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
-  // Gather expenses, income, and transfers tagged to this account, sorted newest-first
+  const isUSD=isUSDCashAccount(bankName);
+  // Everything on this account is stored in the account's own currency, so
+  // format in that currency rather than assuming naira.
+  const fmtAcct=v=>isUSD
+    ?(v<0?'-$':'$')+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})
+    :fmtCur(Math.abs(v),cur,m,y);
   const xfrs=cGet(CK.xfr(m,y))||[];
+  const mine=xfrs.filter(x=>x.from===bankName||x.to===bankName);
+  // Ledger entries cover flows with no record of their own. Skip any that a
+  // transfer record already represents (same day + same magnitude) so a single
+  // movement is never listed twice.
+  const seen=new Set(mine.map(x=>{
+    const v=x.from===bankName?x.amount:(x.toAmt!=null?x.toAmt:x.amount);
+    return x.date+'|'+Math.round(Math.abs(v));
+  }));
+  const ledger=(cGet(`sw3_cash_ledger_${y}_${m}`)||[])
+    .filter(e=>e.bank===bankName&&LEDGER_SRC_LABELS[e.source])
+    .filter(e=>!seen.has((e.date||'')+'|'+Math.round(Math.abs(e.delta))))
+    .map(e=>({...e,_type:'led'}));
   const txns=[
     ...S.txns.filter(t=>t.bank===bankName).map(t=>({...t,_type:'exp'})),
     ...S.income.filter(i=>i.bank===bankName).map(i=>({...i,_type:'inc'})),
-    ...xfrs.filter(x=>x.from===bankName||x.to===bankName).map(x=>({...x,_type:'xfr'}))
+    ...mine.map(x=>({...x,_type:'xfr'})),
+    ...ledger
   ].sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:txnTs(b.createdAt)-txnTs(a.createdAt));
 
   const bal=S.cash[bankName];
-  const balStr=bal!=null?(isUSDCashAccount(bankName)?` · $${bal.toFixed(2)}`:`  · ${fN(Math.round(bal))}`):'' ;
+  const balStr=bal!=null?(isUSD?` · $${bal.toFixed(2)}`:`  · ${fN(Math.round(bal))}`):'' ;
   document.getElementById('drill-title').innerHTML=`${esc(bankName)}${balStr}`;
 
   if(!txns.length){
     document.getElementById('drill-body').innerHTML='<div style="color:var(--text3);padding:12px 0">No transactions for this account this month.</div>';
     openMod('drill-modal');return;
   }
+  const delBtn=fn=>`<button class="txi-del" title="Delete and reverse the balance change" onclick="event.stopPropagation();${fn}">×</button>`;
+  const row=(title,meta,amtHtml,cls,btn)=>`<div class="txi" style="padding:7px 0;border-bottom:1px solid var(--border)">
+      <div style="min-width:0;flex:1"><div class="txi-cat">${title}</div><div class="txi-meta">${meta}</div></div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:10px">
+        <div class="txi-amt ${cls}" style="white-space:nowrap">${amtHtml}</div>${btn||''}
+      </div>
+    </div>`;
 
   document.getElementById('drill-body').innerHTML='<div class="txlist">'+txns.map(tx=>{
     const isInc=tx._type==='inc';
-    const isXfr=tx._type==='xfr';
-    if(isXfr){
+    if(tx._type==='xfr'){
       const isOut=tx.from===bankName;
       const counterpart=isOut?tx.to:tx.from;
-      const amt=`${isOut?'−':'+'}${fmtCur(tx.amount,cur,m,y)}`;
+      // Show THIS account's side: the receiving account gets toAmt (already
+      // FX-converted on save), not the sending account's amount.
+      const val=isOut?tx.amount:(tx.toAmt!=null?tx.toAmt:tx.amount);
       const badge=`<span style="font-size:0.55rem;font-weight:700;color:var(--gold);background:rgba(250,204,21,0.12);border-radius:3px;padding:1px 4px;margin-left:4px">XFR</span>`;
-      return`<div class="txi" style="padding:7px 0;border-bottom:1px solid var(--border)">
-        <div style="min-width:0;flex:1">
-          <div class="txi-cat">${isOut?'Transfer out':'Transfer in'}${badge}</div>
-          <div class="txi-meta">${fmtDate(tx.date)} · ${isOut?'→ ':'← '}${esc(counterpart)}${tx.notes?' · '+esc(tx.notes):''}</div>
-        </div>
-        <div class="txi-amt ${isOut?'txi-exp':'txi-inc'}" style="white-space:nowrap;margin-left:10px">${amt}</div>
-      </div>`;
+      const other=isOut
+        ?(tx.toAmt!=null&&tx.toAmt!==tx.amount?` (→ ${_xfrAmtDisp(tx.to,tx.toAmt)})`:'')
+        :(tx.amount!==val?` (from ${_xfrAmtDisp(tx.from,tx.amount)})`:'');
+      return row(`${isOut?'Transfer out':'Transfer in'}${badge}`,
+        `${fmtDate(tx.date)} · ${isOut?'→ ':'← '}${esc(_xfrSideLabel(counterpart))}${other}${tx.notes?' · '+esc(tx.notes):''}`,
+        `${isOut?'−':'+'}${fmtAcct(val)}`, isOut?'txi-exp':'txi-inc',
+        delBtn(`reverseTransferFromAccount('${jsq(tx.id)}','${jsq(bankName)}')`));
+    }
+    if(tx._type==='led'){
+      const inflow=tx.delta>0;
+      return row(`${LEDGER_SRC_LABELS[tx.source]||tx.source}<span style="font-size:0.55rem;font-weight:700;color:var(--text3);background:var(--bg3);border-radius:3px;padding:1px 4px;margin-left:4px">AUTO</span>`,
+        `${fmtDate(tx.date)}`,
+        `${inflow?'+':'−'}${fmtAcct(tx.delta)}`, inflow?'txi-inc':'txi-exp',
+        `<span style="font-size:0.55rem;color:var(--text3);white-space:nowrap" title="Delete this from the Loans or Debtors page">via record</span>`);
     }
     const icon=tx.category?(CAT_ICONS[tx.category]||''):'';
     const cat=tx.category||(isInc?'Income':'—');
     const sub=isInc?(tx.notes||''):(tx.payee&&tx.payee!==cat?esc(tx.payee):'')+(tx.notes?` · ${esc(tx.notes)}`:'');
-    const amt=`${isInc?'+':'−'}${fmtCur(tx.amount,cur,m,y)}`;
+    const amt=`${isInc?'+':'−'}${fmtAcct(tx.amount)}`;
     const badge=isInc?`<span style="font-size:0.55rem;font-weight:700;color:var(--accent);background:rgba(52,211,153,0.12);border-radius:3px;padding:1px 4px;margin-left:4px">INC</span>`:'';
     return`<div class="txi" style="padding:7px 0;border-bottom:1px solid var(--border)">
       <div style="min-width:0;flex:1">
         <div class="txi-cat">${icon?icon+'\u00a0':''}${esc(cat)}${badge}</div>
         <div class="txi-meta">${fmtDate(tx.date)}${sub?' · '+sub:''}</div>
       </div>
-      <div class="txi-amt ${isInc?'txi-inc':'txi-exp'}" style="white-space:nowrap;margin-left:10px">${amt}</div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:10px">
+        <div class="txi-amt ${isInc?'txi-inc':'txi-exp'}" style="white-space:nowrap">${amt}</div>
+        ${delBtn(`deleteFromAccount('${isInc?'inc':'exp'}','${jsq(tx.id)}','${jsq(bankName)}')`)}
+      </div>
     </div>`;
-  }).join('')+'</div>';
+  }).join('')+'</div>'
+    +`<div class="csub" style="margin-top:8px">Deleting reverses the balance change on this account. Rows marked AUTO come from a loan, debt or interest record — delete those from their own page.</div>`;
   openMod('drill-modal');
+}
+// Delete an expense/income straight from the account view. delExpense and
+// delIncome already restore the account balance, so this just re-opens the
+// drill-down on the refreshed data.
+function deleteFromAccount(kind,id,bankName){
+  const rec=kind==='inc'?S.income.find(i=>i.id===id):S.txns.find(t=>t.id===id);
+  if(!rec){toast('Not found');return;}
+  const label=kind==='inc'?(rec.category||'income'):(rec.payee||rec.category||'expense');
+  if(!confirm(`Delete "${label}"?\n\n${bankName} will be adjusted back by this amount.`))return;
+  if(kind==='inc') delIncome(id); else delExpense(id);
+  setTimeout(()=>{try{drillDownAccount(bankName);}catch(e){}},350);
+}
+async function reverseTransferFromAccount(recId,bankName){
+  await reverseTransfer(recId);   // confirms, restores both sides, drops the record
+  setTimeout(()=>{try{drillDownAccount(bankName);}catch(e){}},350);
 }
 
 function drillDownInvPlatform(pKey){
@@ -9068,7 +9129,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.16';
+const APP_VERSION='v4.4.17';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
