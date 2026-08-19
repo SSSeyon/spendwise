@@ -335,6 +335,19 @@ async function loadNWConfig(){
 // worth (the mirror of debtors, which are money owed to you). Opt-in via
 // `includeLoans === true`: an absent key means off, so turning this on never
 // silently rewrites an existing net-worth history.
+// Debtors that count toward net worth: still expected back AND with a positive
+// balance. Settled, zero and overpaid (negative) balances are excluded, and
+// several debts owed by the same person are summed into a single row.
+function nwDebtorRows(){
+  const byName={},order=[];
+  (S.debtors||[]).filter(d=>d.expectRepayment!==false&&(d.ngnBalance||0)>0).forEach(d=>{
+    const k=String(d.name||'-').trim();
+    if(byName[k]==null){byName[k]=0;order.push(k);}
+    byName[k]+=(d.ngnBalance||0);
+  });
+  return order.map(n=>({name:n,total:byName[n]}));
+}
+function nwDebtorsExpected(){return nwDebtorRows().reduce((s,r)=>s+r.total,0);}
 function nwLoansOutstanding(cfg){
   const c=cfg||getNWConfig();
   if(c.includeLoans!==true) return 0;
@@ -2036,7 +2049,7 @@ function renderDashboard(){
   // Net Worth number above is what honours the include config). Matches the
   // total shown by drillDown('investments').
   const invTotalAll=PLATFORMS.reduce((s,p)=>s+invBalanceFor(p.key,m,y,inv),0);
-  const debtNW=_nwCfg.includeDebtors!==false?S.debtors.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0):0;
+  const debtNW=_nwCfg.includeDebtors!==false?nwDebtorsExpected():0;
   const loanNW=nwLoansOutstanding(_nwCfg);   // liability — subtracted
   const nw=invTotal+cashTotal+debtNW-loanNW;
   const _nwParts=[_nwCfg.includeInvestments!==false?'Investments':null,_nwAccts.length?'Cash':null,_nwCfg.includeDebtors!==false&&debtNW?'Debtors':null].filter(Boolean);
@@ -3151,7 +3164,7 @@ function _nwForMonth(m,y){
   },0);
   const cashT=cashTotalNGN(cash,m,y);
   const _nwCfg=cGet('sw3_nw_config')||{};
-  const debtT=_nwCfg.includeDebtors!==false?S.debtors.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0):0;
+  const debtT=_nwCfg.includeDebtors!==false?nwDebtorsExpected():0;
   // Loans, like debtors, aren't month-bucketed — the live outstanding balance
   // is applied to every point on the trend.
   return invT+cashT+debtT-nwLoansOutstanding(_nwCfg);
@@ -8196,9 +8209,11 @@ function renderSettData(){
   const ls=cGet(CK.lastSync);
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
+  // App Info shows ONLY the current release note — replace the single v-entry
+  // below on each release rather than prepending to a running changelog.
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.17</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.17: Tapping an account now shows everything that touched it — expenses, income, transfers, plus loan, debt and interest movements that were previously invisible. Each row has a × to delete it and reverse its effect on the balance. Cross-currency transfers now show the converted amount in the receiving account's own currency.</div><div style="color:var(--text3);margin-top:4px">v4.4.16: Fixed the dashboard Investments card showing today's balances when you switched to an earlier month — it now shows what each platform actually held in the month you're viewing. Same fix applied to net worth, the net-worth trend and the Investments/Net Worth breakdowns.</div><div style="color:var(--text3);margin-top:4px">v4.4.15: The Net Worth card in Settings now has a "Loans (outstanding)" toggle. Switch it on and what you still owe on your loans is subtracted from net worth, and itemised by lender in the Net Worth breakdown. Off by default, so your existing figures don't change until you enable it.</div><div style="color:var(--text3);margin-top:4px">v4.4.14: Recording an investment Inflow now lets you optionally pick the account the money came from — it's then deducted from that account and shows in the platform's transfer history. Leave it on "None" to just record the inflow as before.</div><div style="color:var(--text3);margin-top:4px">v4.4.13: Loans and Debtors now group by lender/obligor. You can hold several separate loans from the same lender, or several debts from the same person, and record repayments against each one individually — every loan and debt keeps its own balance and payment history. "+ Add Debt" now creates a separate debt instead of adding to one running total.</div><div style="color:var(--text3);margin-top:4px">v4.4.12: Renaming an expense line (payee) now updates your past transactions too — across every month and on all devices — not just the dropdown. New "Merge Expense Lines" tool in Budget settings combines two lines in a category into one (pick From → Into). Either way you're shown how many transactions will change before it happens. Expense lines can also be moved between categories, and the expense-line sync no longer breaks when built-in lines have been removed.</div><div style="color:var(--text3);margin-top:4px">v4.4.11: History now lists the most recent month first. The Income tab has a new Interest card: Renmoney (cash) and Piggy (investment) show interest accruing this month, and when a month completes you can post that month's interest as income in one tap (confirm first) — it credits the account and appears in Income and History.</div><div style="color:var(--text3);margin-top:4px">v4.4.10: The emoji picker now has a "Type or pick any emoji" box — tap it and use your keyboard's emoji key to choose any emoji, not just the preset ones. Quick-pick grid is still there below.</div><div style="color:var(--text3);margin-top:4px">v4.4.9: The "actual expense" lines you add under a budget category now save to Firebase, so they follow you across devices and no longer have to be re-added each month.</div><div style="color:var(--text3);margin-top:4px">v4.4.8: Tapping a notification on your phone now opens SpendWise (focuses it if already open) instead of doing nothing.</div><div style="color:var(--text3);margin-top:4px">v4.4.7: Special Budget now waits for a Save button before anything syncs (no more auto-saving as you type); travellers and nights are dropdowns; each line item can hold saved cost options (e.g. several airlines or hotels) you switch between to see the impact live. Also fixed a long-standing bug where the cursor landed in the wrong spot when tapping into amount fields anywhere in the app.</div><div style="color:var(--text3);margin-top:4px">v4.4.6: New "Special Budget" tab under Expenses — build standalone budgets for a trip or event, switch each between ₦/$/£, auto-total line items (× travellers / × nights) with a contingency %, and duplicate a budget to compare scenarios (e.g. two airlines) side by side.</div><div style="color:var(--text3);margin-top:4px">v4.4.5: AI Analyst upgraded to Gemini 3.6 Flash (with 3.5 → 2.5 → 2.0 fallback), every AI reply now shows which model wrote it, the chat box grows and wraps as you type, and you can now share a conversation via WhatsApp.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.18</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.18: App Info now shows only the current release note. In the Net Worth breakdown, Debtors are summed per person instead of listing each debt separately, and settled, zero or overpaid balances are left out.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8510,7 +8525,7 @@ function drillDown(type){
       return s+invBalanceFor(p.key,m,y,inv);
     },0):0;
     const cashTotal=_nwAccts.reduce((s,b)=>{const v=cash[b]||0;return s+(isUSDCashAccount(b)?v*(_fxRNW.USD||1650):v);},0);
-    const debtOwed=_nwCfg.includeDebtors!==false?S.debtors.filter(d=>d.expectRepayment!==false).reduce((s,d)=>s+(d.ngnBalance||0),0):0;
+    const debtOwed=_nwCfg.includeDebtors!==false?nwDebtorsExpected():0;
     body='';
     if(_nwCfg.includeInvestments!==false){
       const visiblePlats=PLATFORMS.filter(p=>{
@@ -8544,7 +8559,7 @@ function drillDown(type){
     }
     if(debtOwed){
       body+=`<div style="font-size:0.65rem;font-weight:700;color:var(--text3);text-transform:uppercase;padding:10px 0 4px">Debtors (expected)</div>`;
-      body+=S.debtors.filter(d=>d.expectRepayment!==false).map(d=>fmtRow(d.name,fmtCur(d.ngnBalance||0,cur,m,y),'var(--gold)')).join('');
+      body+=nwDebtorRows().map(r=>fmtRow(esc(r.name),fmtCur(r.total,cur,m,y),"var(--gold)")).join("");
     }
     const loanOwed=nwLoansOutstanding(_nwCfg);
     if(loanOwed){
@@ -9129,7 +9144,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.17';
+const APP_VERSION='v4.4.18';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
