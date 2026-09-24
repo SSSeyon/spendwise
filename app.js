@@ -8346,7 +8346,7 @@ function renderSettData(){
   // below on each release rather than prepending to a running changelog.
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.21</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.21: The Investments page now shows the balances each platform actually held in the month you're viewing, and is read-only for past months so you can't overwrite today's figures. Closed platforms no longer disappear from your history.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.22</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.22: The AI Analyst now runs on the newest Gemini Flash automatically, and can draw a chart in its replies when the numbers read better as a picture. The badge shows which model actually answered.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -9277,7 +9277,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.21';
+const APP_VERSION='v4.4.22';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
@@ -9759,8 +9759,123 @@ async function execMergeCat(){
 var AI_KEY_LS='sw3_gemini_key', AI_CHAT_LS='sw3_ai_chat', AI_MODEL_LS='sw3_gemini_model';
 var AI_CHATS_LS='sw3_ai_chats', AI_ACTIVE_LS='sw3_ai_active';
 var AI_KEYS_LS='sw3_gemini_keys', AI_ACTIVE_KEY_LS='sw3_gemini_active_key';
-// Tried in order until one answers; the winner is remembered per device.
-var AI_MODELS=['gemini-3.6-flash','gemini-3.5-flash','gemini-2.5-flash','gemini-2.0-flash'];
+// Tried in order until one answers. gemini-flash-latest is Google's
+// hot-swapped alias: it tracks the newest GA Flash without a code change, so
+// this list does not need editing when the next model ships. The pinned ids
+// below it are the fallback chain (newest first) for keys or regions where the
+// alias is not served, and for when the alias itself is mid-swap.
+var AI_MODELS=['gemini-flash-latest','gemini-3.8-flash','gemini-3.7-flash','gemini-3.6-flash','gemini-3.5-flash'];
+// "gemini-flash-latest".replace('gemini-','Gemini ') reads as "Gemini
+// flash-latest", so format deliberately.
+function _aiModelLabel(id){
+  if(!id) return '';
+  if(id==='gemini-flash-latest') return 'Gemini Flash (latest)';
+  const m=/^gemini-([\d.]+)-(.+)$/.exec(id);
+  return m?`Gemini ${m[1]} ${m[2].charAt(0).toUpperCase()+m[2].slice(1)}`:id;
+}
+
+// ── AI-generated charts ────────────────────────────────────────────────────
+// The model may emit one ```spendwise-chart fenced block per reply holding a
+// small, strict JSON spec. _aiMd turns it into a <canvas>; _aiMountCharts then
+// instantiates Chart.js against it after the HTML is in the DOM.
+//
+// The schema is deliberately NOT Chart.js-shaped (series/name/data, not
+// datasets): given "datasets" the model helpfully emits a full Chart.js config
+// with colours and nested options, which defeats theming and widens the parse
+// surface. Colours come from CSS vars so charts follow light/dark and
+// Classic/Monarch.
+var _aiCharts={};      // canvasId -> Chart instance currently on screen
+var _aiChartQueue=[];  // {id,spec} produced during _aiMd, drained on mount
+
+function _aiDestroyCharts(){
+  for(const k in _aiCharts){try{_aiCharts[k].destroy();}catch(e){}}
+  _aiCharts={};
+}
+// Returns a normalised spec or null. NEVER throws - a hallucinated chart must
+// not break the reply around it.
+function _aiChartValidate(raw){
+  if(!raw||typeof raw!=='object') return null;
+  let type=String(raw.type||'').toLowerCase();
+  if(type==='pie') type='doughnut';                     // the model reaches for "pie"
+  if(['bar','line','doughnut'].indexOf(type)<0) return null;
+  const labels=Array.isArray(raw.labels)?raw.labels.map(l=>String(l)):null;
+  if(!labels||!labels.length||labels.length>24) return null;
+  let series=Array.isArray(raw.series)?raw.series:null;
+  if(!series||!series.length||series.length>3) return null;
+  if(type==='doughnut') series=series.slice(0,1);       // one ring only
+  const out=[];
+  for(const s of series){
+    if(!s||!Array.isArray(s.data)) return null;
+    const data=s.data.map(v=>Number(v));
+    if(data.length!==labels.length) return null;
+    if(data.some(v=>!isFinite(v))) return null;
+    out.push({name:String(s.name||''),data});
+  }
+  return {type,title:String(raw.title||''),labels,series:out,stacked:type==='bar'&&raw.stacked===true};
+}
+// Same CSS-var approach the cash-flow chart uses, so charts match the theme.
+function _aiChartTheme(){
+  const cs=getComputedStyle(document.body), v=n=>(cs.getPropertyValue(n)||'').trim();
+  const mon=(typeof isMonarch==='function')&&isMonarch();
+  return {
+    tick:v('--text3')||'#888',
+    grid:v('--border')||'#333',
+    palette: mon
+      ? ['#2f8f6f','#d97862','#c98a4b','#6b93b0','#b0779c','#9a998f']
+      : [v('--accent')||'#14b8a6', v('--blue')||'#60a5fa', v('--gold')||'#fbbf24',
+         v('--red')||'#f87171', '#c084fc', '#94a3b8'],
+  };
+}
+function _aiChartHtml(rawJson,key,n){
+  let spec=null;
+  try{ spec=_aiChartValidate(JSON.parse(rawJson)); }
+  catch(err){ console.warn('AI chart JSON rejected',err); }
+  if(!spec) return '<div class="ai-chartfail">Chart unavailable</div>';
+  const id='ai-cht-'+String(key).replace(/[^A-Za-z0-9_-]/g,'')+'-'+n;
+  _aiChartQueue.push({id,spec});
+  return `<div class="ai-chart">${spec.title?`<div class="ai-chart-t">${esc(spec.title)}</div>`:''}<div class="ai-chart-c"><canvas id="${id}"></canvas></div></div>`;
+}
+function _aiMountCharts(){
+  if(typeof Chart==='undefined'){_aiChartQueue=[];return;}
+  const th=_aiChartTheme();
+  const q=_aiChartQueue; _aiChartQueue=[];
+  q.forEach(({id,spec})=>{
+    const cv=document.getElementById(id);
+    if(!cv) return;
+    try{
+      const single=spec.series.length===1;
+      const datasets=spec.series.map((s,i)=>spec.type==='doughnut'
+        ? {data:s.data,backgroundColor:spec.labels.map((_,j)=>th.palette[j%th.palette.length]),borderWidth:0}
+        : {label:s.name||undefined,data:s.data,
+           backgroundColor:spec.type==='line'?'transparent':th.palette[i%th.palette.length],
+           borderColor:th.palette[i%th.palette.length],borderWidth:spec.type==='line'?2:0,
+           borderRadius:spec.type==='bar'?3:0,tension:0.3,pointRadius:spec.type==='line'?3:0});
+      _aiCharts[id]=new Chart(cv.getContext('2d'),{
+        type:spec.type,
+        data:{labels:spec.labels,datasets},
+        options:{
+          responsive:true,maintainAspectRatio:false,
+          plugins:{
+            legend:{display:spec.type==='doughnut'||!single,
+              labels:{color:th.tick,boxWidth:10,font:{size:9}}},
+            tooltip:{callbacks:{label:c=>{
+              const val=spec.type==='doughnut'?c.parsed:c.parsed.y;
+              return (c.dataset.label?c.dataset.label+': ':'')+fmtChartNGN(Number(val)||0);
+            }}}
+          },
+          scales:spec.type==='doughnut'?{}:{
+            x:{stacked:spec.stacked,grid:{display:false},ticks:{color:th.tick,font:{size:9}},border:{display:false}},
+            y:{stacked:spec.stacked,grid:{color:th.grid},ticks:{color:th.tick,font:{size:9},callback:v=>fmtChartNGN(v)},border:{display:false}}
+          }
+        }
+      });
+    }catch(e){
+      console.warn('AI chart render failed',id,e);
+      const w=cv.closest('.ai-chart');
+      if(w) w.outerHTML='<div class="ai-chartfail">Chart unavailable</div>';
+    }
+  });
+}
 var _aiCtx=null,_aiCtxAt=0,_aiBusy=false;
 // True while composing a brand-new, not-yet-sent conversation (device-local).
 var _aiNewMode=false;
@@ -9973,6 +10088,11 @@ async function loadAiChats(){
 
 function renderProjAI(){
   const el=document.getElementById('proj-ai');if(!el)return;
+  // MANDATORY before any innerHTML rebuild: canvas ids are deterministic, and
+  // Chart.js throws "Canvas is already in use" if an id is reused against a
+  // detached canvas. Both this function and the aiChats snapshot listener
+  // rebuild the pane, and both come through here.
+  _aiDestroyCharts(); _aiChartQueue=[];
   if(!Array.isArray(AI_MODELS))return; // init-time call lands before module vars are assigned; projTab re-renders on open
   if(!_aiKey()){
     el.innerHTML=`<div class="card">
@@ -9986,10 +10106,13 @@ function renderProjAI(){
   const chats=_aiChats();
   const active=_aiResolveActive();          // null while composing a new chat
   const list=active?active.msgs:[];
-  const msgs=list.map(m=>
+  // Chart canvas ids must be deterministic per (chat, message) so a re-render
+  // reuses them - _aiDestroyCharts() below clears the old instances first.
+  const _cid=(active&&active.id)||"new";
+  const msgs=list.map((m,mi)=>
     m.r==='u'?`<div class="ai-msg ai-u">${esc(m.t)}</div>`
     :m.r==='e'?`<div class="ai-msg ai-err">⚠ ${esc(m.t)}</div>`
-    :`<div class="ai-msg ai-m">${_aiMd(m.t)}${m.mdl?`<div style="font-size:0.58rem;color:var(--text3);margin-top:6px;text-align:right">${esc(m.mdl.replace('gemini-','Gemini '))}</div>`:''}</div>`).join('');
+    :`<div class="ai-msg ai-m">${_aiMd(m.t,_cid+"_"+mi)}${m.mdl?`<div style="font-size:0.58rem;color:var(--text3);margin-top:6px;text-align:right">${esc(_aiModelLabel(m.mdl))}</div>`:''}</div>`).join('');
   // Offer a one-tap retry when the conversation ended on a failed reply
   const retryBtn=(!_aiBusy&&list.length&&list[list.length-1].r==='e')
     ?`<div style="margin:4px 0 2px"><button class="btn btn-g btn-sm" onclick="aiRetry()" title="Send the last question again">↻ Retry</button></div>`:'';
@@ -9999,7 +10122,10 @@ function renderProjAI(){
     'How has my spending trended over the last 6 months?',
     'Am I on track this month?',
   ].map(q=>`<button class="ai-chip" onclick="aiAsk('${jsq(q)}')">${esc(q)}</button>`).join('')}</div>`;
-  const model=AI_MODELS[0];
+  // Show what actually answered in this conversation, not what we would try
+  // first - with an alias at the head, the aspirational badge would mislead.
+  const _lastMdl=(list.slice().reverse().find(x=>x.r==='m'&&x.mdl)||{}).mdl;
+  const model=_lastMdl||AI_MODELS[0];
   // Conversation picker — shown once there is at least one saved chat (or a new
   // one being composed alongside existing ones).
   const opts=chats.map(c=>`<option value="${esc(c.id)}"${active&&active.id===c.id?' selected':''}>${esc(c.title||'Conversation')}</option>`).join('');
@@ -10011,7 +10137,7 @@ function renderProjAI(){
     </div>`:'';
   el.innerHTML=`<div class="card" style="padding:12px 14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-      <div class="clabel" style="margin:0">AI Analyst<span class="ai-badge">${esc(model.replace('gemini-','Gemini '))}</span></div>
+      <div class="clabel" style="margin:0">AI Analyst<span class="ai-badge">${esc(_aiModelLabel(model))}</span></div>
       <div style="display:flex;gap:6px">
         <button class="btn btn-g btn-sm" onclick="aiNewChat()" title="Start a new conversation" ${_aiBusy?'disabled':''}>＋ New</button>
         <button class="btn btn-g btn-sm" onclick="goToApiKeys()" title="Manage API keys">Keys…</button>
@@ -10026,6 +10152,7 @@ function renderProjAI(){
       <button class="btn btn-p" onclick="aiSend()" ${_aiBusy?'disabled':''} style="padding:9px 16px">➤</button>
     </div>
   </div>`;
+  _aiMountCharts();   // HTML is in the DOM now - instantiate any queued charts
   const log=document.getElementById('ai-log');if(log)log.scrollTop=log.scrollHeight;
 }
 
@@ -10257,6 +10384,12 @@ Rules:
 - Transfers move money between the user's own accounts; never count them as income or spending.
 - Lead with the answer, then the evidence. Be direct and specific to THIS user's patterns — no generic financial-advice boilerplate.
 - Format with markdown: short paragraphs, bullets, and small tables where they help. Round to whole naira.
+- You may include ONE chart per reply when a number series reads better as a picture (a trend across months, a composition, a comparison). Emit it as a fenced block, raw JSON only:
+\`\`\`spendwise-chart
+{"type":"bar|line|doughnut","title":"Short title","labels":["Jun","Jul"],"series":[{"name":"Spend","data":[412000,388500]}]}
+\`\`\`
+  No comments, no trailing commas, no ₦ signs and no thousands separators inside the JSON — plain numbers. Every series' data length must equal labels length. Max 24 labels, max 3 series; doughnut takes exactly one series. Never set colours or styling; the app themes the chart.
+- The written answer must stand on its own. A chart supplements it — never say "see the chart below" instead of giving the numbers.
 
 THE USER'S COMPLETE FINANCIAL DATA:
 
@@ -10268,17 +10401,31 @@ THE USER'S COMPLETE FINANCIAL DATA:
 
 // Minimal markdown → HTML for AI replies: headings, bold/italic/code,
 // bullet + numbered lists, and pipe tables. Everything is HTML-escaped first.
-function _aiMd(src){
+function _aiMd(src,key){
   const e=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const inline=s=>e(s)
     .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
     .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g,'$1<i>$2</i>')
     .replace(/`([^`]+)`/g,'<code>$1</code>');
   const lines=String(src||'').split(/\r?\n/);
-  let html='',i=0;
+  let html='',i=0,chartN=0;
   while(i<lines.length){
     const L=lines[i];
     if(/^\s*$/.test(L)){i++;continue;}
+    // Fenced blocks are consumed WHOLE and before anything else, so the JSON
+    // inside a chart block never reaches inline()/e() and gets mangled. This
+    // also means any other fenced block now renders as a <pre> instead of each
+    // line becoming a stray paragraph full of backticks.
+    if(/^\s*```/.test(L)){
+      const lang=L.replace(/^\s*```/,'').trim().toLowerCase();
+      const buf=[]; i++;
+      while(i<lines.length&&!/^\s*```\s*$/.test(lines[i])) buf.push(lines[i++]);
+      i++;                       // consume the closing fence (or fall out at EOF)
+      html+=(lang==='spendwise-chart')
+        ? _aiChartHtml(buf.join('\n'),key,chartN++)
+        : `<pre class="ai-pre"><code>${e(buf.join('\n'))}</code></pre>`;
+      continue;
+    }
     if(/^#{1,6}\s/.test(L)){html+=`<div class="ai-h">${inline(L.replace(/^#{1,6}\s*/,''))}</div>`;i++;continue;}
     if(/^\s*[-*•]\s+/.test(L)){
       let items='';

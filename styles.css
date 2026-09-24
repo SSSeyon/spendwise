@@ -515,3 +515,9 @@ body.monarch .search-bar,body.monarch .period-sel{border-radius:12px}
 /* ── Monarch category icon badges (rendered only in Monarch by app.js) ── */
 body.monarch .catb{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--catbg,var(--bg2));font-size:0.78rem;margin-right:8px;vertical-align:middle;flex-shrink:0;line-height:1}
 body.monarch .cr-name{display:inline-flex;align-items:center}
+  /* AI-generated charts (```spendwise-chart blocks in a reply) */
+  .ai-chart{margin:10px 0;}
+  .ai-chart-t{font-size:0.66rem;font-weight:700;color:var(--text2);margin-bottom:5px;}
+  .ai-chart-c{position:relative;height:190px;}
+  .ai-chartfail{font-size:0.62rem;color:var(--text3);font-style:italic;margin:6px 0;}
+  .ai-pre{background:var(--bg3);border-radius:var(--rsm);padding:8px;overflow-x:auto;font-size:0.66rem;margin:6px 0;}
