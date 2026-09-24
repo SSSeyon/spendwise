@@ -1,6 +1,6 @@
 # SpendWise → Monarch Redesign Roadmap
 
-> **STATUS (2026-07-12): IMPLEMENTED in v4.4.0** (local, not yet committed/pushed).
+> **STATUS: SHIPPED in v4.4.0** (committed and pushed; this file is kept as the design record).
 > Phases 0–7 are built and verified in preview, in both modes and both
 > light/dark themes. Notes on what shipped:
 > - **Phase 0**: `sw3_design_mode` flag, `body.monarch` class, `isMonarch()`,
