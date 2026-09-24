@@ -75,7 +75,7 @@ function isMonarch(){return document.body.classList.contains('monarch');}
 function setDesignMode(mode){
   try{localStorage.setItem('sw3_design_mode',mode);}catch{}
   document.body.classList.toggle('monarch',mode==='monarch');
-  try{renderAll();}catch{}
+  try{renderAll();}catch(e){console.warn("renderAll after design-mode switch failed",e);}
   toast(mode==='monarch'?'Monarch design mode':'Classic design mode');
 }
 (function initDesignMode(){try{if(getDesignMode()==='monarch')document.body.classList.add('monarch');}catch{}})();
@@ -216,7 +216,7 @@ function setCashLogo(acctName,filename){
   // erase each other (each call only changes the one field that changed).
   if(db){
     const payload=filename?{[acctName]:filename.trim()}:{[acctName]:firebase.firestore.FieldValue.delete()};
-    db.collection('appConfig').doc('cashLogos').set(payload,{merge:true}).catch(()=>{});
+    db.collection('appConfig').doc('cashLogos').set(payload,{merge:true}).catch(e=>console.warn("cashLogos write failed",e));
   }
   // Update the thumbnail in the settings list immediately without re-rendering the page.
   const safeId=acctName.replace(/\s/g,'-');
@@ -259,7 +259,7 @@ function getCashAccounts(){const saved=cGet('sw3_cash_accounts');if(!saved)retur
 function setCashAccounts(allAccounts){
   const custom=allAccounts.filter(a=>!DEFAULT_CASH_ACCOUNTS.includes(a));
   cSet('sw3_cash_accounts',custom);
-  if(db) db.collection('appConfig').doc('cashAccounts').set({accounts:custom},{merge:false}).catch(()=>{});
+  if(db) db.collection('appConfig').doc('cashAccounts').set({accounts:custom},{merge:false}).catch(e=>console.warn("cashAccounts write failed",e));
 }
 async function loadFxOverrides(){
   if(!db) return;
@@ -906,7 +906,10 @@ const CK={
   currency:'sw3_dash_currency',
 };
 const cGet=k=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}};
-const cSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}};
+let _lsWarned=false;
+// Every local cache write funnels through here, so a QuotaExceededError silently
+// loses data app-wide. Warn once - repeating it on every write would bury the rest.
+const cSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){if(!_lsWarned){_lsWarned=true;console.warn("localStorage write failed - cached data may be stale (quota or private mode):",e);}}};
 
 function loadFromCache(){
   // ── Migrate Energy → Fuel (one-time, background) ──────────────────────
@@ -1529,7 +1532,7 @@ async function _prefetchHistoryMonths(){
       fetched++;
     }catch(e){/* offline or rules — insights degrade gracefully */}
   }
-  if(fetched){try{renderDashAlerts();renderProjInsights();}catch(e){}}
+  if(fetched){try{renderDashAlerts();renderProjInsights();}catch(e){console.warn("alert/insight render failed",e);}}
 }
 
 async function loadIncome(m,y){
@@ -1586,7 +1589,7 @@ async function loadCashData(m,y){
       const migRef=db.collection('cashBalances').doc(sid(pm,py));
       await migRef.set({'USD Cash':usdAmt,year:py,month:pm},{merge:true});
       cSet('sw3_usd_cash_pending_migration',null);
-    }catch(e){}
+    }catch(e){_warnLoad("loadCashData",e);}
   }
   try{
     const localCash=cGet(CK.cash(m,y))||{};
@@ -1613,7 +1616,7 @@ async function loadCashData(m,y){
           // balance is also carried forward correctly.
           const repaired={...remote,month:m,year:y};
           accts.forEach(b=>{if(!remote[b]&&prev[b]) repaired[b]=prev[b];});
-          try{await db.collection('cashBalances').doc(sid(m,y)).set(repaired,{merge:true});}catch(e){}
+          try{await db.collection('cashBalances').doc(sid(m,y)).set(repaired,{merge:true});}catch(e){console.warn("cashBalances repair write failed",e);}
           S.cash=repaired;cSet(CK.cash(m,y),repaired);return;
         }
       }
@@ -1629,7 +1632,7 @@ async function loadCashData(m,y){
       const prev=await _walkBackClosing(m,y);
       if(Object.keys(prev).length){
         const seed={...prev,month:m,year:y};
-        try{await db.collection('cashBalances').doc(sid(m,y)).set(seed,{merge:true});}catch(e){}
+        try{await db.collection('cashBalances').doc(sid(m,y)).set(seed,{merge:true});}catch(e){console.warn("cashBalances seed write failed",e);}
         S.cash={...prev};cSet(CK.cash(m,y),{...prev,month:m,year:y});return;
       }
     }
@@ -1728,9 +1731,9 @@ async function loadHistoricalSummary(){
           db.collection('historicalSummary').doc(docId).set({
             year:h.year,month:h.month,
             label:h.label,income:h.income,expenses:h.expenses
-          },{merge:true}).catch(()=>{});
+          },{merge:true}).catch(e=>console.warn("historicalSummary write failed",e));
         });
-      }catch(e){}
+      }catch(e){console.warn("historicalSummary backfill failed",e);}
       // Re-render now that we have authoritative history from Firebase
       renderAll();
     }
@@ -1987,7 +1990,7 @@ function renderAll(){
     const lastPg=localStorage.getItem('sw3_last_page');
     const valid=['dashboard','expenses','accounts','forecast','settings'];
     if(lastPg&&valid.includes(lastPg)&&lastPg!=='dashboard') navTo(lastPg);
-  }catch(e){}
+  }catch(e){console.warn("renderAll failed",e);}
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -4323,9 +4326,9 @@ function _logCashLedger(bank, delta, m, y, source, ref, dateStr){
       db.collection('cashLedger').doc(sid(m,y)).set({
         month:m, year:y,
         entries: firebase.firestore.FieldValue.arrayUnion(entry)
-      },{merge:true}).catch(()=>{});
+      },{merge:true}).catch(e=>console.warn("cashLedger write failed",e));
     }
-  }catch(e){}
+  }catch(e){console.warn("cash ledger entry not recorded",e);}
 }
 
 // Push cash-ledger entries that exist locally but not in Firestore.
@@ -4363,7 +4366,7 @@ async function _healCashLedgers(){
   const seen=new Set();
   for(const {m,y} of _prevMonthsList(S.expMonth+1,S.expYear,7)){ // current month + 6 prior
     const k=`${y}-${m}`; if(seen.has(k))continue; seen.add(k);
-    try{await _syncCashLedgerUp(m,y);}catch(e){}
+    try{await _syncCashLedgerUp(m,y);}catch(e){_warnLoad("_syncCashLedgerUp",e);}
   }
 }
 
@@ -4382,7 +4385,7 @@ async function _walkBackClosing(m,y){
           Object.keys(p).forEach(k=>{if(k!=='month'&&k!=='year'&&k!=='updatedAt')out[k]=p[k];});
           if(Object.keys(out).length) return out;
         }
-      }catch(e){}
+      }catch(e){_warnLoad("_walkBackClosing",e);}
     }
     const lc=cGet(CK.cash(pm,py));
     if(lc&&Object.keys(lc).some(k=>k!=='month'&&k!=='year'&&lc[k])){
@@ -4507,7 +4510,7 @@ function _saveXfrRecord(from, to, amt, date, m, y, notes, toAmt, kind){
   const list=cGet(CK.xfr(m,y))||[];
   list.unshift(rec);
   cSet(CK.xfr(m,y),list);
-  if(db) db.collection('transfers').doc(rec.id).set(rec).catch(()=>{});
+  if(db) db.collection('transfers').doc(rec.id).set(rec).catch(e=>console.warn("transfer record write failed",e));
 }
 
 // ── Shared investment balance mutators (keep subs + flat totals in sync) ──
@@ -4518,7 +4521,7 @@ function _invDeposit(pKey, ngnAmt, m, y){
   saveSubsForPlatform(pKey,subs);
   const inv={...S.investments};inv[pKey]=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
   S.investments=inv;cSet(CK.inv(m,y),inv);
-  if(db)db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(()=>{});
+  if(db)db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(e=>console.warn("investments write failed (deposit)",e));
 }
 function _invWithdraw(pKey, ngnAmt, m, y){
   // Returns false if the platform balance is insufficient. Deducts across subs in order.
@@ -4532,7 +4535,7 @@ function _invWithdraw(pKey, ngnAmt, m, y){
   saveSubsForPlatform(pKey,subs);
   const inv={...S.investments};inv[pKey]=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
   S.investments=inv;cSet(CK.inv(m,y),inv);
-  if(db)db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(()=>{});
+  if(db)db.collection('investments').doc(sid(m,y)).set({...inv,month:m,year:y},{merge:true}).catch(e=>console.warn("investments write failed (withdrawal)",e));
   return true;
 }
 
@@ -4704,7 +4707,7 @@ async function openXfrHistory(){
     const seen=new Set(recs.map(r=>r.id));
     snap.docs.forEach(d=>{const r=d.data();if(!seen.has(r.id)){recs.push(r);seen.add(r.id);}});
     cSet(CK.xfr(m,y),recs);
-  }catch(e){}
+  }catch(e){_warnLoad("openXfrHistory",e);}
   recs.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
   _renderXfrHistory(recs,m,y);
 }
@@ -4773,7 +4776,7 @@ async function removeXfrRecord(recId){
 async function _deleteXfrRecord(recId,m,y){
   const recs=(cGet(CK.xfr(m,y))||[]).filter(x=>x.id!==recId);
   cSet(CK.xfr(m,y),recs);
-  try{await db.collection('transfers').doc(recId).delete();}catch(e){}
+  try{await db.collection('transfers').doc(recId).delete();}catch(e){console.warn("transfer record delete failed",e);}
 }
 
 async function saveExpense(){
@@ -5417,7 +5420,7 @@ async function applyInvAdjust(){
   invData[_adjPKey]=newPlatTotal;
   S.investments=invData;
   cSet(CK.inv(m,y),invData);
-  if(db) db.collection('investments').doc(sid(m,y)).set(invData,{merge:true}).catch(()=>{});
+  if(db) db.collection('investments').doc(sid(m,y)).set(invData,{merge:true}).catch(e=>console.warn("investments write failed (adjustment)",e));
 
   // Optional funding account (inflow only): move the money out of that account
   // so the cash side stays honest, and log it like a Cash → Investment transfer
@@ -5557,7 +5560,7 @@ async function confirmLiquidation(){
   invData[_liqPKey]=newPlatTotal;
   S.investments=invData;
   cSet(CK.inv(m,y),invData);
-  if(db) db.collection('investments').doc(sid(m,y)).set(invData,{merge:true}).catch(()=>{});
+  if(db) db.collection('investments').doc(sid(m,y)).set(invData,{merge:true}).catch(e=>console.warn("investments write failed (liquidation source)",e));
 
   if(_liqDest==='investment'){
     // Liquidate into another investment sub
@@ -5575,7 +5578,7 @@ async function confirmLiquidation(){
     invData[destPKey]=destTotal;
     S.investments=invData;
     cSet(CK.inv(m,y),invData);
-    if(db) db.collection('investments').doc(sid(m,y)).set(invData,{merge:true}).catch(()=>{});
+    if(db) db.collection('investments').doc(sid(m,y)).set(invData,{merge:true}).catch(e=>console.warn("investments write failed (liquidation target)",e));
     const destPlat=PLATFORMS.find(pl=>pl.key===destPKey);
     toast(`₦${fNum(amtNGN)} → ${destPlat?destPlat.label:destPKey}`);
   } else {
@@ -5825,8 +5828,8 @@ async function changeCashMonth(m){
   // placeholder — see _getInvData), then refresh live like Cash does.
   renderInvestments();
   if(db&&navigator.onLine){
-    loadCashData(m,S.cashYear).then(()=>{if(S.cashMonth===m)renderCashPage();}).catch(()=>{});
-    loadInvData(m,S.cashYear).then(()=>{if(S.cashMonth===m)renderInvestments();}).catch(()=>{});
+    loadCashData(m,S.cashYear).then(()=>{if(S.cashMonth===m)renderCashPage();}).catch(e=>_warnLoad("loadCashData (month switch)",e));
+    loadInvData(m,S.cashYear).then(()=>{if(S.cashMonth===m)renderInvestments();}).catch(e=>_warnLoad("loadInvData (month switch)",e));
   }
   startRealtimeListeners();
 }
@@ -6094,7 +6097,7 @@ async function toggleRepay(id,newVal){
   }
   cSet(CK.debtors,S.debtors);
   renderDebtors();
-  if(id&&db){try{await db.collection('debtors').doc(id).update({expectRepayment:newVal});}catch(e){}}
+  if(id&&db){try{await db.collection('debtors').doc(id).update({expectRepayment:newVal});}catch(e){console.warn("debtor expectRepayment update failed",e);}}
 }
 function _populateDebAcct(selectedVal=''){
   const sel=document.getElementById('d-acct');if(!sel) return;
@@ -7764,7 +7767,7 @@ async function runBalanceAudit(){
   // Push any locally-stranded ledger entries up first, so running the audit on
   // the device that HAS the entry (e.g. the phone) propagates it to Firestore
   // for every other device.
-  try{await _syncCashLedgerUp(m,y);}catch(e){}
+  try{await _syncCashLedgerUp(m,y);}catch(e){_warnLoad("_syncCashLedgerUp (audit)",e);}
   const prevM=m===1?12:m-1,prevY=m===1?y-1:y;
   async function fetchMonth(col){
     try{const s=await db.collection(col).where('year','==',y).where('month','==',m).get();return s.docs.map(d=>({...d.data(),id:d.id}));}
@@ -7774,10 +7777,10 @@ async function runBalanceAudit(){
   let incs=await fetchMonth('income');if(!incs)incs=cGet(CK.inc(m,y))||[];
   let xfrs=await fetchMonth('transfers');if(!xfrs)xfrs=cGet(CK.xfr(m,y))||[];
   let prevCash=null;
-  try{const d=await db.collection('cashBalances').doc(sid(prevM,prevY)).get();prevCash=d.exists?d.data():null;}catch(e){}
+  try{const d=await db.collection('cashBalances').doc(sid(prevM,prevY)).get();prevCash=d.exists?d.data():null;}catch(e){_warnLoad("audit: prev-month cash",e);}
   if(!prevCash)prevCash=cGet(CK.cash(prevM,prevY))||{};
   let curCash=null;
-  try{const d=await db.collection('cashBalances').doc(sid(m,y)).get();curCash=d.exists?d.data():null;}catch(e){}
+  try{const d=await db.collection('cashBalances').doc(sid(m,y)).get();curCash=d.exists?d.data():null;}catch(e){_warnLoad("audit: current-month cash",e);}
   if(!curCash)curCash=cGet(CK.cash(m,y))||S.cash||{};
   // Cash ledger — the ONLY record of loan, debtor and investment-liquidation
   // cash movements (these never hit the income/expense/transfer collections).
@@ -7785,7 +7788,7 @@ async function runBalanceAudit(){
   // gaps. Merge Firestore (cross-device) with the local cache (offline-created
   // entries not yet synced), deduped by ts|bank|delta|source.
   let ledger=[];
-  try{const d=await db.collection('cashLedger').doc(sid(m,y)).get();if(d.exists&&Array.isArray(d.data().entries))ledger=d.data().entries.slice();}catch(e){}
+  try{const d=await db.collection('cashLedger').doc(sid(m,y)).get();if(d.exists&&Array.isArray(d.data().entries))ledger=d.data().entries.slice();}catch(e){_warnLoad("audit: cash ledger",e);}
   {
     const local=cGet(`sw3_cash_ledger_${y}_${m}`)||[];
     const seen=new Set(ledger.map(e=>`${e.ts}|${e.bank}|${e.delta}|${e.source}`));
@@ -7831,7 +7834,7 @@ function auditFix(b,val,m,y){
   if(m===S.cashMonth&&y===S.cashYear)S.cash=cash;
   if(m===S.dashMonth&&y===S.dashYear)S.cash=cash;
   cSet(CK.cash(m,y),cash);
-  if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
+  if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(e=>console.warn("cashBalances write failed (manual balance edit)",e));
   renderCashPage();renderDashboard();toast(`${b} balance updated`);
   runBalanceAudit();
 }
@@ -7857,7 +7860,7 @@ function showCashLedger(bank,m,y){
         cSet(key,local.slice(-500));
         _renderCashLedger(bank,m,y);
       }
-    }).catch(()=>{});
+    }).catch(e=>console.warn("cashLedger heal/merge failed",e));
   }
 }
 function _renderCashLedger(bank,m,y){
@@ -7938,7 +7941,7 @@ async function importFullBackup(ev){
   if(!db){toast('Restore needs a connection');return;}
   if(!confirm(`Restore from backup${data._meta?.generated?' ('+data._meta.generated+')':''}?\n\n${tx.length} transactions\n${inc.length} income records\n${cashB.length} cash months\n${invB.length} investment months\n${debs.length} debtors\n${hist.length} history rows\n${loans.length} loans\n${xfrs.length} transfers\n${budgets.length} budget months\n${cfg.length} config docs\n${ledger.length} ledger months\n\nExisting records with matching IDs will be overwritten.`))return;
   // Safety net: download a backup of the current data before overwriting anything
-  try{toast('Downloading safety backup first…');await exportFullBackup();}catch(e){}
+  try{toast('Downloading safety backup first…');await exportFullBackup();}catch(e){console.warn("safety backup before destructive op FAILED",e);}
   toast('Restoring…');setSyncStatus('syncing');
   try{
     const ops=[];
@@ -8213,7 +8216,7 @@ function renderSettData(){
   // below on each release rather than prepending to a running changelog.
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.18</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.18: App Info now shows only the current release note. In the Net Worth breakdown, Debtors are summed per person instead of listing each debt separately, and settled, zero or overpaid balances are left out.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.19</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.19: Failures that used to vanish silently are now reported in the console, so problems get noticed instead of hiding. Also corrected a note that wrongly claimed your Gemini API key never leaves your device.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8450,8 +8453,8 @@ async function forceHardRefresh(){
     // and re-trigger the update banner forever. Force the entry point to
     // refetch from the server first; the fresh index.html then references the
     // current ?v= app.js/styles.css, breaking the loop in a single reload.
-    try{await fetch('./index.html',{cache:'reload'});}catch(e){}
-  }catch(e){}
+    try{await fetch('./index.html',{cache:'reload'});}catch(e){console.warn("shell refetch failed",e);}
+  }catch(e){console.warn("forceHardRefresh failed",e);}
   window.location.reload();
 }
 async function forceSyncNow(){
@@ -8731,11 +8734,11 @@ function deleteFromAccount(kind,id,bankName){
   const label=kind==='inc'?(rec.category||'income'):(rec.payee||rec.category||'expense');
   if(!confirm(`Delete "${label}"?\n\n${bankName} will be adjusted back by this amount.`))return;
   if(kind==='inc') delIncome(id); else delExpense(id);
-  setTimeout(()=>{try{drillDownAccount(bankName);}catch(e){}},350);
+  setTimeout(()=>{try{drillDownAccount(bankName);}catch(e){console.warn("account drill-down refresh failed",e);}},350);
 }
 async function reverseTransferFromAccount(recId,bankName){
   await reverseTransfer(recId);   // confirms, restores both sides, drops the record
-  setTimeout(()=>{try{drillDownAccount(bankName);}catch(e){}},350);
+  setTimeout(()=>{try{drillDownAccount(bankName);}catch(e){console.warn("account drill-down refresh failed",e);}},350);
 }
 
 function drillDownInvPlatform(pKey){
@@ -9062,7 +9065,7 @@ async function confirmSeedImport(){
         for(const item of items){const ref=idFn?db.collection(col).doc(idFn(item)):db.collection(col).doc();b.set(ref,item,{merge:true});if(++n>=490){await b.commit();b=db.batch();n=0;}}
         if(n>0) await b.commit();
       }
-      async function clearM(col,months){for(const{year,month}of months){try{const s=await db.collection(col).where('year','==',year).where('month','==',month).get();if(!s.empty){let b=db.batch();s.docs.forEach(d=>b.delete(d.ref));await b.commit();}}catch(e){}}}
+      async function clearM(col,months){for(const{year,month}of months){try{const s=await db.collection(col).where('year','==',year).where('month','==',month).get();if(!s.empty){let b=db.batch();s.docs.forEach(d=>b.delete(d.ref));await b.commit();}}catch(e){console.warn("seed import: clearing "+col+" for "+year+"-"+month+" failed",e);}}}
       if(seed.historicalSummary?.length) await batchSet('historicalSummary',seed.historicalSummary,mk);
       if(seed.cashBalances?.length) await batchSet('cashBalances',seed.cashBalances,mk);
       if(seed.investments?.length) await batchSet('investments',seed.investments,mk);
@@ -9134,7 +9137,7 @@ async function _migrateFifeToKids(){
         let changed=false;
         arr.forEach(t=>{if(t.category==='Fife'){t.category='Kids';changed=true;}});
         if(changed) localStorage.setItem(k,JSON.stringify(arr));
-      }catch(e){}
+      }catch(e){console.warn("Fife→Kids migration failed",e);}
     });
     localStorage.setItem(MKEY,'1');
     console.log(`SpendWise: migrated ${allDocs.length} Fife→Kids records`);
@@ -9144,7 +9147,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.18';
+const APP_VERSION='v4.4.19';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
@@ -9159,7 +9162,7 @@ async function checkForUpdate(){
       if(msg)msg.textContent=`Update available: ${APP_VERSION} → ${remote}`;
       if(banner)banner.style.display='block';
     }
-  }catch(e){}
+  }catch(e){_warnLoad("checkForUpdate",e);}
 }
 // ── USD Cash repair: reads USDHoldings from Firestore investments, writes to cashBalances ──
 async function _migrateEnergyFirestore(){
@@ -9188,7 +9191,7 @@ async function _repairUSDCash(){
     try{
       const migDoc=await db.collection('appConfig').doc('migrations').get();
       if(migDoc.exists&&migDoc.data()?.usdRepairV2){cSet('sw3_usd_repair_v2','1');return;}
-    }catch(e){}
+    }catch(e){console.warn("USD cash repair failed",e);}
     const snap=await db.collection('investments').get();
     if(snap.empty){cSet('sw3_usd_repair_v2','1');return;}
     const batch=db.batch();
@@ -9218,7 +9221,7 @@ async function _repairUSDCash(){
       if(typeof renderCashPage==='function') renderCashPage();
       toast(`USD Cash restored across ${repaired} month(s)`);
     }
-    try{await db.collection('appConfig').doc('migrations').set({usdRepairV2:true},{merge:true});}catch(e){}
+    try{await db.collection('appConfig').doc('migrations').set({usdRepairV2:true},{merge:true});}catch(e){console.warn("migration flag write failed",e);}
     cSet('sw3_usd_repair_v2','1');
   }catch(e){console.warn('USD Cash repair failed:',e);}
 }
@@ -9613,9 +9616,13 @@ async function execMergeCat(){
 
 // ══════════════════════════════════════════════════════════════════════════
 // AI ANALYST (Analytics → AI) — Gemini-powered analysis and chat grounded in
-// the user's complete financial history. The API key is pasted by the user
-// and lives ONLY in this device's localStorage — never in code or Firestore
-// (the repo and the Firestore project are both publicly readable).
+// the user's complete financial history. The API key is pasted by the user,
+// cached in this device's localStorage AND mirrored to appConfig/aiKeys so it
+// follows the user across devices. The repo and the Firestore project are both
+// publicly readable, so that key is effectively shared - use a free-tier key
+// and rotate it if abused. (This comment used to claim the key never left the
+// device; _aiSyncKeys() has written it to Firestore since multi-key support
+// landed, so that claim was false.)
 // ══════════════════════════════════════════════════════════════════════════
 // var + function declarations (not const/let): renderAll() runs during init,
 // before this end-of-file module body executes — hoisting keeps that safe.
@@ -9825,8 +9832,8 @@ async function loadAiChats(){
         const first=list.find(m=>m.r==='u');
         const c={id:_aiNewId(),title:_aiTitleFrom(first&&first.t),msgs:list,createdAt:Date.now(),updatedAt:Date.now()};
         chats=[c];
-        db.collection('aiChats').doc(c.id).set({title:c.title,msgs:c.msgs,createdAt:c.createdAt,updatedAt:c.updatedAt}).catch(()=>{});
-        db.collection('appConfig').doc('aiChat').set({list:[],migrated:true},{merge:true}).catch(()=>{}); // mark migrated so we don't re-import
+        db.collection('aiChats').doc(c.id).set({title:c.title,msgs:c.msgs,createdAt:c.createdAt,updatedAt:c.updatedAt}).catch(e=>console.warn("aiChats migration write failed",e));
+        db.collection('appConfig').doc('aiChat').set({list:[],migrated:true},{merge:true}).catch(e=>console.warn("aiChat migration flag write failed",e)); // mark migrated so we don't re-import
       }
     }
     _aiSortChats(chats);
@@ -9841,7 +9848,7 @@ function renderProjAI(){
     el.innerHTML=`<div class="card">
       <div class="clabel">AI Analyst — Setup</div>
       <div class="csub" style="margin-bottom:6px">Ask anything about your money — a Gemini-powered analyst reads your entire history (every expense, income, transfer, balance, loan, debtor and investment) and answers with your real numbers.</div>
-      <div class="csub" style="margin-bottom:10px">Add a free Gemini API key to get started — stored only on this device, never leaves it except to call Google's API directly. Get one at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--accent)">aistudio.google.com/apikey</a>.</div>
+      <div class="csub" style="margin-bottom:10px">Add a free Gemini API key to get started — stored in your browser and synced across your devices via your Firestore project - use a free-tier key. Get one at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--accent)">aistudio.google.com/apikey</a>.</div>
       <button class="btn btn-p btn-sm" onclick="goToApiKeys()">Add API Key</button>
     </div>`;
     return;
