@@ -1256,6 +1256,10 @@ let _loanListener=null;
 let _aiChatListener=null;
 let _aiKeysListener=null;
 let _sbListener=null;
+let _linesListener=null;
+let _intPostListener=null;
+let _budgetListener=null;
+let _xfrListener=null;
 
 function startRealtimeListeners(){
   stopRealtimeListeners();
@@ -1480,6 +1484,69 @@ function startRealtimeListeners(){
       const pane=document.getElementById('special-pane');
       if(pane&&pane.style.display!=='none'&&!pane.contains(document.activeElement))renderSpecial();
     },err=>console.warn('specialBudgets listener:',err));
+
+  // Expense lines (payees per category) — real-time cross-device sync.
+  // Mirrors the customCats listener above. The __removed__ map is stored in its
+  // own `removed` field because Firestore rejects field names that both start
+  // and end with "__" (see saveCustomLines).
+  if(_linesListener){_linesListener();_linesListener=null;}
+  _linesListener=db.collection('appConfig').doc('customLines')
+    .onSnapshot(snap=>{
+      if(!snap.exists||snap.metadata.hasPendingWrites) return;
+      const d=snap.data()||{};
+      if(!d.lines||typeof d.lines!=='object') return;
+      const obj={...d.lines};
+      if(d.removed&&typeof d.removed==='object') obj.__removed__=d.removed;
+      S.customExpLines=obj;
+      try{localStorage.setItem('sw3_custom_lines',JSON.stringify(obj));}catch{}
+      const pane=document.getElementById('exp-pane');
+      if(pane&&pane.style.display!=='none'&&!pane.contains(document.activeElement))renderExpenses();
+    },err=>console.warn('customLines listener:',err));
+
+  // Interest posting ledger — the highest-value of these: without it two
+  // devices can each post the same month's interest, double-counting income.
+  // Cache-only; the Income tab re-reads it on its next render.
+  if(_intPostListener){_intPostListener();_intPostListener=null;}
+  _intPostListener=db.collection('appConfig').doc('interestPosts')
+    .onSnapshot(snap=>{
+      if(!snap.exists||snap.metadata.hasPendingWrites) return;
+      const posts=snap.data()?.posts;
+      if(posts&&typeof posts==='object') cSet(INT_POSTS_KEY,posts);
+    },err=>console.warn('interestPosts listener:',err));
+
+  // Monthly category budgets — scoped to the month on screen, like _cashListener.
+  // A collection-wide listener would pull every month ever recorded.
+  if(_budgetListener){_budgetListener();_budgetListener=null;}
+  _budgetListener=db.collection('budgets').doc(sid(m,y))
+    .onSnapshot(snap=>{
+      if(!snap.exists||snap.metadata.hasPendingWrites) return;
+      if(S.expMonth!==m||S.expYear!==y) return;          // month moved on
+      const cats=snap.data()?.categories;
+      if(!cats||typeof cats!=='object') return;
+      S.budgets={...DEF_BUDGETS,...cats};
+      cSet(CK.budgets(m,y),S.budgets);
+      const pane=document.getElementById('exp-pane');
+      if(pane&&pane.style.display!=='none'&&!pane.contains(document.activeElement))renderExpenses();
+    },err=>console.warn('budgets listener:',err));
+
+  // Transfers — month-scoped, mirroring _txnListener. Feeds the account
+  // drill-down history and the Transfer History modal.
+  if(_xfrListener){_xfrListener();_xfrListener=null;}
+  _xfrListener=db.collection('transfers').where('year','==',y).where('month','==',m)
+    .onSnapshot(snap=>{
+      if(snap.metadata.hasPendingWrites) return;
+      const list=snap.docs.map(d=>({id:d.id,...d.data()}))
+        .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+      cSet(CK.xfr(m,y),list);
+      const hist=document.getElementById('xfr-hist-modal');
+      if(hist&&hist.classList.contains('show')) _renderXfrHistory(list,m,y);
+    },err=>console.warn('transfers listener:',err));
+
+  // cashLedger is deliberately NOT listened to. It is append-only via
+  // arrayUnion and capped at 500 entries/month, so a listener would re-download
+  // the whole array on every transaction from any device. Its only consumer
+  // (the balance audit) already does a fresh .get() when opened, and
+  // _syncCashLedgerUp heals stranded entries. This is a decision, not a gap.
 }
 
 function stopRealtimeListeners(){
@@ -1500,6 +1567,10 @@ function stopRealtimeListeners(){
   if(_aiChatListener){_aiChatListener();_aiChatListener=null;}
   if(_aiKeysListener){_aiKeysListener();_aiKeysListener=null;}
   if(_sbListener){_sbListener();_sbListener=null;}
+  if(_linesListener){_linesListener();_linesListener=null;}
+  if(_intPostListener){_intPostListener();_intPostListener=null;}
+  if(_budgetListener){_budgetListener();_budgetListener=null;}
+  if(_xfrListener){_xfrListener();_xfrListener=null;}
 }
 
 async function loadTxns(m,y){
@@ -4511,6 +4582,101 @@ function _saveXfrRecord(from, to, amt, date, m, y, notes, toAmt, kind){
   list.unshift(rec);
   cSet(CK.xfr(m,y),list);
   if(db) db.collection('transfers').doc(rec.id).set(rec).catch(e=>console.warn("transfer record write failed",e));
+  return rec.id;
+}
+
+// ── Transfers: one implementation for all three surfaces ───────────────────
+// The expense modal, the Move modal and the Cash-page quick transfer each used
+// to write the whole cashBalances doc directly, and each derived the month from
+// whichever month the UI happened to be showing rather than from the
+// transaction's own date. A transfer dated in August while September was on
+// screen therefore moved September's balance. They also bypassed the cash
+// ledger, so transfers never appeared in an account's history, and a full-doc
+// write could clobber a concurrent change from another device.
+//
+// Everything now funnels through here: cash legs go through _adjustCash
+// (atomic FieldValue.increment, ledger entry stamped with the real date,
+// ripple-forward into later months, offline queue) and investment legs through
+// _invDeposit/_invWithdraw.
+
+// Month/year come from the transaction's DATE, never from the viewed month.
+function _ymOf(dateStr){
+  const p=String(dateStr||'').split('-'), y=+p[0], m=+p[1];
+  return (y>1970&&m>=1&&m<=12)?{m,y}:{m:S.expMonth,y:S.expYear};
+}
+// Resolve a balance the same way _adjustCash does, so the insufficient-funds
+// guard and the write it guards can never disagree about which month they mean.
+function _cashBalFor(bank,m,y){
+  const base=((m===S.cashMonth&&y===S.cashYear)||(m===S.dashMonth&&y===S.dashYear))
+    ? (S.cash||{}) : (cGet(CK.cash(m,y))||{});
+  return Number(base[bank])||0;
+}
+// The quick transfer has no date field: use today when today falls inside the
+// month being viewed, else that month's last day, so the month the user is
+// looking at is always the month that moves.
+function _xfrDefaultDate(m,y){
+  const n=new Date();
+  if(m===n.getMonth()+1&&y===n.getFullYear()) return todayStr();
+  return `${y}-${String(m).padStart(2,'0')}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`;
+}
+// Returns {ok, msg}. Callers toast msg and handle their own close/render.
+function _doTransfer({kind,from,to,amt,date,notes}){
+  amt=Number(amt);
+  if(!amt||amt<=0) return {ok:false,msg:'Enter a valid amount'};
+  if(!from||!to)   return {ok:false,msg:'Select accounts'};
+  date=date||todayStr();
+  notes=notes||'';
+  const {m,y}=_ymOf(date);
+  const fx=getFxRates(m,y).USD||1650;
+
+  if(kind==='cash-cash'){
+    if(from===to) return {ok:false,msg:'Select different accounts'};
+    if(_cashBalFor(from,m,y)<amt) return {ok:false,msg:`Insufficient funds in ${from}`};
+    const fU=isUSDCashAccount(from),tU=isUSDCashAccount(to);
+    // Amount is entered in the FROM account's currency; convert when they differ.
+    const toAmt=fU===tU?amt:(fU?Math.round(amt*fx):+(amt/fx).toFixed(2));
+    const ref=_saveXfrRecord(from,to,amt,date,m,y,notes,toAmt,'cash-cash');
+    _adjustCash(from,-amt,m,y,'Transfer → '+to,ref,date);
+    _adjustCash(to,toAmt,m,y,'Transfer ← '+from,ref,date);
+    return {ok:true,msg:fU===tU
+      ? `${fU?'$'+amt:fN(amt)}: ${from} → ${to}`
+      : `${fU?'$'+amt:fN(amt)} → ${tU?'$'+toAmt:fN(toAmt)}: ${from} → ${to}`};
+  }
+
+  // Investment legs mutate the LIVE sub-principal snapshot (see the note above
+  // getSubsForPlatform): sub balances are a single current-month snapshot, not
+  // month-bucketed. Applying a back-dated investment leg would write today's
+  // principals into a past month AND corrupt today's figures, so refuse it.
+  // Back-dating inside the current month is still fine.
+  if(!_invIsLiveMonth(m,y)){
+    const n=new Date();
+    return {ok:false,msg:`Investment transfers must be dated in ${MONTHS[n.getMonth()]} ${n.getFullYear()} — investment balances only track the current month`};
+  }
+
+  if(kind==='cash-inv'){
+    if(_cashBalFor(from,m,y)<amt) return {ok:false,msg:`Insufficient funds in ${from}`};
+    const ngnAmt=isUSDCashAccount(from)?Math.round(amt*fx):amt;
+    const platLabel=PLATFORMS.find(p=>p.key===to)?.label||to;
+    const ref=_saveXfrRecord(from,to,amt,date,m,y,notes,ngnAmt,'cash-inv');
+    _adjustCash(from,-amt,m,y,'Transfer → '+platLabel,ref,date);
+    _invDeposit(to,ngnAmt,m,y);
+    addInvMovement(to,ngnAmt,date,notes);
+    return {ok:true,msg:`${isUSDCashAccount(from)?'$'+amt:fN(ngnAmt)}: ${from} → ${platLabel}`};
+  }
+
+  if(kind==='inv-cash'){
+    const platLabel=PLATFORMS.find(p=>p.key===from)?.label||from;
+    // Withdraw FIRST — it returns false on insufficient balance, so nothing is
+    // credited before we know the debit can succeed.
+    if(!_invWithdraw(from,amt,m,y)) return {ok:false,msg:`Insufficient balance in ${platLabel}`};
+    const toAmt=isUSDCashAccount(to)?+(amt/fx).toFixed(2):amt;
+    const ref=_saveXfrRecord(from,to,amt,date,m,y,notes,toAmt,'inv-cash');
+    _adjustCash(to,toAmt,m,y,'Transfer ← '+platLabel,ref,date);
+    addInvWithdrawal(from,amt,date,notes);
+    addInvMovement(from,-amt,date,notes);
+    return {ok:true,msg:`${fN(amt)}: ${platLabel} → ${to}`};
+  }
+  return {ok:false,msg:'Unknown transfer type'};
 }
 
 // ── Shared investment balance mutators (keep subs + flat totals in sync) ──
@@ -4754,12 +4920,12 @@ async function reverseTransfer(recId){
   // Take back from the TO side first — abort cleanly if it lacks funds
   if(toIsCash){
     if((S.cash[r.to]||0)<toVal&&!confirm(`${r.to} has less than the transferred amount. Reverse anyway (balance may go negative)?`))return;
-    _adjustCash(r.to,-toVal,r.month||m,r.year||y);
+    _adjustCash(r.to,-toVal,r.month||m,r.year||y,'Transfer reversed ('+_xfrSideLabel(r.from)+' → '+_xfrSideLabel(r.to)+')',recId,r.date);
   }else{
     if(!_invWithdraw(r.to,toVal,r.month||m,r.year||y)){toast(`Insufficient balance in ${_xfrSideLabel(r.to)} to reverse`);return;}
   }
   // Give back to the FROM side
-  if(fromIsCash) _adjustCash(r.from,r.amount,r.month||m,r.year||y);
+  if(fromIsCash) _adjustCash(r.from,r.amount,r.month||m,r.year||y,'Transfer reversed ('+_xfrSideLabel(r.from)+' → '+_xfrSideLabel(r.to)+')',recId,r.date);
   else _invDeposit(r.from,r.amount,r.month||m,r.year||y);
   await _deleteXfrRecord(recId,m,y);
   toast('Transfer reversed');haptic([8,40,8]);
@@ -4787,50 +4953,16 @@ async function saveExpense(){
 
   // ── Transfer ──
   if(type==='transfer'){
-    const from=document.getElementById('xfr2-from')?.value,to=document.getElementById('xfr2-to')?.value;
-    if(!from||!to){toast('Select accounts');return;}
-    const m=S.expMonth,y=S.expYear;
-    const date=document.getElementById('e-date').value||todayStr();
-    const notes=document.getElementById('e-notes').value||'';
-
-    const _fx=getFxRates(m,y).USD||1650;
-
-    if(_xfrType==='cash-cash'){
-      if(from===to){toast('Select different accounts');return;}
-      if((S.cash[from]||0)<amt){toast(`Insufficient funds in ${from}`);return;}
-      const fU=isUSDCashAccount(from),tU=isUSDCashAccount(to);
-      // Amount is entered in the FROM account's currency; convert when currencies differ
-      const toAmt=fU===tU?amt:(fU?Math.round(amt*_fx):+(amt/_fx).toFixed(2));
-      const cash={...S.cash};cash[from]=(cash[from]||0)-amt;cash[to]=(cash[to]||0)+toAmt;
-      S.cash=cash;cSet(CK.cash(m,y),cash);
-      if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
-      _saveXfrRecord(from,to,amt,date,m,y,notes,toAmt,'cash-cash');
-      toast(fU===tU?`${fU?'$'+amt:fN(amt)}: ${from} → ${to}`:`${fU?'$'+amt:fN(amt)} → ${tU?'$'+toAmt:fN(toAmt)}: ${from} → ${to}`);
-
-    } else if(_xfrType==='cash-inv'){
-      // Deduct from cash (account currency), add NGN equivalent to investment
-      if((S.cash[from]||0)<amt){toast(`Insufficient funds in ${from}`);return;}
-      const ngnAmt=isUSDCashAccount(from)?Math.round(amt*_fx):amt;
-      const cash={...S.cash};cash[from]=(cash[from]||0)-amt;
-      S.cash=cash;cSet(CK.cash(m,y),cash);
-      if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
-      _invDeposit(to,ngnAmt,m,y);
-      const platLabel=PLATFORMS.find(p=>p.key===to)?.label||to;
-      _saveXfrRecord(from,to,amt,date,m,y,notes,ngnAmt,'cash-inv');
-      toast(`${isUSDCashAccount(from)?'$'+amt:fN(ngnAmt)}: ${from} → ${platLabel}`);
-
-    } else {
-      // inv-cash: deduct NGN from investment, credit cash in its own currency
-      const platLabel=PLATFORMS.find(p=>p.key===from)?.label||from;
-      if(!_invWithdraw(from,amt,m,y)){toast(`Insufficient balance in ${platLabel}`);return;}
-      const toAmt=isUSDCashAccount(to)?+(amt/_fx).toFixed(2):amt;
-      const cash={...S.cash};cash[to]=(cash[to]||0)+toAmt;
-      S.cash=cash;cSet(CK.cash(m,y),cash);
-      if(db)db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
-      _saveXfrRecord(from,to,amt,date,m,y,notes,toAmt,'inv-cash');
-      toast(`${fN(amt)}: ${platLabel} → ${to}`);
-    }
-
+    const r=_doTransfer({
+      kind:_xfrType,
+      from:document.getElementById('xfr2-from')?.value,
+      to:document.getElementById('xfr2-to')?.value,
+      amt,
+      date:document.getElementById('e-date').value||todayStr(),
+      notes:document.getElementById('e-notes').value||'',
+    });
+    if(!r.ok){toast(r.msg);return;}
+    toast(r.msg);
     haptic([8,40,8]);closeMod('exp-modal');
     renderCashPage();renderInvestments();renderDashboard();
     return;
@@ -5930,57 +6062,16 @@ function _populateMoveSelects(){
 }
 
 async function saveMoveFunds(){
-  const amt = parseFloat(document.getElementById('move-amt').value);
-  if(!amt || amt <= 0){ toast('Enter a valid amount'); return; }
-  const from  = document.getElementById('move-from').value;
-  const to    = document.getElementById('move-to').value;
-  const date  = document.getElementById('move-date').value || todayStr();
-  const notes = document.getElementById('move-notes').value.trim();
-  const m = S.cashMonth, y = S.cashYear;
-
-  const _mfx = getFxRates(m,y).USD||1650;
-
-  if(_moveDir === 'cash-inv'){
-    // Deduct from cash account (in its own currency)
-    if((S.cash[from]||0) < amt){ toast(`Insufficient funds in ${from}`); return; }
-    const ngnAmt = isUSDCashAccount(from)?Math.round(amt*_mfx):amt;
-    const cash = {...S.cash};
-    cash[from] = (cash[from]||0) - amt;
-    S.cash = cash;
-    cSet(CK.cash(m,y), cash);
-    if(db) db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
-
-    // Add NGN equivalent to investment platform (subs + flat total kept in sync)
-    _invDeposit(to, ngnAmt, m, y);
-
-    const platLabel = PLATFORMS.find(p=>p.key===to)?.label || to;
-    _saveXfrRecord(from,to,amt,date,m,y,notes,ngnAmt,'cash-inv');
-    toast(`Moved ${isUSDCashAccount(from)?'$'+amt:fN(ngnAmt)} from ${from} → ${platLabel}`);
-    // Log deposit as a positive movement so withdrawal-aware accrual sees it
-    addInvMovement(to, ngnAmt, date, notes);
-
-  } else {
-    // Deduct from investment platform (subs + flat total kept in sync)
-    const platLabel = PLATFORMS.find(p=>p.key===from)?.label || from;
-    if(!_invWithdraw(from, amt, m, y)){
-      toast(`Insufficient balance in ${platLabel}`); return;
-    }
-
-    // Add to cash account (in its own currency)
-    const toAmt = isUSDCashAccount(to)?+(amt/_mfx).toFixed(2):amt;
-    const cash = {...S.cash};
-    cash[to] = (cash[to]||0) + toAmt;
-    S.cash = cash;
-    cSet(CK.cash(m,y), cash);
-    if(db) db.collection('cashBalances').doc(sid(m,y)).set({...cash,month:m,year:y},{merge:true}).catch(()=>{});
-
-    _saveXfrRecord(from,to,amt,date,m,y,notes,toAmt,'inv-cash');
-    toast(`Moved ${fN(amt)} from ${platLabel} → ${to}`);
-    // Log withdrawal for realised gain tracking (existing) + accrual movement (negative)
-    addInvWithdrawal(from,amt,document.getElementById('move-date')?.value||todayStr(),document.getElementById('move-notes')?.value||'');
-    addInvMovement(from, -amt, date, notes);
-  }
-
+  const r=_doTransfer({
+    kind:_moveDir,                                  // 'cash-inv' | 'inv-cash'
+    from:document.getElementById('move-from').value,
+    to:document.getElementById('move-to').value,
+    amt:parseFloat(document.getElementById('move-amt').value),
+    date:document.getElementById('move-date').value||todayStr(),
+    notes:document.getElementById('move-notes').value.trim(),
+  });
+  if(!r.ok){toast(r.msg);return;}
+  toast('Moved '+r.msg);
   haptic([8,40,8]);
   closeMod('move-modal');
   renderCashPage();
@@ -5989,22 +6080,21 @@ async function saveMoveFunds(){
 }
 
 async function transferFunds(){
-  const from=document.getElementById('xfr-from').value,to=document.getElementById('xfr-to').value;
-  const amt=parseFloat(document.getElementById('xfr-amt').value)||0;
-  if(!amt||amt<=0){toast('Enter a valid amount');return;}
-  if(from===to){toast('Choose different accounts');return;}
-  const cash={...S.cash};
-  if((cash[from]||0)<amt){toast(`Insufficient funds in ${from}`);return;}
-  const _tfU=isUSDCashAccount(from),_ttU=isUSDCashAccount(to);
-  const _tfx=getFxRates(S.cashMonth,S.cashYear).USD||1650;
-  const _toAmt=_tfU===_ttU?amt:(_tfU?Math.round(amt*_tfx):+(amt/_tfx).toFixed(2));
-  cash[from]=(cash[from]||0)-amt;cash[to]=(cash[to]||0)+_toAmt;
-  S.cash=cash;cSet(CK.cash(S.cashMonth,S.cashYear),cash);
-  _saveXfrRecord(from,to,amt,todayStr(),S.cashMonth,S.cashYear,'',_toAmt,'cash-cash');
-  document.getElementById('xfr-amt').value='';toast(`Transferred ${_tfU?'$'+amt:fN(amt)} from ${from} to ${to}`);
-  renderCashPage();renderDashboard();setSyncStatus('syncing');
-  try{await db.collection('cashBalances').doc(sid(S.cashMonth,S.cashYear)).set({...cash,month:S.cashMonth,year:S.cashYear},{merge:true});setSyncStatus('synced');}
-  catch(e){setSyncStatus('error');}
+  setSyncStatus('syncing');
+  const r=_doTransfer({
+    kind:'cash-cash',
+    from:document.getElementById('xfr-from').value,
+    to:document.getElementById('xfr-to').value,
+    amt:parseFloat(document.getElementById('xfr-amt').value)||0,
+    // No date field on this form — date it inside the month being viewed.
+    date:_xfrDefaultDate(S.cashMonth,S.cashYear),
+    notes:'',
+  });
+  if(!r.ok){setSyncStatus('synced');toast(r.msg);return;}
+  document.getElementById('xfr-amt').value='';
+  toast('Transferred '+r.msg);
+  renderCashPage();renderDashboard();
+  setSyncStatus('synced');
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -8216,7 +8306,7 @@ function renderSettData(){
   // below on each release rather than prepending to a running changelog.
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.19</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.19: Failures that used to vanish silently are now reported in the console, so problems get noticed instead of hiding. Also corrected a note that wrongly claimed your Gemini API key never leaves your device.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.20</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.20: Transfers now record against the date you pick rather than the month you happen to be viewing, and appear in each account's history. Budgets, expense lines, transfers and interest postings now sync live across your devices.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -9147,7 +9237,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.19';
+const APP_VERSION='v4.4.20';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
