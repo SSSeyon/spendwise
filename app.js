@@ -367,6 +367,27 @@ const PLATFORMS_DEFAULT = [
 ];
 const PLATFORMS_KEY='sw3_platforms';
 function getPlatforms(){return cGet(PLATFORMS_KEY)||PLATFORMS_DEFAULT;}
+// Historical month docs can hold platforms that have since been removed from
+// the config (e.g. USDHoldings, which held ₦799,945 in 2026-07). Reducing a
+// month over the CURRENT platform list silently under-reports those months, so
+// read-only historical surfaces reduce over this union instead. Editing
+// surfaces keep using PLATFORMS, so a closed platform never becomes editable
+// again or reappears in a picker.
+const INV_META_FIELDS=new Set(['month','year','id','createdAt','updatedAt']);
+function _retiredLabel(k){
+  return String(k)
+    .replace(/([a-z0-9])([A-Z])/g,'$1 $2')      // camelCase boundary
+    .replace(/([A-Z]+)([A-Z][a-z])/g,'$1 $2')   // acronym boundary: USDHoldings -> USD Holdings
+    .trim()+' (closed)';
+}
+function platformsFor(monthData){
+  const base=getPlatforms();
+  const known=new Set(base.map(p=>p.key));
+  const extra=Object.keys(monthData||{})
+    .filter(k=>!INV_META_FIELDS.has(k)&&!known.has(k)&&Number(monthData[k])>0)
+    .map(k=>({key:k,label:_retiredLabel(k),color:'#8a8f98',currency:'NGN',retired:true}));
+  return extra.length?base.concat(extra):base;
+}
 function savePlatforms(arr){cSet(PLATFORMS_KEY,arr);_syncInvConfig();}
 // PLATFORMS is populated lazily at first render via getPlatforms() — never call at module scope
 let PLATFORMS=PLATFORMS_DEFAULT;
@@ -2111,7 +2132,7 @@ function renderDashboard(){
   const _nwAccts=_nwCfg.cashAccounts||getCashAccounts();
   const cashTotal=_nwAccts.reduce((s,b)=>{const v=cash[b]||0;return s+(isUSDCashAccount(b)?v*(_fxR.USD||1650):v);},0);
   const inv=S.investments;
-  const invTotal=_nwCfg.includeInvestments!==false?PLATFORMS.reduce((s,p)=>{
+  const invTotal=_nwCfg.includeInvestments!==false?platformsFor(inv).reduce((s,p)=>{
     const meta=getInvPlatformMeta(p.key);
     const isFI=meta.assetClass==='fixed_income';
     if(isFI&&_nwCfg.includeFixedIncome===false) return s;
@@ -2122,7 +2143,7 @@ function renderDashboard(){
   // toggles. The Investments stat card always shows the complete figure (the
   // Net Worth number above is what honours the include config). Matches the
   // total shown by drillDown('investments').
-  const invTotalAll=PLATFORMS.reduce((s,p)=>s+invBalanceFor(p.key,m,y,inv),0);
+  const invTotalAll=platformsFor(inv).reduce((s,p)=>s+invBalanceFor(p.key,m,y,inv),0);
   const debtNW=_nwCfg.includeDebtors!==false?nwDebtorsExpected():0;
   const loanNW=nwLoansOutstanding(_nwCfg);   // liability — subtracted
   const nw=invTotal+cashTotal+debtNW-loanNW;
@@ -2231,18 +2252,18 @@ function renderDashboard(){
 
   // Investments (collapsible card) — always use migrateToSubs so legacy flat data is picked up
   PLATFORMS=getPlatforms();
-  const dashInvTotal=PLATFORMS.reduce((s,p)=>s+invBalanceFor(p.key,m,y,inv),0);
+  const dashInvTotal=platformsFor(inv).reduce((s,p)=>s+invBalanceFor(p.key,m,y,inv),0);
   document.getElementById('dash-inv-total').innerHTML=dashInvTotal?maskIf('dash-inv-list',fmtCur(dashInvTotal,cur==='NATIVE'?'NGN':cur,m,y)):'—';
   const invEyeEl=document.getElementById('dash-inv-eye');
   if(invEyeEl) invEyeEl.innerHTML=eyeBtn('dash-inv-list','renderDashboard');
-  document.getElementById('dash-inv').innerHTML=PLATFORMS.map(p=>{
+  document.getElementById('dash-inv').innerHTML=platformsFor(inv).map(p=>{
     const val=invBalanceFor(p.key,m,y,inv);
     const pct=dashInvTotal>0?((val/dashInvTotal)*100).toFixed(1):'0.0';
     const dispVal=fmtPlatformVal(val,p.key,cur,m,y);
     const badge=`<span style="font-size:0.56rem;padding:1px 4px;border-radius:3px;background:var(--bg3);color:var(--text3);margin-left:4px">${p.currency}</span>`;
     return`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="drillDownInvPlatform('${p.key}')"><div style="display:flex;align-items:center;gap:8px">${platformLogoEl(p.key,p.color,22)}<div><div style="font-size:0.78rem;font-weight:600">${p.label}${badge}</div><div style="font-size:0.62rem;color:var(--text2);font-family:var(--mono)">${pct}%</div></div></div><div style="font-family:var(--mono);font-size:0.84rem;color:${val?p.color:'var(--text3)'};">${val?maskIf('dash-inv-list',dispVal):'—'}</div></div>`;
   }).join('');
-  const active=PLATFORMS.filter(p=>invBalanceFor(p.key,m,y,inv)>0);
+  const active=platformsFor(inv).filter(p=>invBalanceFor(p.key,m,y,inv)>0);
   document.getElementById('dash-abar').innerHTML=dashInvTotal&&active.length?active.map(p=>{const val=invBalanceFor(p.key,m,y,inv);return`<div style="flex:${val};background:${p.color};opacity:0.8"></div>`;}).join(''):'';
 
   // 6-Month Trend
@@ -5226,8 +5247,12 @@ function _renderInvInto(suffix){
   PLATFORMS=getPlatforms(); // always read from storage
   // suffix = '' for pg-investments, '-2' for pg-accounts acct-invest tab
   const s=suffix;
-  const inv=_getInvData(),total=PLATFORMS.reduce((acc,p)=>acc+(inv[p.key]||0),0);
+  const inv=_getInvData();
   const cur=S.dashCurrency,m=S.cashMonth,y=S.cashYear;
+  // Sub balances are a live current-month snapshot, so a past month is READ-ONLY:
+  // its figures come from that month's saved doc and the edit affordances are hidden.
+  const live=_invIsLiveMonth(m,y);
+  const total=platformsFor(inv).reduce((acc,p)=>acc+invBalanceFor(p.key,m,y,inv),0);
   const fxRates=getFxRates(m,y);
   const elTotal=document.getElementById('inv-total'+s);
   const elPlatforms=document.getElementById('inv-platforms'+s);
@@ -5238,10 +5263,11 @@ function _renderInvInto(suffix){
   const elEditFields=document.getElementById('inv-edit-fields'+s);
 
   // Split platforms into equities and fixed income
-  const eqPlats=PLATFORMS.filter(p=>{const meta=getInvPlatformMeta(p.key);return meta.assetClass!=='fixed_income';});
-  const fiPlats=PLATFORMS.filter(p=>{const meta=getInvPlatformMeta(p.key);return meta.assetClass==='fixed_income';});
-  const eqTotal=eqPlats.reduce((acc,p)=>{const subs=getSubsForPlatform(p.key);const sp=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);return acc+(sp>0?sp:(inv[p.key]||0));},0);
-  const fiTotal=fiPlats.reduce((acc,p)=>{const subs=getSubsForPlatform(p.key);const sp=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);return acc+(sp>0?sp:(inv[p.key]||0));},0);
+  const _invPlats=live?PLATFORMS:platformsFor(inv);   // past months include closed platforms
+  const eqPlats=_invPlats.filter(p=>{const meta=getInvPlatformMeta(p.key);return meta.assetClass!=="fixed_income";});
+  const fiPlats=_invPlats.filter(p=>{const meta=getInvPlatformMeta(p.key);return meta.assetClass==="fixed_income";});
+  const eqTotal=eqPlats.reduce((acc,p)=>acc+invBalanceFor(p.key,m,y,inv),0);
+  const fiTotal=fiPlats.reduce((acc,p)=>acc+invBalanceFor(p.key,m,y,inv),0);
 
   if(elTotal){
     const intBadge=fiPlats.filter(p=>getInvPlatformMeta(p.key).interestRate).length?`<span class="int-badge">Interest-bearing</span>`:'';
@@ -5352,7 +5378,7 @@ function _renderInvInto(suffix){
     const canAddSub=subs.length<5;
     const addSubBtn=canAddSub?`<button class="btn btn-g btn-full" style="font-size:0.72rem;padding:5px" onclick="addInvSub('${p.key}','${s}')">+ Add Investment</button>`:`<div style="font-size:0.62rem;color:var(--text3);text-align:center;padding:4px">Maximum 5 investments per platform</div>`;
 
-    const editSection=`<div id="inv-edit-panel-${p.key}${s}" onclick="event.stopPropagation()" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+    const editSection=!live?"":`<div id="inv-edit-panel-${p.key}${s}" onclick="event.stopPropagation()" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
       <div style="font-size:0.68rem;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px">Edit ${esc(p.label)}</div>
       <div style="margin-bottom:8px"><label class="ilabel" style="font-size:0.65rem">Logo filename</label><input class="ifield" id="plat-logo-${p.key}${s}" type="text" placeholder="e.g. piggyvest.png" value="${esc(p.logo||'')}" style="font-size:0.72rem;padding:4px 8px;margin-top:3px" oninput="updatePlatLogo('${p.key}',this.value)"><div class="csub" style="font-size:0.58rem;margin-top:2px">File in your Logos/ folder on GitHub</div></div>
       <div id="inv-sub-list-${p.key}${s}">${editPanels}</div>
@@ -5360,7 +5386,7 @@ function _renderInvInto(suffix){
       <button class="txi-del" onclick="removePlatform('${p.key}')" style="margin-top:10px;width:100%;text-align:center;padding:4px;font-size:0.65rem;color:var(--text3)">Remove platform</button>
     </div>`;
 
-    return`<div class="card" style="margin-bottom:8px;cursor:pointer" onclick="toggleInvEdit('${p.key}','${s}')">
+    return`<div class="card" style="margin-bottom:8px;${live?"cursor:pointer":""}" ${live?`onclick="toggleInvEdit('${p.key}','${s}')"`:""}>
       <div style="display:flex;align-items:center;gap:10px">
         <div id="inv-logo-th-${p.key}${s}" style="flex-shrink:0">${platformLogoEl(p.key,p.color,26)}</div>
         <div style="flex:1;min-width:0">
@@ -5380,6 +5406,14 @@ function _renderInvInto(suffix){
 
   if(elPlatforms){
     let html='';
+    if(!live){
+      const n=new Date();
+      html+=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:9px 11px;margin-bottom:10px;font-size:0.66rem;color:var(--text2);line-height:1.5">
+        Viewing <strong>${MONTHS[m-1]} ${y}</strong> — these are that month's saved balances.
+        Investment balances can only be edited for the current month.
+        <button class="btn btn-g btn-sm" style="margin-top:7px;font-size:0.62rem;padding:4px 9px" onclick="changeCashMonth(${n.getMonth()+1},${n.getFullYear()})">Go to ${MONTHS[n.getMonth()]} ${n.getFullYear()}</button>
+      </div>`;
+    }
     if(eqPlats.length){
       html+=`<div style="font-size:0.6rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--blue);margin:10px 0 5px">Equities / Growth</div>`;
       html+=eqPlats.map(_renderPlatRow).join('');
@@ -5400,7 +5434,8 @@ function _renderInvInto(suffix){
     } else elAlloc.style.display='none';
   }
   if(elEditLabel) elEditLabel.textContent=`${MONTHS[m-1]} ${y}`;
-  if(elEditFields){
+  if(elEditFields && !live){ elEditFields.innerHTML=""; }   // no data entry for past months
+  if(elEditFields && live){
     // Add Platform section only — per-platform edit is now inline in each row
     elEditFields.innerHTML=`
       <div class="card" style="margin-top:4px">
@@ -5420,6 +5455,7 @@ function _renderInvInto(suffix){
   }
 }
 function toggleInvEdit(pKey, suffix){
+  if(!_invIsLiveMonth(S.cashMonth,S.cashYear)){toast("Switch to the current month to edit investments");return;}
   const s=suffix||'';
   const panel=document.getElementById('inv-edit-panel-'+pKey+s);
   const subDisplay=document.getElementById('inv-sub-display-'+pKey+s);
@@ -5430,7 +5466,7 @@ function toggleInvEdit(pKey, suffix){
   const saveBtn=document.getElementById('inv-save-btn'+s);
   if(saveBtn){
     const anyOpen=[...document.querySelectorAll('[id^="inv-edit-panel-"]')].filter(el=>el.id.endsWith(s));
-    saveBtn.style.display=anyOpen.some(el=>el.style.display!=='none')?'block':'none';
+    saveBtn.style.display=(live&&anyOpen.some(el=>el.style.display!=="none"))?"block":"none";
   }
   if(panel.style.display!=='none') setTimeout(()=>initNumInputs(panel),0);
 }
@@ -5448,6 +5484,7 @@ function toggleSubFIFields(pKey, subId, suffix){
 }
 
 function addInvSub(pKey, suffix){
+  if(!_invIsLiveMonth(S.cashMonth,S.cashYear)){toast("Switch to the current month to edit investments");return;}
   const s=suffix||'';
   const subs=getSubsForPlatform(pKey);
   if(subs.length>=5){toast('Maximum 5 investments per platform');return;}
@@ -5465,6 +5502,7 @@ function addInvSub(pKey, suffix){
 }
 
 function removeInvSub(pKey, subId, suffix){
+  if(!_invIsLiveMonth(S.cashMonth,S.cashYear)){toast("Switch to the current month to edit investments");return;}
   const subs=getSubsForPlatform(pKey);
   if(subs.length<=1){toast('A platform must have at least one investment');return;}
   if(!confirm('Remove this investment?')) return;
@@ -5483,6 +5521,7 @@ function removeInvSub(pKey, subId, suffix){
 let _adjPKey=null, _adjSubId=null, _adjType=null;
 
 function openInvAdjModal(pKey, subId, type){
+  if(!_invIsLiveMonth(S.cashMonth,S.cashYear)){toast("Switch to the current month to edit investments");return;}
   _adjPKey=pKey; _adjSubId=subId; _adjType=type;
   const subs=getSubsForPlatform(pKey);
   const sub=subs.find(s=>s.id===subId);
@@ -5608,6 +5647,7 @@ function setLiqDest(dest){
 }
 
 function openLiqModal(pKey, subId){
+  if(!_invIsLiveMonth(S.cashMonth,S.cashYear)){toast("Switch to the current month to edit investments");return;}
   _liqPKey=pKey; _liqSubId=subId; _liqDest='cash';
   const subs=getSubsForPlatform(pKey);
   const sub=subs.find(s=>s.id===subId);
@@ -5814,7 +5854,7 @@ async function renderInvTrend(suffix){
     catch(e){snap=await db.collection('investments').get();}
     if(!snap||snap.empty){console.warn('renderInvTrend: no investment docs');return;}
     const data=snap.docs
-      .map(d=>{const doc=d.data();return{year:doc.year,month:doc.month,label:`${MS[(doc.month||1)-1]} '${String(doc.year||2024).slice(2)}`,total:PLATFORMS.reduce((sum,p)=>sum+(doc[p.key]||0),0)};})
+      .map(d=>{const doc=d.data();return{year:doc.year,month:doc.month,label:`${MS[(doc.month||1)-1]} '${String(doc.year||2024).slice(2)}`,total:platformsFor(doc).reduce((sum,p)=>sum+(doc[p.key]||0),0)};})
       .filter(d=>d.total>0)
       .sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);
     if(!data.length){console.warn('renderInvTrend: all totals zero');return;}
@@ -8306,7 +8346,7 @@ function renderSettData(){
   // below on each release rather than prepending to a running changelog.
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.20</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.20: Transfers now record against the date you pick rather than the month you happen to be viewing, and appear in each account's history. Budgets, expense lines, transfers and interest postings now sync live across your devices.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.21</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.21: The Investments page now shows the balances each platform actually held in the month you're viewing, and is read-only for past months so you can't overwrite today's figures. Closed platforms no longer disappear from your history.</div></div></div>
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8610,7 +8650,7 @@ function drillDown(type){
     const _nwCfg=getNWConfig();
     const _nwAccts=_nwCfg.cashAccounts||getCashAccounts();
     const _fxRNW=getFxRates(m,y);
-    const invTotal=_nwCfg.includeInvestments!==false?PLATFORMS.reduce((s,p)=>{
+    const invTotal=_nwCfg.includeInvestments!==false?platformsFor(inv).reduce((s,p)=>{
       const meta=getInvPlatformMeta(p.key);
       const isFI=meta.assetClass==='fixed_income';
       if(isFI&&_nwCfg.includeFixedIncome===false) return s;
@@ -8621,7 +8661,7 @@ function drillDown(type){
     const debtOwed=_nwCfg.includeDebtors!==false?nwDebtorsExpected():0;
     body='';
     if(_nwCfg.includeInvestments!==false){
-      const visiblePlats=PLATFORMS.filter(p=>{
+      const visiblePlats=platformsFor(inv).filter(p=>{
         const meta=getInvPlatformMeta(p.key);
         const isFI=meta.assetClass==='fixed_income';
         if(isFI&&_nwCfg.includeFixedIncome===false) return false;
@@ -8685,7 +8725,7 @@ function drillDown(type){
   else if(type==='investments'){
     title=`Investments — ${MONTHS[m-1]} ${y}`;
     const inv=S.investments;
-    const total=PLATFORMS.reduce((s,p)=>s+invBalanceFor(p.key,m,y,inv),0);
+    const total=platformsFor(inv).reduce((s,p)=>s+invBalanceFor(p.key,m,y,inv),0);
     body=PLATFORMS.map(p=>{
       const val=invBalanceFor(p.key,m,y,inv);
       const pct=total>0?((val/total)*100).toFixed(1):'0.0';
@@ -9237,7 +9277,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.20';
+const APP_VERSION='v4.4.21';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
