@@ -7,13 +7,23 @@ Source root: `G:\My Drive\Personal things\App\Spendwise\spendwise\`
 
 ---
 
+## Start here
+
+Working tree is **clean and fully pushed** at **v4.4.22** (`main` == `origin/main`). Nothing is half-finished. `.claude/` is untracked on purpose (local launch config).
+
+Read, in order: **Current state** → **Production data cleanup** (so the data doesn't confuse you) → whichever of the architecture sections touches what you're about to change. The **Version bump convention** and **Testing / preview** sections are non-negotiable; the encoding warning in the former cost a full rebuild once.
+
+---
+
 ## Current state (as of this note, 2026-09-24)
 
 - Version **v4.4.22**, committed and pushed. Standing pattern: the user often pushes independently without announcing it, so **always re-verify `git status` / `git fetch`** rather than trusting an earlier read.
 - Files: `index.html` (shell, ~782 lines) + `app.js` (**~10,400 lines, all logic**) + `styles.css` + `sw.js` + `bump-version.ps1`.
+- The app is **in daily use** — the `transactions` collection grew from 1,078 to ~1,193 docs during/after the 2026-09 session. Never assume a count you read earlier is still current.
 - Firebase project `spendwise-d6393` — Firestore, **no authentication**, public client config, **no staging environment**. Every preview/dev session talks directly to the user's real, only copy of their financial data. Both the repo and the Firestore project are effectively publicly readable at the client-key level — a known, accepted tradeoff for this single-user app, not an oversight. Do not "fix" it unasked.
 - **Gemini API keys are multi-key and Firestore-synced** (`appConfig/aiKeys`). This supersedes any older "localStorage only, never Firestore" claim. The in-code comments that wrongly repeated that claim were corrected in v4.4.19.
 - The user sometimes edits files directly via the GitHub web UI in parallel with agent sessions, which has twice caused local/origin divergence (see incidents below).
+- **The user is hands-on and specific.** They will overrule a recommendation with a better-informed answer about their own data (e.g. reversing a merge direction, or telling you two similarly-named people are different). Ask rather than assume on anything touching their records, and do the work they actually asked for rather than a nearby larger refactor.
 
 ## Recent history (v4.4.5 → v4.4.22)
 
@@ -29,6 +39,37 @@ Per-release detail is in the git log — commit messages are deliberately thorou
 
 ---
 
+## Production data cleanup performed 2026-09 (read before you get confused by the data)
+
+A session on 2026-09-24 ran a **user-approved bulk cleanup against live Firestore**, modifying **112 of the then-1,078 transaction documents** across 34 months (Nov 2023 – Aug 2026). Only `category` and `payee` fields were touched — no amounts, no dates, no documents created or deleted. Doc count was identical before and after.
+
+What changed:
+
+| Operation | Count |
+|---|---|
+| Category merge `Energy` → `Fuel` (duplicate categories; budgets merged too) | 47 |
+| Category merge `Work travel` → `Work Travel` (casing duplicate) | 2 |
+| Payee `Power`: Utilities → **Domestic** | 5 |
+| Payee `Gbewato`: Loans → **Gifts and donations** | 1 |
+| Payee `Gas`: Fuel → **Domestic** | 2 |
+| Payee `DSTV`: Recreation → **Subscriptions** | 1 |
+| Payee `Rent`: Domestic → **Rent** category (and `Rent` registered as a custom category) | 1 |
+| Payee merge `Eat Out` → `Eat out` (Food) | 9 |
+| Payee merge `Ozzy shopping` → **`Ozzy`** (Groceries) — note the direction, the user chose `Ozzy` as the surviving name | 42 |
+| Payee merge `Youtube` → `YouTube` (Subscriptions) | 2 |
+| Payee merge `💻 Claude` → `Claude` (Subscriptions) | 1 |
+
+Consequences a future session should expect and **not** treat as bugs:
+- **`Utilities` now has zero transactions.** It is a built-in category so it still appears in pickers. That is intentional — the user chose to keep Power under Domestic.
+- The user explicitly **declined** several proposed merges: `Mama`/`Mum` and `Senapon`/`Senapon Whesu` are **different people**; `Kola`/`Kola's Wedding` and `Gbago`/`Gbago Day` stay separate; `Netflix`/`Amazon` stay separate from the legacy combined `Netflix/Amazon` line.
+- Still outstanding from that review, never actioned: the emoji duplicates `🎁 Semasa` and `🎁 Gbewato` in Gifts, and the `-- Select --` placeholder that leaked in as a real payee (~10 rows).
+- Pre-2026 months were logged as **category totals with no payee** (the `—` rows, e.g. Groceries ₦10.3M blank). That is the user's original data-entry style, not corruption — payee-level analysis simply doesn't cover those months.
+
+> ⚠️ **The row-level undo manifest is GONE.** It was written to a session-scoped scratchpad that no longer exists. Partial recovery is still possible for the pre-2026 rows because their doc IDs encode the original category (`hist_2023_11_Energy`, `hist_2024_01_Work_travel` — 26 and 2 docs respectively, all now `category: "Fuel"` / `"Work Travel"`). The 2026 rows have random doc IDs and are **not** identifiable from the ID alone. **If you run another bulk data operation, write the undo manifest into the repo, not the scratchpad.**
+
+The tooling used still exists in the app and is the right way to do this again: `_rewritePayeeHistory()`, `_mergePayeeCore()`, `movePayeeCategory()` and `execMergeCat()` (the last one also merges budgets across all months and busts the local caches).
+
+---
 ## Transfers — one code path (v4.4.20; read before touching money movement)
 
 There used to be **three** transfer implementations (expense modal, Move modal, Cash-page quick transfer). All three wrote the whole `cashBalances` doc directly and derived the month from **whichever month the UI was showing**, not the transaction's date — so a transfer dated in July while September was on screen moved *September's* balance. They also bypassed the cash ledger (hence transfers never appeared in account history), and a full-doc write could clobber a concurrent change from another device.
