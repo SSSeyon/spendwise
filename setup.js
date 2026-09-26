@@ -196,6 +196,7 @@ function _suRenderOnboard(){
       <button class="btn btn-p btn-full" onclick="SU.step=1;SU.render()">Get started</button>
       <button class="btn btn-g btn-full" onclick="acctShowSignIn()">I already have an account</button>
       <div class="acct-muted">No sign-up needed to start.</div>
+      <div class="acct-link" onclick="acctClose();openGuide()">How does it work? Read the guide</div>
     `);return;
   }
   if(SU.step===1){

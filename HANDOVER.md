@@ -1,4 +1,4 @@
-# SpendWise — Handover Note (v4.5.1)
+# SpendWise — Handover Note (v4.6.0)
 
 Personal-finance PWA, shared with the owner's friends since v4.5 (2026-09-26). Works signed out (data stays on the device); optional username/password accounts sync across devices with every document **encrypted on the device** — the project owner cannot read other users' data.
 Live: https://ssseyon.github.io/spendwise/
@@ -11,7 +11,7 @@ Source root: `G:\My Drive\Personal things\App\Spendwise\spendwise\`
 
 Read **Accounts & encryption (v4.5)** first — it changed where every byte of data lives. `.claude/` is untracked on purpose (local launch config + `test-accounts.local.md`).
 
-**Cutover status (2026-09-26):** owner account `seyon` (uid `pkuOGxHr19goU9qJjmPq2f3MzEw2`) created; legacy import verified id-for-id across all 13 collections (1,199 transactions). Owner still to do: paste `firestore.rules` in the console, publish shared AI keys (More → Data), restrict the Gemini key in Google Cloud, sign in on other devices, delete test accounts `swtest-a-0926` / `swtest-b-0926` (Auth + `users/<uid>`). After that, `legacy-profile.js` can be deleted.
+**Cutover status (2026-09-26):** owner account `seyon` (uid `pkuOGxHr19goU9qJjmPq2f3MzEw2`) created; legacy import verified id-for-id across all 13 collections (1,199 transactions). Rules pasted and verified. **v4.6.0 removed the import code and `legacy-profile.js`**; the old top-level collections are closed by the rules and are only a backup now. A pre-v4.5 device ("legacy" mode) simply wipes its caches on sign-in. Owner-side items that may still be open: publish shared AI keys (Settings → Data → Advanced), Gemini key restrictions + quota, a Firebase usage alert (needs the Blaze plan with a budget).
 
 Read, in order: **Current state** → **Production data cleanup** (so the data doesn't confuse you) → whichever of the architecture sections touches what you're about to change. The **Version bump convention** and **Testing / preview** sections are non-negotiable; the encoding warning in the former cost a full rebuild once.
 
@@ -29,7 +29,7 @@ Read, in order: **Current state** → **Production data cleanup** (so the data d
 
 ## Accounts & encryption (v4.5) — read before touching any data code
 
-Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB local db, the offline increment queue) · `account.js` (sign-in screens, legacy import) · `setup.js` (onboarding, logo catalogue + picker) · `legacy-profile.js` (the owner's old built-in defaults, loaded only by the import — delete once no longer needed) · `firestore.rules`.
+Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB local db, the offline increment queue) · `account.js` (sign-in screens, recovery code/email, delete account, app lock) · `setup.js` (onboarding, logo catalogue + picker) · `firestore.rules`.
 
 - **Data modes** (`DATA_MODE` in app.js): `local` (signed out — `db` is an IndexedDB db with the same API), `cloud` (`db = VAULT.udb`), `locked`, `legacy` (a pre-v4.5 device: renders its cache with `db=null` until the user signs in / imports). App code keeps calling `db.collection(...)` unchanged.
 - **Encryption:** PBKDF2(600k)+HKDF from the password gives the Firebase auth secret (the real password never leaves the device) and a key that wraps a random AES-GCM data key. Docs are stored as `{v,_enc,year,month}`; AAD binds ciphertext to its path; bodies over 512 B are gzipped first (1 MiB doc limit). Only `year`/`month` are plaintext, so **server-side queries can only filter/order on year, month or document id** — anything else (payee, category, date) is filtered/sorted on the device by `udb`, which means reading the whole collection. Keep new queries month-scoped.
@@ -43,6 +43,16 @@ Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB l
 - **Logos:** served from the app's own `Logos/`; `LOGO_CATALOG` in setup.js resolves a logo by account/platform name at render time (20 added from official Play Store icons); users can upload their own (a 64px data URL stored in their settings).
 - The one-time Fife→Kids / USD Cash / Energy→Fuel repairs no longer run at boot.
 - Tested 2026-09-26 on localhost with two test accounts: sign-up + upload of local data, ciphertext-only storage, restore on sign-in, recovery, password change, concurrent increments from two tabs, live listeners, offline-then-reload, cross-user isolation. Known gap (pre-existing): if the boot sync throws, realtime listeners stay off until a reload.
+
+## v4.6.0 (2026-09-26) — features added for sharing with friends
+
+- **Quick add** (top of the + form, `quickAddParse` / `_qaParseLocal` / `_qaParseAI` in app.js): an on-device parser fills the form instantly and works offline; with a key and a connection, Gemini refines it (`thinkingBudget:0` + JSON mode, ~3 s; with thinking on it took 11 s+ and could cut the JSON off). Only the typed sentence and the user's category/item/account **names** are sent. Nothing saves until the user taps Save. 🎤 uses the Web Speech API when the browser has it.
+- **App lock** (account.js, bottom): WebAuthn platform authenticator (fingerprint / face / device PIN). It is a UI gate, not encryption; the assertion is not verified (no server). Needs an account: the fallback is the password, checked offline against a cached copy of the wrapped key (`sw3_lockv_<uid>`, `VAULT.verifyPassword`). The credential is bound to the origin, so a domain change needs lock re-enabled.
+- **Delete my account** (`VAULT.deleteAccount`): re-authenticates, deletes every doc under `users/{uid}` (list in `USER_COLLECTIONS`, vault.js; **add new collections there**), retires the recovery doc, deletes the Auth user, wipes the device.
+- **Report a problem**: `mailto:` to `FEEDBACK_EMAIL` (app.js) with version/mode/page/device, with no personal data.
+- **Getting started** checklist on Home (`renderGetStarted`); guide link on the welcome screen.
+- Settings → Data reorganised: Account, App lock, Goals, Recurring, Help; the rest under a collapsed **Advanced** (`#sett-adv`; `goToApiKeys` opens it). Balance Audit moved there from Export. The bottom tab "More" is now **Settings**.
+- **Removed:** Monarch design mode (Classic only), the seed/JSON seed importer, the one-time Fife/Energy/USD repairs, the legacy import + `legacy-profile.js`. Income categories are no longer hard-coded (they were personal): `getIncomeCats()` = standard set + any used before.
 
 ## Recent history (v4.4.5 → v4.4.22)
 
@@ -233,4 +243,4 @@ No open bugs. Deliberately **not** done, with reasons:
 4. **`customExpLines.__removed__`** is a sentinel key stored *inside* the data map. Firestore rejects field names that both start and end with `__`, which crashed the `customLines` sync until `saveCustomLines`/`loadCustomLines` split it into a separate `removed` field. The sentinel itself remains — a cleaner model would hold it outside the map, but that needs a data migration.
 5. **The shared Gemini key is readable by anyone** — `publicConfig/aiKeys` is world-readable by design. Protection lives in Google Cloud: HTTP-referrer + API restriction and a daily quota on the key.
 6. **The Debtors page's own "Expected Back" stat** still counts settled/zero/negative debts. The Net Worth breakdown filters them (v4.4.18) but the user scoped that change to the NW card only.
-7. **817 inline `style="…"` vs 288 CSS classes** — any theming change is a shotgun edit across template literals. This is why Monarch mode needed render-branching rather than plain CSS.
+7. **817 inline `style="…"` vs 288 CSS classes** — any theming change is a shotgun edit across template literals. (The Monarch design mode that worked around this was removed in v4.6.0.)

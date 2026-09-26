@@ -64,22 +64,6 @@ function toggleTheme(){
   }catch{}
 })();
 
-// ── DESIGN MODE (Classic | Monarch) ─────────────────────────────────────────
-// Cosmetic only. Monarch adds body.monarch, which activates the scoped token
-// blocks at the bottom of styles.css plus a few render flourishes (icon
-// badges, hero chart, grouped budget). Classic is the default and its CSS
-// token blocks are untouched when the flag is off. Data and features are
-// identical in both modes.
-function getDesignMode(){try{return localStorage.getItem('sw3_design_mode')==='monarch'?'monarch':'classic';}catch{return 'classic';}}
-function isMonarch(){return document.body.classList.contains('monarch');}
-function setDesignMode(mode){
-  try{localStorage.setItem('sw3_design_mode',mode);}catch{}
-  document.body.classList.toggle('monarch',mode==='monarch');
-  try{renderAll();}catch(e){console.warn("renderAll after design-mode switch failed",e);}
-  toast(mode==='monarch'?'Monarch design mode':'Classic design mode');
-}
-(function initDesignMode(){try{if(getDesignMode()==='monarch')document.body.classList.add('monarch');}catch{}})();
-
 // ══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
 // ══════════════════════════════════════════════════════════════════════════
@@ -89,7 +73,7 @@ const MS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec
 // Built-in categories and their starter "actual expense" lines. Generic on
 // purpose (v4.5): each user adds their own payees, stored in their account
 // (appConfig/customLines). The owner's old personal lines were moved into
-// their account by the legacy import (see legacy-profile.js).
+// their account by the one-time v4.5 import (code removed in v4.6).
 const CAT_LINES = {
   'Utilities': ['Power','Water'],
   'Fuel': ['Fuel','Gas'],
@@ -196,12 +180,6 @@ const CAT_ICONS = {
   'Work Travel':        '✈️',
   'Education':          '📚',
 };
-
-// Circular tinted icon badge (Monarch mode only — call sites branch on
-// isMonarch(); Classic keeps its original plain-emoji markup untouched).
-const _CATB_PALETTE=['#0e9384','#e04f16','#444ce7','#ba24d5','#0086c9','#e31b54','#099250','#dc6803','#6938ef','#088ab2'];
-function catColor(cat){let h=0;const s=String(cat||'');for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return _CATB_PALETTE[h%_CATB_PALETTE.length];}
-function catBadge(cat){return`<span class="catb" style="--catbg:${catColor(cat)}26">${CAT_ICONS[cat]||'📦'}</span>`;}
 
 // ── LOGOS ──────────────────────────────────────────────────────────────────
 // A logo value is either a filename in the app's own Logos/ folder (the
@@ -787,7 +765,7 @@ function openRecurModal(){
 }
 function deleteRecurring(i){const list=getRecurring();list.splice(i,1);saveRecurring(list);openRecurModal();renderRecurringCard();}
 
-// ── TRANSACTION RULES (auto-categorization — GLOBAL, runs in both design modes) ──
+// ── TRANSACTION RULES (auto-categorization) ──
 // Stored like recurring: localStorage cache + appConfig/rules doc in Firestore.
 // A rule = {match, category}: when an expense name contains `match`
 // (case-insensitive), the category is auto-assigned in the expense form.
@@ -824,7 +802,7 @@ function addRule(){
 }
 function deleteRule(i){const list=getRules();list.splice(i,1);saveRules(list);renderSettBudget();}
 
-// ── GOALS (GLOBAL feature — data + logic run in both design modes) ──────────
+// ── GOALS ──────────
 // Stored like recurring: localStorage cache + appConfig/goals doc in Firestore.
 // A goal = {id, name, icon, target, current, deadline, createdAt}.
 const CK_GOALS='sw3_goals';
@@ -904,20 +882,6 @@ function deleteGoalFromModal(){
   renderGoalsCard();renderSettData();
 }
 
-// ── BUDGET CATEGORY GROUPS (Monarch grouped budget rollups) ────────────────
-// Fixed default grouping of the built-in categories; custom categories fall
-// into "Other". Used only by the Monarch dashboard budget view — Classic
-// keeps its flat list.
-const DEF_CAT_GROUPS={
-  'Home & Utilities':['Utilities','Domestic','Internet services'],
-  'Food':['Food','Groceries'],
-  'Transport':['Fuel','Car maintenance','Work Travel'],
-  'Family':['Kids','Education'],
-  'Personal':['Personal care','Recreation'],
-  'Giving & Loans':['Gifts and donations','Loans'],
-};
-function catGroupOf(cat){for(const[g,arr]of Object.entries(DEF_CAT_GROUPS)){if(arr.includes(cat))return g;}return'Other';}
-
 // HISTORY is loaded from localStorage (seeded via JSON import).
 function getHistory(){return cGet('sw3_history')||[];}
 
@@ -964,50 +928,6 @@ const cSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){if(!_
 
 function loadFromCache(){
   _applyProfile(getProfile());
-  // ── Migrate Energy → Fuel (one-time, background) ──────────────────────
-  if(!cGet('sw3_migrated_energy_to_fuel')){
-    // Rewrite all cached transaction months synchronously
-    const allTxnKeys=Object.keys(localStorage).filter(k=>k.startsWith('sw3_txns_'));
-    allTxnKeys.forEach(lsKey=>{
-      const arr=cGet(lsKey);if(!arr)return;
-      let changed=false;
-      arr.forEach(t=>{if(t.category==='Energy'){t.category='Fuel';changed=true;}});
-      if(changed)cSet(lsKey,arr);
-    });
-    // Merge budget allocations in all cached budget months
-    const allBudgetKeys=Object.keys(localStorage).filter(k=>k.startsWith('sw3_budgets_'));
-    allBudgetKeys.forEach(lsKey=>{
-      const arr=cGet(lsKey);if(!arr)return;
-      if(arr['Energy']){arr['Fuel']=(arr['Fuel']||0)+arr['Energy'];delete arr['Energy'];cSet(lsKey,arr);}
-    });
-    // Merge payee lines
-    const energyLines=CAT_LINES['Energy']||[];
-    if(energyLines.length){
-      if(!CAT_LINES['Fuel'])CAT_LINES['Fuel']=[];
-      energyLines.forEach(l=>{if(!CAT_LINES['Fuel'].includes(l))CAT_LINES['Fuel'].push(l);});
-      CAT_LINES['Energy']=[];
-    }
-    // Remove Energy from custom cats if present
-    const custom=getCustomCats().filter(c=>c!=='Energy');saveCustomCats(custom);
-    cSet('sw3_migrated_energy_to_fuel',true);
-  }
-
-  if(!cGet('sw3_migrated_usd_cash')){
-    const m=new Date().getMonth()+1,y=new Date().getFullYear();
-    const inv=cGet(CK.inv(m,y));
-    if(inv&&inv.USDHoldings&&inv.USDHoldings>0){
-      const fxR=getFxRates(m,y);
-      const usdAmt=+(inv.USDHoldings/fxR.USD).toFixed(2);
-      const cash=cGet(CK.cash(m,y))||{};
-      if(!cash['USD Cash']||cash['USD Cash']===0){
-        cash['USD Cash']=usdAmt;
-        cSet(CK.cash(m,y),cash);
-        // Also write to Firestore so loadCashData doesn't overwrite the migrated value
-        cSet('sw3_usd_cash_pending_migration',{m,y,usdAmt});
-      }
-    }
-    cSet('sw3_migrated_usd_cash','1');
-  }
 
   // One-time: strip legacy ledger/segment fields from investment meta so
   // interest is computed statelessly from the current principal only.
@@ -1331,7 +1251,7 @@ async function _bootSync(){
 
 // Wipe every per-account data cache on this device (sign-out, or replacing
 // this device's local data with an account's). UI prefs survive.
-const _KEEP_ON_WIPE=new Set(['sw3_vault_incq','sw3_theme','sw3_design_mode','sw3_dash_order','sw3_hidden_cards','sw3_last_page','sw3_dash_currency',LOCAL_MODE_LS]);
+const _KEEP_ON_WIPE=new Set(['sw3_vault_incq','sw3_theme','sw3_dash_order','sw3_hidden_cards','sw3_last_page','sw3_dash_currency',LOCAL_MODE_LS]);
 function _wipeDataCaches(){
   try{
     const ks=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith('sw3_')&&!_KEEP_ON_WIPE.has(k))ks.push(k);}
@@ -1723,7 +1643,7 @@ async function _prefetchHistoryMonths(){
       const snap=await db.collection('transactions').where('year','==',yy).where('month','==',mm).get();
       // Apply the same category renames the one-time local migrations do,
       // since those already ran before these months were cached
-      cSet(CK.txns(mm,yy),snap.docs.map(d=>{const t={id:d.id,...d.data()};if(t.category==='Energy')t.category='Fuel';if(t.category==='Fife')t.category='Kids';return t;}));
+      cSet(CK.txns(mm,yy),snap.docs.map(d=>{const t={id:d.id,...d.data()};return t;}));
       fetched++;
     }catch(e){/* offline or rules — insights degrade gracefully */}
   }
@@ -1776,16 +1696,6 @@ async function loadInvData(m,y){
 }
 
 async function loadCashData(m,y){
-  // Flush any pending USD Cash migration write to Firestore (one-time)
-  const pendingMig=cGet('sw3_usd_cash_pending_migration');
-  if(pendingMig&&db){
-    try{
-      const {m:pm,y:py,usdAmt}=pendingMig;
-      const migRef=db.collection('cashBalances').doc(sid(pm,py));
-      await migRef.set({'USD Cash':usdAmt,year:py,month:pm},{merge:true});
-      cSet('sw3_usd_cash_pending_migration',null);
-    }catch(e){_warnLoad("loadCashData",e);}
-  }
   try{
     const localCash=cGet(CK.cash(m,y))||{};
     const doc=await db.collection('cashBalances').doc(sid(m,y)).get();
@@ -2191,8 +2101,45 @@ function renderAll(){
 // ══════════════════════════════════════════════════════════════════════════
 // DASHBOARD
 // ══════════════════════════════════════════════════════════════════════════
+// ── Getting started checklist (Home, new users) ──
+// Shown until every step is done, the user has logged a few entries, or they
+// dismiss it. Steps tick themselves off from real data.
+const GETSTARTED_LS='sw3_getstarted_off';
+function _hasAnyTxns(min){
+  let n=(S.txns||[]).length;
+  try{for(let i=0;i<localStorage.length&&n<min;i++){const k=localStorage.key(i);if(k&&k.startsWith('sw3_txns_'))n+=(cGet(k)||[]).length;}}catch{}
+  return n>=min;
+}
+function renderGetStarted(){
+  const el=document.getElementById('dash-getstarted');if(!el)return;
+  let off=false;try{off=!!localStorage.getItem(GETSTARTED_LS);}catch{}
+  if(off||_hasAnyTxns(5)){el.innerHTML='';return;}
+  const hasBudget=Object.values(S.budgets||{}).some(v=>+v>0);
+  const steps=[
+    {done:getCashAccounts().length>0,t:'Add your bank accounts',s:'Accounts → Cash → ✎ Edit Balances',go:"navTo('accounts')"},
+    {done:_hasAnyTxns(1),t:'Log your first expense',s:'Tap the round + button, or type it in Quick add',go:"openExpModal('expense')"},
+    {done:hasBudget,t:'Set a monthly budget',s:'Settings → Budget',go:"navTo('settings');settTab('budget',document.querySelectorAll('#pg-settings .tabs .tab')[1])"},
+    {done:typeof DATA_MODE!=='undefined'&&DATA_MODE==='cloud',t:'Create an account to sync',s:'Use it on all your devices and never lose your data',go:"acctShowWhy()"},
+  ];
+  if(steps.every(x=>x.done)){el.innerHTML='';return;}
+  const n=steps.filter(x=>x.done).length;
+  el.innerHTML=`<div class="card gs-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <div style="font-size:0.82rem;font-weight:700">Getting started <span style="font-size:0.66rem;color:var(--text3);font-weight:500">${n} of ${steps.length}</span></div>
+      <span class="sh-link" style="font-size:0.66rem" onclick="dismissGetStarted()">Hide</span>
+    </div>
+    ${steps.map(x=>`<div class="gs-row${x.done?' done':''}" ${x.done?'':`onclick="${x.go}"`}>
+      <span class="gs-tick">${x.done?'✓':''}</span>
+      <div style="flex:1;min-width:0"><div class="gs-t">${x.t}</div>${x.done?'':`<div class="gs-s">${x.s}</div>`}</div>
+      ${x.done?'':'<span class="gs-go">›</span>'}
+    </div>`).join('')}
+    <div class="gs-foot" onclick="openGuide()">New to SpendWise? <b>Read the guide ›</b></div>
+  </div>`;
+}
+function dismissGetStarted(){try{localStorage.setItem(GETSTARTED_LS,'1');}catch{}renderGetStarted();}
 function renderDashboard(){
   const m=S.dashMonth,y=S.dashYear,cur=S.dashCurrency;
+  renderGetStarted();
   const _cs=document.getElementById('dash-currency');if(_cs&&_cs.value!==cur)_cs.value=cur;
   // Keep all tab currency selects in sync
   ['exp-currency','acct-currency','forecast-currency'].forEach(id=>{const el=document.getElementById(id);if(el&&el.value!==cur)el.value=cur;});
@@ -2322,27 +2269,10 @@ function renderDashboard(){
   const catRows=allCats.filter(c=>catSpend[c]>0).map(c=>({cat:c,spent:catSpend[c]||0,budg:S.budgets[ck(c)]||0})).sort((a,b)=>b.spent-a.spent);
   const _catRowHtml=r=>{
     const st=bSt(r.spent,r.budg);const pct=r.budg?Math.min(r.spent/r.budg*100,100):0;
-    const icn=isMonarch()?catBadge(r.cat):`<span style="margin-right:5px">${CAT_ICONS[r.cat]||''}</span>`;
+    const icn=`<span style="margin-right:5px">${CAT_ICONS[r.cat]||''}</span>`;
     return`<div class="cr"><div class="cr-top"><span class="cr-name">${icn}${r.cat}</span><div class="cr-vals"><span class="cr-spent" style="color:${st==='over'?'var(--red)':st==='warn'?'var(--gold)':'var(--text)'}">${fmtCur(r.spent,cur,m,y)}</span>${r.budg?`<span class="cr-budg">/ ${fmtCur(r.budg,cur,m,y)}</span>`:''}</div></div><div class="prog"><div class="pf ${st}" style="width:${pct}%"></div></div></div>`;
   };
-  if(isMonarch()&&catRows.length){
-    // Monarch: category-group rollups (parent totals + child rows)
-    const grouped={};
-    catRows.forEach(r=>{const g=catGroupOf(r.cat);(grouped[g]=grouped[g]||[]).push(r);});
-    const gEntries=Object.entries(grouped).map(([g,rows])=>({g,rows,spent:rows.reduce((s,r)=>s+r.spent,0),budg:rows.reduce((s,r)=>s+r.budg,0)})).sort((a,b)=>b.spent-a.spent);
-    document.getElementById('dash-cats').innerHTML=gEntries.map(ge=>{
-      const gst=bSt(ge.spent,ge.budg);
-      return`<div style="margin-bottom:14px">
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0 5px">
-          <span style="font-size:0.64rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text2)">${ge.g}</span>
-          <span style="font-size:0.64rem;font-family:var(--mono);color:${gst==='over'?'var(--red)':'var(--text2)'}">${fmtCur(ge.spent,cur,m,y)}${ge.budg?` / ${fmtCur(ge.budg,cur,m,y)}`:''}</span>
-        </div>
-        ${ge.rows.map(_catRowHtml).join('')}
-      </div>`;
-    }).join('');
-  }else{
     document.getElementById('dash-cats').innerHTML=catRows.length?catRows.map(_catRowHtml).join(''):'<div class="empty"><div class="empty-i">↕</div>No expenses this month</div>';
-  }
 
   // Cash (collapsible card)
   const cashAccts=getCashAccounts();
@@ -2399,15 +2329,12 @@ function renderDashboard(){
   // Net Worth trend
   renderNWTrendChart();
 
-  // Monarch chart-forward hero (no-op in Classic)
-  renderNWHeroChart();
-
   // Recent transactions
   const recEl=document.getElementById('dash-recent');
   const combined=[...txns.map(t=>({...t,type:'exp'})),...incList.map(t=>({...t,type:'inc'}))].sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:txnTs(b.createdAt)-txnTs(a.createdAt)).slice(0,5);
   if(!combined.length){recEl.innerHTML='<div class="empty"><div class="empty-i">↕</div>No transactions yet</div>';}
   else{recEl.innerHTML='<div class="txlist">'+combined.map(tx=>{
-    const _lbl=tx.category?(isMonarch()?catBadge(tx.category)+tx.category:(CAT_ICONS[tx.category]||'')+' '+tx.category):esc(tx.payee)||'—';
+    const _lbl=tx.category?((CAT_ICONS[tx.category]||'')+' '+tx.category):esc(tx.payee)||'—';
     return`<div class="txi"><div><div class="txi-cat">${_lbl}</div><div class="txi-meta">${esc(tx.payee||tx.notes)||'—'} · ${fmtDate(tx.date)}</div></div><div class="${tx.type==='inc'?'txi-amt txi-inc':'txi-amt txi-exp'}">${tx.type==='inc'?'+':''}${fmtCur(tx.amount,cur,m,y)}</div></div>`;
   }).join('')+'</div>';}
 
@@ -3391,26 +3318,6 @@ function renderNWTrendChart(){
   S.nwChart=new Chart(ctx,{type:'line',data:{labels:pts.map(p=>p.label),datasets:[{data:pts.map(p=>p.nw),borderColor:'#c8f542',backgroundColor:'rgba(200,245,66,0.06)',borderWidth:2,pointBackgroundColor:'#c8f542',pointRadius:4,tension:0.35,fill:true}]},options:{responsive:true,maintainAspectRatio:true,layout:{padding:{top:18}},plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>fmtChartNGN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}},plugins:[nwLabelPlugin]});
 }
 
-// Monarch mode: 12-month net-worth area chart inside the Net Worth hero card.
-// Read-only over cached history; hidden (and destroyed) entirely in Classic.
-function renderNWHeroChart(){
-  const wrap=document.getElementById('nw-hero-chart-wrap');
-  if(!wrap)return;
-  const _teardown=()=>{wrap.style.display='none';if(S.nwHeroChart){S.nwHeroChart.destroy();S.nwHeroChart=null;}};
-  if(!isMonarch()||_isHidden('nw')){_teardown();return;}
-  const hist=getHistory();
-  const pts=hist.slice(-12).map(h=>({label:h.label,nw:_nwForMonth(h.month,h.year)})).filter(p=>p.nw>0);
-  if(pts.length<2){_teardown();return;}
-  const canvas=document.getElementById('nw-hero-chart');
-  if(!canvas)return;
-  wrap.style.display='block';
-  if(S.nwHeroChart)S.nwHeroChart.destroy();
-  const acc=(getComputedStyle(document.body).getPropertyValue('--accent')||'#14b8a6').trim();
-  S.nwHeroChart=new Chart(canvas.getContext('2d'),{type:'line',
-    data:{labels:pts.map(p=>p.label),datasets:[{data:pts.map(p=>p.nw),borderColor:acc,backgroundColor:acc+'1f',borderWidth:2,pointRadius:0,pointHitRadius:8,tension:0.35,fill:true}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmtChartNGN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:getComputedStyle(document.body).getPropertyValue('--text3').trim()||'#888',font:{size:9},maxTicksLimit:6},border:{display:false}},y:{display:false}}}});
-}
-
 function renderDashFullYear(y,totalInc,totalExp,cur){
   const histYear=getHistory().filter(h=>h.year===y);
   const now=new Date();
@@ -4220,7 +4127,7 @@ function renderExpenses(){
       <div onclick="toggleExpGrp('${gid}')" style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);cursor:pointer;user-select:none">
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:0.63rem;color:var(--text3);transition:transform 0.15s" id="${gid}-arrow">▶</span>
-          ${isMonarch()?catBadge(cat):`<span style="font-size:0.9rem">${CAT_ICONS[cat]||'📋'}</span>`}
+          ${`<span style="font-size:0.9rem">${CAT_ICONS[cat]||'📋'}</span>`}
           <span style="font-size:0.8rem;font-weight:700">${cat}</span>
           <span style="font-size:0.62rem;color:var(--text3);font-family:var(--mono)">${items.length}</span>
         </div>
@@ -4453,8 +4360,24 @@ function handlePayeeSel(){
   const wrap=document.getElementById('e-payee-new-wrap');
   if(wrap)wrap.style.display=val==='+ Add new'?'block':'none';
 }
+// Income categories: the standard set plus any the user has recorded before
+// (read from the local month caches), so personal ones survive without being
+// written into the code.
+const INC_CATS_BASE=['Salary','Allowance','Bonus / Dividend','Interest Income','Other'];
+function getIncomeCats(){
+  const seen=new Set();
+  try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith('sw3_inc_')){(cGet(k)||[]).forEach(r=>{if(r&&r.category)seen.add(r.category);});}}}catch(e){console.warn('income categories scan failed',e);}
+  (S.income||[]).forEach(r=>{if(r&&r.category)seen.add(r.category);});
+  const extra=[...seen].filter(c=>!INC_CATS_BASE.includes(c)).sort((a,b)=>a.localeCompare(b));
+  return [...INC_CATS_BASE.slice(0,-1),...extra,'Other'];
+}
 function openExpModal(type){
   type=type||'expense';_txnType=type;
+  const ic2=document.getElementById('i-cat2');
+  if(ic2)ic2.innerHTML=getIncomeCats().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  const qa=document.getElementById('qa-text');if(qa)qa.value='';
+  const qs=document.getElementById('qa-status');if(qs){qs.textContent='';qs.className='qa-status';}
+  const qn=document.getElementById('e-notes');if(qn)delete qn.dataset.qa;
   const catSel=document.getElementById('e-cat');
   catSel.innerHTML=getAllCats().map(c=>`<option value="${c}">${CAT_ICONS[c]||''} ${c}</option>`).join('');
   const bankOpts=cashOptsWithBal();
@@ -4492,6 +4415,191 @@ function openEditExp(id){
   const eb=document.getElementById('e-bank');if(eb&&tx.bank)eb.value=tx.bank;
 }
 const openEditExpense=openEditExp; // alias used in category popup
+
+// ── QUICK ADD (type or say a transaction; the form fills itself in) ────────
+// "5k lunch from GTB yesterday" → Expense · ₦5,000 · Food / Lunch · GTB · date.
+// An on-device parser runs first (instant, works offline); when online with an
+// AI key, Gemini refines it for free-form phrasing. Nothing is saved until the
+// user taps Save, so a wrong guess costs one correction, not a bad record.
+// Only the typed sentence plus the user's category/item/account NAMES go to
+// Gemini — no amounts history, balances or other records.
+const _QA_FILLER=new Set(['i','spent','spend','paid','pay','bought','buy','for','on','from','to','with','via','using','at','the','a','an','my','naira','ngn','of','in','and','today','yesterday','ago','days','day','last','this','received','got','earned','income','salary','transfer','transferred','moved','move','sent','send','account','bank','cash','card','by','gave','give','cost','costs','me','it','was','is','got','paid','pay','with']);
+const _QA_WEEKDAYS=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+function _qaAllItems(){
+  const out=[];
+  getAllCats().forEach(c=>getExpLines(c).forEach(p=>out.push({cat:c,item:p})));
+  return out;
+}
+function _qaNorm(s){return String(s||'').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu,' ').replace(/\s+/g,' ').trim();}
+function _qaParseLocal(text){
+  const raw=String(text||'').trim(),low=raw.toLowerCase();
+  const r={type:'expense',amount:null,category:null,payee:null,bank:null,toBank:null,date:null,notes:''};
+  // amount: 5k, 5,000, 2.5m, ₦12000, $40
+  const am=low.match(/(?:₦|\$|usd\s*|ngn\s*|n(?=\d))?\s*(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million|mil)?\b/);
+  let amountTxt='';
+  if(am){
+    let v=parseFloat(am[1].replace(/,/g,''));
+    const mult=(am[2]||'').toLowerCase();
+    if(mult==='k'||mult==='thousand')v*=1e3;else if(mult==='m'||mult==='million'||mult==='mil')v*=1e6;
+    if(isFinite(v)&&v>0){r.amount=Math.round(v*100)/100;amountTxt=am[0];}
+  }
+  // type
+  if(/\b(received|got paid|earned|salary|income|credited|was paid|paid me|refund(ed)?|allowance|bonus|dividend)\b/.test(low)||/\bgot\b.*\b(pay|paid|paycheck)\b/.test(low))r.type='income';
+  // accounts named in the sentence, in the order they appear
+  const accts=getCashAccounts();
+  const found=[];
+  accts.forEach(a=>{const n=_qaNorm(a);if(!n)return;const idx=(' '+_qaNorm(low)+' ').indexOf(' '+n+' ');if(idx>=0)found.push({a,idx});});
+  found.sort((x,y)=>x.idx-y.idx);
+  if(/\b(transfer(red)?|move[d]?|sent)\b/.test(low)&&found.length>=2){r.type='transfer';r.bank=found[0].a;r.toBank=found[1].a;}
+  else if(found.length)r.bank=found[0].a;
+  // date
+  const d=new Date();
+  if(/\byesterday\b/.test(low))d.setDate(d.getDate()-1);
+  else{
+    const ago=low.match(/\b(\d+)\s+days?\s+ago\b/);
+    if(ago)d.setDate(d.getDate()-(+ago[1]));
+    else{
+      const wd=_QA_WEEKDAYS.findIndex(w=>new RegExp('\\b'+w+'\\b').test(low));
+      if(wd>=0){let back=(d.getDay()-wd+7)%7;if(back===0)back=7;d.setDate(d.getDate()-back);}
+    }
+  }
+  r.date=toLocalISO(d);
+  // what it was for: the words left after removing amount, accounts and filler
+  let rest=_qaNorm(low.replace(amountTxt,' '));
+  found.forEach(f=>{rest=(' '+rest+' ').replace(' '+_qaNorm(f.a)+' ',' ').trim();});
+  _QA_WEEKDAYS.forEach(w=>{rest=rest.replace(new RegExp('\\b'+w+'\\b','g'),' ');});
+  const words=rest.split(' ').filter(w=>w&&!_QA_FILLER.has(w)&&!/^\d+$/.test(w)&&!['k','m'].includes(w));
+  const phrase=words.join(' ');
+  if(r.type==='expense'&&phrase){
+    const items=_qaAllItems();
+    const hit=items.find(x=>_qaNorm(x.item)===phrase)
+      ||items.find(x=>{const n=_qaNorm(x.item);return n&&(phrase.includes(n)||n.includes(phrase));});
+    if(hit){r.payee=hit.item;r.category=hit.cat;}
+    else{
+      r.payee=phrase.replace(/\b\w/g,c=>c.toUpperCase());
+      r.category=applyRules(r.payee)||smartCat(r.payee)||null;
+    }
+  }else if(r.type==='income'&&phrase){
+    const ic=getIncomeCats().find(c=>_qaNorm(c).split(' ').some(w=>w.length>3&&phrase.includes(w)));
+    r.category=ic||(/\bsalary\b/.test(low)?'Salary':null);
+    r.notes=phrase.replace(/\b\w/g,c=>c.toUpperCase());
+  }
+  return r;
+}
+async function _qaParseAI(text,local){
+  const cats={};getAllCats().forEach(c=>{cats[c]=getExpLines(c);});
+  const prompt=`You turn one short note about money into a transaction for a personal finance app. Reply with JSON only.
+Today is ${todayStr()} (${_QA_WEEKDAYS[new Date().getDay()]}). Amounts are in Naira unless another currency is stated. "5k" means 5000, "2m" means 2000000.
+Expense categories and their known items: ${JSON.stringify(cats)}
+Income categories: ${JSON.stringify(getIncomeCats())}
+The user's accounts: ${JSON.stringify(getCashAccounts())}
+Rules:
+- type is "expense", "income" or "transfer" (moving money between two of the user's own accounts).
+- category must be exactly one of the listed categories for that type, or null.
+- payee (expenses only) is what the money was spent on, 1-3 words. Prefer an existing item name exactly as listed when it fits; otherwise a short new name in Title Case.
+- bank is the account the money left (expense, transfer) or went into (income), exactly as listed, or null if not mentioned. toBank is the receiving account for a transfer.
+- date is YYYY-MM-DD. Use today if no day is mentioned.
+- notes: anything useful not captured elsewhere, else "".
+JSON shape: {"type":"","amount":0,"category":null,"payee":null,"bank":null,"toBank":null,"date":"","notes":""}
+Note: ${JSON.stringify(String(text).slice(0,300))}`;
+  const res=await Promise.race([
+    _aiFetch({contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{temperature:0,responseMimeType:'application/json',maxOutputTokens:400,thinkingConfig:{thinkingBudget:0}}}),
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),12000)),
+  ]);
+  let j;try{j=JSON.parse(String(res.text).replace(/^```(?:json)?|```$/g,'').trim());}catch{return null;}
+  if(!j||typeof j!=='object')return null;
+  const accts=getCashAccounts(),pickAcct=v=>accts.find(a=>_qaNorm(a)===_qaNorm(v))||null;
+  const out={...local};
+  if(['expense','income','transfer'].includes(j.type))out.type=j.type;
+  if(+j.amount>0)out.amount=+j.amount;
+  if(/^\d{4}-\d{2}-\d{2}$/.test(j.date||''))out.date=j.date;
+  if(j.bank)out.bank=pickAcct(j.bank)||out.bank;
+  if(j.toBank)out.toBank=pickAcct(j.toBank)||out.toBank;
+  if(typeof j.notes==='string')out.notes=j.notes.slice(0,200);
+  if(out.type==='expense'){
+    if(j.category&&getAllCats().includes(j.category))out.category=j.category;
+    if(j.payee){
+      const hit=_qaAllItems().find(x=>_qaNorm(x.item)===_qaNorm(j.payee));
+      out.payee=hit?hit.item:String(j.payee).slice(0,40);
+      if(hit&&!j.category)out.category=hit.cat;
+    }
+  }else if(out.type==='income'){
+    if(j.category&&getIncomeCats().includes(j.category))out.category=j.category;
+  }
+  return out;
+}
+function _qaFill(r){
+  setTxnType(r.type);
+  // Clear what an earlier Quick add may have filled, so nothing stale remains.
+  const ps=document.getElementById('e-payee-sel');if(ps&&[...ps.options].some(o=>o.value==='-- Select --'))ps.value='-- Select --';
+  const pn=document.getElementById('e-payee-new');if(pn)pn.value='';
+  const nt=document.getElementById('e-notes');if(nt&&nt.dataset.qa)nt.value='';
+  handlePayeeSel();
+  const amt=document.getElementById('e-amt');
+  if(r.amount){amt.value=String(r.amount);if(typeof _syncNumDisplay==='function')_syncNumDisplay(amt);}
+  if(r.date)document.getElementById('e-date').value=r.date;
+  const setSel=(id,v)=>{const el=document.getElementById(id);if(el&&v&&[...el.options].some(o=>o.value===v))el.value=v;};
+  if(r.type==='expense'){
+    if(r.category){setSel('e-cat',r.category);updateExpenseLines();}
+    if(r.payee){
+      const sel=document.getElementById('e-payee-sel');
+      if(sel&&[...sel.options].some(o=>o.value===r.payee)){sel.value=r.payee;}
+      else if(sel){sel.value='+ Add new';document.getElementById('e-payee-new').value=r.payee;}
+      handlePayeeSel();
+    }
+    setSel('e-bank',r.bank);updateExpAmtLabel();
+  }else if(r.type==='income'){
+    setSel('i-cat2',r.category);setSel('i-bank2',r.bank);
+  }else if(r.type==='transfer'){
+    setXfrType('cash-cash');setSel('xfr2-from',r.bank);setSel('xfr2-to',r.toBank);
+  }
+  if(r.notes&&!nt.value){nt.value=r.notes;nt.dataset.qa='1';}
+}
+function _qaStatus(msg,cls){const el=document.getElementById('qa-status');if(el){el.textContent=msg||'';el.className='qa-status'+(cls?' '+cls:'');}}
+let _qaBusy=false;
+async function quickAddParse(){
+  const text=(document.getElementById('qa-text')?.value||'').trim();
+  if(!text){_qaStatus('Type or say something like “5k lunch from GTB yesterday”.');return;}
+  if(_qaBusy)return;_qaBusy=true;
+  const local=_qaParseLocal(text);
+  _qaFill(local);
+  let r=local,byAI=false;
+  if(navigator.onLine!==false&&_aiKey()){
+    _qaStatus('Filling in…');
+    try{const a=await _qaParseAI(text,local);if(a){r=a;byAI=true;_qaFill(a);}}
+    catch(e){console.warn('quick add AI failed, kept the on-device result',e);}
+  }
+  _qaBusy=false;
+  const missing=[];
+  if(!r.amount)missing.push('amount');
+  if(r.type==='expense'&&!r.category)missing.push('category');
+  if(r.type!=='transfer'&&!r.bank)missing.push(r.type==='income'?'account':'bank');
+  if(r.type==='transfer'&&(!r.bank||!r.toBank))missing.push('accounts');
+  _qaStatus(missing.length?`Filled in${byAI?' ✦':''}. Please pick the ${missing.join(' and ')}, then save.`:`Filled in${byAI?' ✦':''}. Check it, then save.`,missing.length?'qa-warn':'qa-ok');
+}
+let _qaRec=null;
+function quickAddVoice(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){_qaStatus("Voice isn't available in this browser. Type it instead, or use your keyboard's mic.",'qa-warn');return;}
+  if(_qaRec){try{_qaRec.stop();}catch{}return;}
+  const rec=new SR();_qaRec=rec;
+  rec.lang=navigator.language||'en-NG';rec.interimResults=true;rec.maxAlternatives=1;
+  const btn=document.getElementById('qa-mic');if(btn)btn.classList.add('on');
+  _qaStatus('Listening… say something like “5k lunch from GTB”.');
+  let finalText='';
+  rec.onresult=e=>{
+    let t='';for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;
+    document.getElementById('qa-text').value=t;
+    if(e.results[e.results.length-1].isFinal)finalText=t;
+  };
+  rec.onerror=e=>{_qaStatus(e.error==='not-allowed'||e.error==='service-not-allowed'?'Microphone access is blocked. Allow it in your browser settings, or type instead.':"Didn't catch that. Try again or type it.",'qa-warn');};
+  rec.onend=()=>{
+    _qaRec=null;if(btn)btn.classList.remove('on');
+    const t=finalText||document.getElementById('qa-text')?.value||'';
+    if(t.trim())quickAddParse();
+  };
+  try{rec.start();}catch(e){_qaRec=null;if(btn)btn.classList.remove('on');_qaStatus("Couldn't start the microphone.",'qa-warn');}
+}
 
 // ── CASH BALANCE HELPERS ────────────────────────────────────────────────────
 // Pending-write tracker: while an atomic increment is in flight, the field is
@@ -6968,14 +7076,8 @@ function renderCashFlowChart(){
   // Destroy stale instance before creating a new one
   if(S._sankeyChart){S._sankeyChart.destroy();S._sankeyChart=null;}
 
-  // Monarch: muted green/coral palette; Classic keeps the original colors.
-  const _mon=isMonarch();
-  const CAT_COLOURS=_mon
-    ?['#d97862','#c98a4b','#b0779c','#8a7fc9','#bfa04a','#6b93b0','#5aa88a','#9a998f']
-    :['#f87171','#fb923c','#e879a0','#c084fc','#fbbf24','#60a5fa','#34d399','#94a3b8'];
-  const colorMap=_mon
-    ?{'Income':'#2f8f6f','Savings':'#5aa88a','Deficit':'#c98a4b','Others':'#9a998f'}
-    :{'Income':'#14b8a6','Savings':'#34d399','Deficit':'#fb923c','Others':'#94a3b8'};
+  const CAT_COLOURS=['#f87171','#fb923c','#e879a0','#c084fc','#fbbf24','#60a5fa','#34d399','#94a3b8'];
+  const colorMap={'Income':'#14b8a6','Savings':'#34d399','Deficit':'#fb923c','Others':'#94a3b8'};
   cats.forEach(([cat],i)=>{if(!colorMap[cat])colorMap[cat]=CAT_COLOURS[i%CAT_COLOURS.length];});
 
   const data=[];
@@ -7585,7 +7687,7 @@ async function _saveHistBalances(sid_,m,y){
 // ══════════════════════════════════════════════════════════════════════════
 function renderSettings(){renderSettData();renderSettBudget();renderSettExport();renderSettGuide();}
 function settTab(tab,btn){['data','budget','export','guide'].forEach(t=>{document.getElementById('sett-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
-// ── GUIDE TAB (More → Guide) ──
+// ── GUIDE TAB (Settings → Guide) ──
 // Static how-to for new users. Keep it in step with the UI: if you rename a
 // screen, tab or button, update the matching line here.
 function renderSettGuide(){
@@ -7599,24 +7701,28 @@ function renderSettGuide(){
     ${sec('Quick start',`
       <ol>
         <li><b>Add your accounts.</b> Go to <b>Accounts → Cash → ✎ Edit Balances</b>, add your banks and cash from the logo list, and enter what's in each one today.</li>
-        <li><b>Set a budget.</b> In <b>More → Budget</b>, enter a monthly amount for each category you care about.</li>
+        <li><b>Set a budget.</b> In <b>Settings → Budget</b>, enter a monthly amount for each category you care about.</li>
         <li><b>Record spending as it happens.</b> Tap the round <b>+</b> button, enter the amount, pick a category, what you spent it on, and the bank it came from. The balance of that bank goes down automatically.</li>
         <li><b>Record income</b> the same way, using the <b>Income</b> button at the top of the + form.</li>
         <li><b>Check Home</b> to see where your money is going and how you're doing against your budget.</li>
       </ol>
+      <p>New here? The <b>Getting started</b> checklist on Home walks you through these steps and ticks them off as you go.</p>
       <p class="gd-tip">The habit that matters most: log spending the same day. Everything else in the app is built from those entries.</p>`,true)}
     ${sec('Saving, syncing and privacy',`
       <p>You can use SpendWise without an account. Your data is then saved <b>on this device only</b>: if you lose the phone or clear the browser, it's gone.</p>
-      <p><b>Create an account</b> (More → Data → Account) to:</p>
+      <p><b>Create an account</b> (Settings → Data → Account) to:</p>
       <ul>
         <li>use the app on all your devices: sign in with the same username and password and everything syncs;</li>
         <li>get your data back if you change or lose your phone.</li>
       </ul>
       <p>Anything already on this device is uploaded to your new account.</p>
-      <p><b>Your recovery code.</b> When you create an account you get a recovery code. Keep it somewhere safe (a password manager, or written down). It's the <b>only</b> way back in if you forget your password. If you add a recovery email, you can send the code to your inbox so it's there when you need it. You can see the code, email it again or create a new one in <b>More → Data → Account → Recovery code &amp; email</b>.</p>
-      <p><b>Privacy.</b> Your data is encrypted on your device before it's saved online. Nobody else can read it, including the person who runs the app. The only exception is the AI Analyst (see Analytics below).</p>`)}
+      <p><b>Your recovery code.</b> When you create an account you get a recovery code. Keep it somewhere safe (a password manager, or written down). It's the <b>only</b> way back in if you forget your password. If you add a recovery email, you can send the code to your inbox so it's there when you need it. You can see the code, email it again or create a new one in <b>Settings → Data → Account → Recovery code &amp; email</b>.</p>
+      <p><b>Privacy.</b> Your data is encrypted on your device before it's saved online. Nobody else can read it, including the person who runs the app. The only exceptions are Quick add and the AI Analyst, which send what you type to Google's Gemini service to understand it.</p>
+      <p><b>Deleting your account.</b> Settings → Data → Account → <b>Delete my account</b> permanently erases your account and all your data from every device. Download a backup first (Settings → Export) if you want to keep a copy.</p>`)}
     ${sec('Recording money (the + button)',`
-      <p>The <b>+</b> button at the bottom right works from any page. At the top of the form, choose what you're recording:</p>
+      <p>The <b>+</b> button at the bottom right works from any page.</p>
+      <p><b>Quick add</b> (the box at the top of the form) is the fastest way: type or tap 🎤 and say something like <i>"5k lunch from GTB yesterday"</i>, <i>"received 250k salary into Access"</i> or <i>"moved 20k from Opay to Kuda"</i>. The form fills itself in; check it and tap Save. Nothing is saved until you do.</p>
+      <p>Or fill in the form yourself. Choose what you're recording:</p>
       <ul>
         <li><b>Expense.</b> Pick a <b>category</b> (e.g. Food) and what it was <b>spent on</b> (e.g. Lunch). To add a new item, choose "New item" and give it a name and emoji. It's remembered for next time.</li>
         <li><b>Income.</b> Choose the category and the bank it was received into.</li>
@@ -7655,11 +7761,12 @@ function renderSettGuide(){
         <li><b>AI ✦</b>: ask questions about your money in plain English ("Where did most of my money go last month?"). It can draw charts too. Chats sync across your devices.</li>
       </ul>
       <p class="gd-tip">When you use the AI Analyst, your question and the relevant figures are sent to Google's Gemini service to produce the answer. Nothing is sent unless you ask it something.</p>`)}
-    ${sec('More page',`
+    ${sec('Settings page',`
       <ul>
-        <li><b>Data</b>: your account (sign in, sign out, change password), design (Classic or Monarch look), savings <b>goals</b>, recurring transactions, what counts in net worth, and exchange rates.</li>
+        <li><b>Data</b>: your account (sign in, sign out, password, recovery code, delete account), <b>app lock</b>, savings <b>goals</b>, recurring transactions, and <b>Help</b> (this guide and <b>Report a problem</b>). Rarely needed tools (your own AI key, what counts in net worth, exchange rates, balance audit) are under <b>Advanced</b>.</li>
         <li><b>Budget</b>: set each category's monthly budget, and manage categories and items. Built-in categories can't be deleted, but any category can be merged into another.</li>
         <li><b>Export</b>: download your data as Excel (a monthly budget workbook), CSV, or a full JSON backup.</li>
+        <li><b>Guide</b>: this page.</li>
       </ul>`)}
     ${sec('Tips and troubleshooting',`
       <ul>
@@ -7669,7 +7776,9 @@ function renderSettGuide(){
         <li>If a bar says <b>Update available</b>, tap <b>Update now</b> to get the latest version.</li>
         <li><b>Balance looks wrong?</b> Check that the entry used the right bank and date. You can also correct a balance directly in Accounts → Cash → ✎ Edit Balances.</li>
         <li><b>Forgot your password?</b> On the sign-in screen, tap <b>Forgot password? Use your recovery code</b>, then set a new password.</li>
-        <li><b>Using a shared or borrowed device?</b> Sign out when you're done (More → Data → Account). This removes your data from that device; it stays safe in your account.</li>
+        <li><b>Lock the app</b> with your fingerprint, face or phone PIN: Settings → Data → <b>App lock</b> (needs an account; your password always works as a backup).</li>
+        <li><b>Something not working?</b> Settings → Data → Help → <b>Report a problem</b> opens an email to the developer with the details needed to fix it.</li>
+        <li><b>Using a shared or borrowed device?</b> Sign out when you're done (Settings → Data → Account). This removes your data from that device; it stays safe in your account.</li>
       </ul>`)}
   `;
   // One section open at a time: opening a section closes the others.
@@ -8069,7 +8178,6 @@ function renderSettExport(){
       <div class="ig"><label class="ilabel">Year</label><select class="sfield" id="exp-yr-sel"><option value="2026">2026</option><option value="2025">2025</option><option value="2024">2024</option></select></div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-exp btn-sm" onclick="exportMonth('csv')">↓ CSV</button><button class="btn btn-exp btn-sm" onclick="exportMonth('xlsx')">↓ Excel</button></div></div>
-    <div class="exp-card"><div class="exp-card-title">Balance Audit</div><div class="exp-card-sub">Recomputes each cash account for the current month from records (opening + income − expenses ± transfers ± loan/debtor/investment flows) and flags any gap against the stored balance. Manual balance edits will show as differences.</div><button class="btn btn-p btn-sm" onclick="runBalanceAudit()">Run Audit</button><div id="audit-result" style="margin-top:10px"></div></div>
   `;
 }
 
@@ -8526,21 +8634,13 @@ function renderSettData(){
   const ls=cGet(CK.lastSync);
   let syncInfo='Not yet synced';
   if(ls){const d=new Date(ls),diff=Math.round((Date.now()-d)/60000);syncInfo=diff<2?'Just now':diff<60?`${diff}m ago`:d.toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
-  // App Info shows ONLY the current release note — replace the single v-entry
-  // below on each release rather than prepending to a running changelog.
-  const _mon=getDesignMode()==='monarch';
+  // Everyday settings first; rarely-needed tools sit in the collapsed
+  // "Advanced" section at the bottom.
+  // App Info shows ONLY the current release note — bump-version.ps1 replaces
+  // the single v-entry below on each release (keep its markup unchanged).
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.5.4</div><div>Firebase: spendwise-d6393</div><div style="color:var(--text3);margin-top:4px">v4.5.4: Optional recovery email: send your recovery code to your inbox, and view it or make a new one under More, Data, Account. Guide sections now open one at a time.</div></div></div>
     ${renderAccountCard()}
-    ${renderApiKeysCard()}
-    <div class="exp-card" style="margin-top:10px">
-      <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
-      <div class="exp-card-sub" style="margin-bottom:10px">Switch the app's look. Classic is the original design; Monarch is a softer, chart-forward style. Purely cosmetic — your data and features are identical in both.</div>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-sm ${_mon?'btn-g':'btn-p'}" style="flex:1" onclick="setDesignMode('classic')">Classic</button>
-        <button class="btn btn-sm ${_mon?'btn-p':'btn-g'}" style="flex:1" onclick="setDesignMode('monarch')">Monarch</button>
-      </div>
-    </div>
+    ${typeof renderAppLockCard==='function'?renderAppLockCard():''}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Goals</div>
       <div class="exp-card-sub" style="margin-bottom:8px">Savings targets with progress tracking. Active goals appear on the dashboard.</div>
@@ -8552,9 +8652,46 @@ function renderSettData(){
       <div class="exp-card-sub" style="margin-bottom:10px">Bills and income that repeat. Due items appear on the dashboard as Upcoming Bills. Add one via the expense form's recurring option.</div>
       <button class="btn btn-g btn-sm btn-full" onclick="openRecurModal()">Manage Recurring (${getRecurring().length})</button>
     </div>
-    ${renderNWConfigCard()}
-    ${renderFxCard()}
+    <div class="exp-card" style="margin-top:10px">
+      <div class="exp-card-title" style="margin-bottom:6px">Help</div>
+      <div class="exp-card-sub" style="margin-bottom:10px">New here? The Guide explains every part of the app. Found a bug or have an idea? Send it straight to the developer.</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-g btn-sm" style="flex:1" onclick="openGuide()">Open the guide</button>
+        <button class="btn btn-g btn-sm" style="flex:1" onclick="reportProblem()">Report a problem</button>
+      </div>
+      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.6.0</div><div style="color:var(--text3);margin-top:4px">v4.6.0: Quick add by typing or voice, fingerprint/Face ID app lock, delete account, report a problem, a Getting started checklist, and a tidier Settings page.</div></div>
+    </div>
+    <details class="sett-adv" id="sett-adv"${_settAdvOpen?' open':''} ontoggle="_settAdvOpen=this.open">
+      <summary>Advanced<span>AI keys, net worth, exchange rates, balance audit</span></summary>
+      ${renderApiKeysCard()}
+      ${renderNWConfigCard()}
+      ${renderFxCard()}
+      <div class="exp-card" style="margin-top:10px"><div class="exp-card-title">Balance Audit</div><div class="exp-card-sub">Recomputes each cash account for the current month from records (opening + income − expenses ± transfers ± loan/debtor/investment flows) and flags any gap against the stored balance. Manual balance edits will show as differences.</div><button class="btn btn-p btn-sm" onclick="runBalanceAudit()">Run Audit</button><div id="audit-result" style="margin-top:10px"></div></div>
+    </details>
   `;
+}
+var _settAdvOpen=false; // keep Advanced open across re-renders
+function openGuide(){
+  navTo('settings');
+  const b=[...document.querySelectorAll('#pg-settings .tabs .tab')].find(t=>t.textContent.trim()==='Guide');
+  if(b) settTab('guide',b);
+}
+// "Report a problem": opens the user's own email app, addressed to the
+// developer, with the details that help reproduce a bug. No personal data
+// (username, balances) is included; the user can add what they want.
+const FEEDBACK_EMAIL='ssseyon@gmail.com';
+function reportProblem(){
+  const body=[
+    'What happened (and what did you expect)?','','','',
+    'Steps to make it happen again (if you know them):','','','',
+    '— Please keep the details below; they help fix it —',
+    `App version: ${APP_VERSION}`,
+    `Mode: ${typeof DATA_MODE!=='undefined'?DATA_MODE:'?'}`,
+    `Page: ${S.page||'?'}`,
+    `Screen: ${screen.width}×${screen.height}, ${window.matchMedia('(display-mode: standalone)').matches?'installed app':'browser'}`,
+    `Device: ${navigator.userAgent}`,
+  ].join('\n');
+  location.href=`mailto:${FEEDBACK_EMAIL}?subject=${encodeURIComponent('SpendWise problem report ('+APP_VERSION+')')}&body=${encodeURIComponent(body)}`;
 }
 
 function clearFxOverride(k){
@@ -9260,103 +9397,6 @@ function _renderCatPopup(cur, m, y){
 }
 
 
-// ══════════════════════════════════════════════════════════════════════════
-// SEED / JSON IMPORT
-// ══════════════════════════════════════════════════════════════════════════
-let _pendingSeed=null;
-function handleSeedFile(event){
-  const file=event.target.files[0];if(!file) return;
-  const reader=new FileReader();
-  reader.onload=(e)=>{
-    try{
-      const seed=JSON.parse(e.target.result);
-      if(!seed.transactions||!seed.income){document.getElementById('seed-status').innerHTML='<span style="color:var(--red)">Invalid file</span>';return;}
-      _pendingSeed=seed;
-      const preview=document.getElementById('seed-preview');preview.style.display='block';
-      preview.innerHTML=`
-        <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:8px">${file.name}</div>
-        ${[['Transactions',seed.transactions?.length||0],['Income',seed.income?.length||0],['Cash records',seed.cashBalances?.length||0],['Investments',seed.investments?.length||0],['Debtors',seed.debtors?.length||0],['History',seed.historicalSummary?.length||0]]
-          .map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border);font-size:0.72rem"><span style="color:var(--text2)">${k}</span><span style="font-family:var(--mono);color:var(--accent)">${v}</span></div>`).join('')}
-        <div style="margin-top:10px;display:flex;gap:8px">
-          <button class="btn btn-p btn-sm" onclick="confirmSeedImport()">Import All Data</button>
-          <button class="btn btn-g btn-sm" onclick="document.getElementById('seed-preview').style.display='none'">Cancel</button>
-        </div>`;
-      document.getElementById('seed-status').textContent='Review counts, then click Import.';
-    }catch(err){document.getElementById('seed-status').innerHTML=`<span style="color:var(--red)">Parse error: ${err.message}</span>`;}
-  };
-  reader.readAsText(file);
-}
-async function confirmSeedImport(){
-  const seed=_pendingSeed;if(!seed) return;
-  const c={t:seed.transactions?.length||0,i:seed.income?.length||0,ca:seed.cashBalances?.length||0,iv:seed.investments?.length||0,d:seed.debtors?.length||0,h:seed.historicalSummary?.length||0};
-  if(!confirm(`Import will load:\n${c.t} transactions · ${c.i} income entries\n${c.ca} cash records · ${c.iv} investment records\n${c.d} debtors · ${c.h} history rows\n\nApp loads instantly — Firebase syncs in background.`)) return;
-  const statusEl=document.getElementById('seed-status');
-  document.getElementById('seed-preview').style.display='none';
-  statusEl.innerHTML='<span style="color:var(--gold)">Loading into app…</span>';
-  // Write to localStorage immediately
-  const txnsByM={},incByM={};
-  for(const t of(seed.transactions||[])){const k=CK.txns(t.month,t.year);if(!txnsByM[k])txnsByM[k]=[];txnsByM[k].push(t);}
-  for(const i of(seed.income||[])){const k=CK.inc(i.month,i.year);if(!incByM[k])incByM[k]=[];incByM[k].push(i);}
-  for(const[k,v]of Object.entries(txnsByM)) cSet(k,v);
-  for(const[k,v]of Object.entries(incByM)) cSet(k,v);
-  for(const c of(seed.cashBalances||[])) cSet(CK.cash(c.month,c.year),c);
-  for(const i of(seed.investments||[])) cSet(CK.inv(i.month,i.year),i);
-  if(seed.debtors?.length) cSet(CK.debtors,seed.debtors);
-  // Save historical summary as the HISTORY array used by charts/projections
-  if(seed.historicalSummary?.length){
-    const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const hist=seed.historicalSummary.map(h=>({
-      year:h.year,month:h.month,
-      label:h.label||(MS2[(h.month||1)-1]+" '"+String(h.year).slice(2)),
-      income:h.income||0,expenses:h.expenses||0
-    }));
-    cSet('sw3_history',hist);
-  }
-  const ver=(seed._meta?.version||'imported')+' @ '+new Date().toLocaleDateString('en-GB');
-  cSet(CK.fbSyncVer,ver);cSet(CK.lastSync,Date.now());
-  // Reload S.* and render
-  const m=S.expMonth,y=S.expYear;
-  S.txns=cGet(CK.txns(m,y))||[];
-  S.income=cGet(CK.inc(m,y))||[];
-  S.investments=cGet(CK.inv(m,y))||{};
-  S.cash=cGet(CK.cash(m,y))||{};
-  S.debtors=seed.debtors||[];
-  _pendingSeed=null;
-  statusEl.innerHTML=`<span style="color:var(--accent)">✓ App loaded — syncing to Firebase…</span>`;
-  toast('Data loaded');renderAll();
-  // Background Firebase write
-  if(!db){statusEl.innerHTML+=` <span style="color:var(--text2)">(Firebase not ready — data in local cache)</span>`;return;}
-  setSyncStatus('syncing');
-  (async()=>{
-    try{
-      const now=firebase.firestore.Timestamp.now();
-      const mk=r=>`${r.year}-${String(r.month).padStart(2,'0')}`;
-      async function batchSet(col,items,idFn){
-        let b=db.batch(),n=0;
-        for(const item of items){const ref=idFn?db.collection(col).doc(idFn(item)):db.collection(col).doc();b.set(ref,item,{merge:true});if(++n>=490){await b.commit();b=db.batch();n=0;}}
-        if(n>0) await b.commit();
-      }
-      async function clearM(col,months){for(const{year,month}of months){try{const s=await db.collection(col).where('year','==',year).where('month','==',month).get();if(!s.empty){let b=db.batch();s.docs.forEach(d=>b.delete(d.ref));await b.commit();}}catch(e){console.warn("seed import: clearing "+col+" for "+year+"-"+month+" failed",e);}}}
-      if(seed.historicalSummary?.length) await batchSet('historicalSummary',seed.historicalSummary,mk);
-      if(seed.cashBalances?.length) await batchSet('cashBalances',seed.cashBalances,mk);
-      if(seed.investments?.length) await batchSet('investments',seed.investments,mk);
-      const txnMs=[...new Map(seed.transactions.map(t=>[`${t.year}-${t.month}`,t])).values()];
-      await clearM('transactions',txnMs);
-      await batchSet('transactions',seed.transactions.map(t=>({...t,createdAt:now})),null);
-      const incMs=[...new Map(seed.income.map(i=>[`${i.year}-${i.month}`,i])).values()];
-      await clearM('income',incMs);
-      await batchSet('income',seed.income.map(i=>({...i,createdAt:now})),null);
-      if(seed.debtors?.length){const ex=await db.collection('debtors').get();if(!ex.empty){const b=db.batch();ex.docs.forEach(d=>b.delete(d.ref));await b.commit();}await batchSet('debtors',seed.debtors.map(d=>({...d,createdAt:now})),null);}
-      cSet(CK.lastSync,Date.now());setSyncStatus('synced');hideStaleBar();
-      if(statusEl) statusEl.innerHTML=`<span style="color:var(--accent)">✓ Firebase sync complete</span>`;
-      toast('Firebase sync complete');renderSettData();
-    }catch(err){
-      console.error('Firebase seed error:',err);setSyncStatus('error');
-      if(statusEl) statusEl.innerHTML+=`<br><span style="color:var(--gold)">⚠ Firebase failed (${err.message}) — safe in local cache</span>`;
-    }
-  })();
-}
-
 
 // ══════════════════════════════════════════════════════════════════════════
 // ONLINE/OFFLINE
@@ -9385,46 +9425,11 @@ if(!navigator.onLine&&!localStorage.getItem(LOCAL_MODE_LS)) document.getElementB
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 
 
-// ── ONE-TIME MIGRATION: Fife → Kids ──────────────────────────────────────
-async function _migrateFifeToKids(){
-  const MKEY='sw3_migrated_fife_kids';
-  if(localStorage.getItem(MKEY)) return; // already done
-  try{
-    // Migrate transactions
-    const txSnap=await db.collection('transactions').where('category','==','Fife').get();
-    // Migrate income (unlikely but safe)
-    const incSnap=await db.collection('income').where('category','==','Fife').get();
-    const allDocs=[...txSnap.docs,...incSnap.docs];
-    if(!allDocs.length){localStorage.setItem(MKEY,'1');return;}
-    // Batch update in groups of 500
-    const CHUNK=500;
-    for(let i=0;i<allDocs.length;i+=CHUNK){
-      const batch=db.batch();
-      allDocs.slice(i,i+CHUNK).forEach(doc=>batch.update(doc.ref,{category:'Kids'}));
-      await batch.commit();
-    }
-    // Also update any cached localStorage entries
-    Object.keys(localStorage).filter(k=>k.startsWith('sw3_txns_')||k.startsWith('sw3_inc_')).forEach(k=>{
-      try{
-        const arr=JSON.parse(localStorage.getItem(k));
-        if(!Array.isArray(arr)) return;
-        let changed=false;
-        arr.forEach(t=>{if(t.category==='Fife'){t.category='Kids';changed=true;}});
-        if(changed) localStorage.setItem(k,JSON.stringify(arr));
-      }catch(e){console.warn("Fife→Kids migration failed",e);}
-    });
-    localStorage.setItem(MKEY,'1');
-    console.log(`SpendWise: migrated ${allDocs.length} Fife→Kids records`);
-    toast('Category migration complete: Fife → Kids');
-  }catch(e){
-    console.warn('Fife→Kids migration failed:',e);
-  }
-}
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.5.4';
+const APP_VERSION='v4.6.0';
 async function checkForUpdate(){
   try{
-    const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
+    const res=await fetch(location.origin+location.pathname+'?_='+Date.now(),{cache:'no-store'});
     if(!res.ok)return;
     const html=await res.text();
     const m=html.match(/ver-lbl[^>]*>\s*(v[\d.]+)\s*</i);
@@ -9438,75 +9443,10 @@ async function checkForUpdate(){
     }
   }catch(e){_warnLoad("checkForUpdate",e);}
 }
-// ── USD Cash repair: reads USDHoldings from Firestore investments, writes to cashBalances ──
-async function _migrateEnergyFirestore(){
-  // Non-blocking background Firestore migration: Energy → Fuel
-  try{
-    const snap=await db.collection('transactions').where('category','==','Energy').get();
-    if(snap&&!snap.empty){
-      const chunks=[];const docs=snap.docs;
-      for(let i=0;i<docs.length;i+=400)chunks.push(docs.slice(i,i+400));
-      for(const chunk of chunks){
-        const batch=db.batch();
-        chunk.forEach(d=>batch.update(d.ref,{category:'Fuel'}));
-        await batch.commit();
-      }
-      console.log(`[migration] Energy→Fuel: updated ${snap.size} Firestore transactions`);
-    }
-  }catch(e){console.warn('[migration] Energy→Fuel Firestore step failed (will retry on next load if not flagged)',e);}
-}
-
-async function _repairUSDCash(){
-  if(cGet('sw3_usd_repair_v2')) return; // already done on this device
-  try{
-    // Check a Firestore-wide flag too, so a new device / cleared storage /
-    // private session doesn't silently re-run this and overwrite historical
-    // "USD Cash" values with a freshly recomputed absolute figure.
-    try{
-      const migDoc=await db.collection('appConfig').doc('migrations').get();
-      if(migDoc.exists&&migDoc.data()?.usdRepairV2){cSet('sw3_usd_repair_v2','1');return;}
-    }catch(e){console.warn("USD cash repair failed",e);}
-    const snap=await db.collection('investments').get();
-    if(snap.empty){cSet('sw3_usd_repair_v2','1');return;}
-    const batch=db.batch();
-    let repaired=0;
-    snap.forEach(doc=>{
-      const d=doc.data();
-      if(!d.USDHoldings||d.USDHoldings<=0) return;
-      const m=d.month,y=d.year;
-      if(!m||!y) return;
-      const fxR=getFxRates(m,y);
-      const usdAmt=+(d.USDHoldings/(fxR.USD||1600)).toFixed(2);
-      const cashRef=db.collection('cashBalances').doc(sid(m,y));
-      batch.set(cashRef,{'USD Cash':usdAmt,month:m,year:y},{merge:true});
-      // Also update local cache
-      const cached=cGet(CK.cash(m,y))||{};
-      if(!cached['USD Cash']||cached['USD Cash']===0){
-        cached['USD Cash']=usdAmt;
-        cSet(CK.cash(m,y),cached);
-      }
-      repaired++;
-    });
-    if(repaired>0){
-      await batch.commit();
-      // Refresh current view
-      S.cash=cGet(CK.cash(S.cashMonth||S.expMonth,S.cashYear||S.expYear))||{};
-      if(typeof renderDashboard==='function') renderDashboard();
-      if(typeof renderCashPage==='function') renderCashPage();
-      toast(`USD Cash restored across ${repaired} month(s)`);
-    }
-    try{await db.collection('appConfig').doc('migrations').set({usdRepairV2:true},{merge:true});}catch(e){console.warn("migration flag write failed",e);}
-    cSet('sw3_usd_repair_v2','1');
-  }catch(e){console.warn('USD Cash repair failed:',e);}
-}
 // BOOT
 initFirebase();
 _requestNotifPermission();
 setTimeout(checkForUpdate, 3000); // check after initial load settles
-// v4.5: the one-time Fife→Kids / USD Cash / Energy→Fuel repairs are no longer
-// run at boot. They fixed the owner's pre-2026 data, which was imported
-// already repaired; on encrypted accounts their category queries would scan
-// every transaction on each sign-in. The functions remain for reference.
 
 // ══════════════════════════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════════════════════════
@@ -9921,8 +9861,7 @@ function _aiModelLabel(id){
 // The schema is deliberately NOT Chart.js-shaped (series/name/data, not
 // datasets): given "datasets" the model helpfully emits a full Chart.js config
 // with colours and nested options, which defeats theming and widens the parse
-// surface. Colours come from CSS vars so charts follow light/dark and
-// Classic/Monarch.
+// surface. Colours come from CSS vars so charts follow light/dark.
 var _aiCharts={};      // canvasId -> Chart instance currently on screen
 var _aiChartQueue=[];  // {id,spec} produced during _aiMd, drained on mount
 
@@ -9955,13 +9894,10 @@ function _aiChartValidate(raw){
 // Same CSS-var approach the cash-flow chart uses, so charts match the theme.
 function _aiChartTheme(){
   const cs=getComputedStyle(document.body), v=n=>(cs.getPropertyValue(n)||'').trim();
-  const mon=(typeof isMonarch==='function')&&isMonarch();
   return {
     tick:v('--text3')||'#888',
     grid:v('--border')||'#333',
-    palette: mon
-      ? ['#2f8f6f','#d97862','#c98a4b','#6b93b0','#b0779c','#9a998f']
-      : [v('--accent')||'#14b8a6', v('--blue')||'#60a5fa', v('--gold')||'#fbbf24',
+    palette: [v('--accent')||'#14b8a6', v('--blue')||'#60a5fa', v('--gold')||'#fbbf24',
          v('--red')||'#f87171', '#c084fc', '#94a3b8'],
   };
 }
@@ -10195,7 +10131,9 @@ function goToApiKeys(){
   navTo('settings');
   const tabBtn=document.querySelector('#pg-settings .tabs .tab');
   if(tabBtn) settTab('data',tabBtn);
-  setTimeout(()=>document.getElementById('sett-data')?.scrollIntoView({behavior:'smooth',block:'start'}),50);
+  // The keys card lives in the collapsed Advanced section.
+  _settAdvOpen=true;const adv=document.getElementById('sett-adv');if(adv)adv.open=true;
+  setTimeout(()=>(document.getElementById('new-ai-key-label')?.closest('.exp-card')||adv)?.scrollIntoView({behavior:'smooth',block:'start'}),50);
 }
 
 // ── Multi-conversation store ────────────────────────────────────────────────

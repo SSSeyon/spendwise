@@ -717,6 +717,63 @@ const VAULT=(()=>{
     return code;
   }
 
+  // App-lock fallback: true if this is the account password. Works offline
+  // from a local copy of the (already encrypted) wrapped key; refreshed from
+  // the server when online, so a password changed on another device works.
+  const _verKey=()=>'sw3_lockv_'+uid;
+  async function verifyPassword(password){
+    if(!uid) return false;
+    const tryWith=async m=>{if(!m||!m.salt||!m.wrapPass)return false;try{await open((await passwordKeys(password,m.salt)).kek,m.wrapPass,'dek|'+uid);return true;}catch{return false;}};
+    let cached=null;try{cached=JSON.parse(localStorage.getItem(_verKey())||'null');}catch{}
+    if(await tryWith(cached)) return true;
+    if(navigator.onLine===false){if(!cached)fail("Connect to the internet to check your password.");return false;}
+    const m=(await metaRef().get({source:'server'})).data();
+    try{localStorage.setItem(_verKey(),JSON.stringify({salt:m.salt,wrapPass:m.wrapPass}));}catch{}
+    return tryWith(m);
+  }
+  async function primeVerifier(){
+    if(!uid) return;
+    const m=(await metaRef().get({source:'server'})).data();
+    try{localStorage.setItem(_verKey(),JSON.stringify({salt:m.salt,wrapPass:m.wrapPass}));}catch{}
+  }
+  // Permanently delete the signed-in account: every doc under users/{uid},
+  // the recovery doc (retired: the rules allow update, not delete), then the
+  // Firebase Auth user. Needs the password, checked by the server via
+  // re-authentication before anything is deleted.
+  const USER_COLLECTIONS=['transactions','income','cashBalances','cashLedger','investments','debtors','loans','budgets','transfers','historicalSummary','specialBudgets','aiChats','appConfig'];
+  async function deleteAccount(password,onProgress){
+    const user=_auth().currentUser;if(!user||!uid) fail('Sign in first.');
+    const meta=(await metaRef().get({source:'server'})).data()||{};
+    const pk=await passwordKeys(password,meta.salt);
+    let dekRaw;
+    try{dekRaw=await open(pk.kek,meta.wrapPass,'dek|'+uid);}catch{fail('Your password is wrong.');}
+    if(meta.kind==='user'){
+      try{await user.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(user.email,pk.authSecret));}
+      catch(e){fail(_authErr(e));}
+    }
+    const base=raw.collection('users').doc(uid);
+    let n=0;
+    for(const c of USER_COLLECTIONS){
+      for(;;){
+        const s=await base.collection(c).limit(400).get({source:'server'});
+        if(s.empty) break;
+        const b=raw.batch();s.docs.forEach(d=>b.delete(d.ref));await b.commit();
+        n+=s.size;if(onProgress)onProgress(n);
+      }
+    }
+    if(meta.recSealed){
+      try{
+        const r=JSON.parse(td.decode(await open(await aesKey(dekRaw),meta.recSealed,'rec|'+uid)));
+        await raw.collection('recovery').doc(r.docId).set({uid,v:1,authEnc:null,retired:true});
+      }catch(e){console.warn('vault: could not retire the recovery code',e);}
+    }
+    await metaRef().delete();
+    await user.delete();
+    plainCache.clear();dek=null;uid=null;
+    try{await idbClear();}catch(e){console.warn('vault: key clear failed',e);}
+    return n;
+  }
+
   // Google: sign in, then the user sets/enters a separate data password
   // (Google gives the app no secret it could encrypt with).
   async function googleSignIn(){
@@ -771,7 +828,7 @@ const VAULT=(()=>{
     restoreDevice,
     // accounts
     signUp,signIn,recover,changePassword,signOut,
-    recoveryInfo,setRecoveryEmail,newRecoveryCodeFor,
+    recoveryInfo,setRecoveryEmail,newRecoveryCodeFor,deleteAccount,verifyPassword,primeVerifier,
     googleSignIn,googleSetPassword,googleUnlock,googleRecover,
     VaultError,normUser,validUser,MIN_PASSWORD,
     // data

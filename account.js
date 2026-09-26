@@ -29,6 +29,14 @@
 #acct-ov .acct-prog{height:6px;background:var(--bg2);border-radius:3px;overflow:hidden}
 #acct-ov .acct-prog div{height:100%;background:var(--accent);width:0;transition:width .2s}
 #acct-ov label.acct-check{display:flex;gap:8px;align-items:center;font-size:0.78rem;color:var(--text);cursor:pointer}
+#lock-ov{position:fixed;inset:0;z-index:3000;background:var(--bg);display:none;overflow-y:auto}
+#lock-ov .lk{max-width:360px;margin:0 auto;min-height:100%;padding:40px 24px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center}
+#lock-ov .lk-i{font-size:2.6rem}
+#lock-ov h2{font-size:1.2rem;font-weight:800;margin:0;color:var(--text)}
+#lock-ov .lk-s{font-size:0.8rem;color:var(--text2);line-height:1.55}
+#lock-ov .lk-l{font-size:0.76rem;color:var(--accent);font-weight:600;cursor:pointer}
+#lock-ov .acct-err{font-size:0.8rem;font-weight:600;color:var(--red)}
+#lock-ov .ifield{width:100%}
 `;
   const s=document.createElement('style');s.textContent=css;document.head.appendChild(s);
 })();
@@ -296,11 +304,9 @@ async function _acctAfterAuth({isNew}){
     if(!accountHasData){await _acctUpload(localDocs);return;}
     return _acctShowReplace(localDocs);
   }
-  if(from==='legacy'){
-    const accountHasData=isNew?false:await VAULT.accountHasData();
-    if(!accountHasData) return acctShowImport();
-    _wipeDataCaches();
-  }
+  // A device that ran a pre-accounts version: its caches are the old shared
+  // data, which the account replaces (the owner's copy was imported in v4.5).
+  if(from==='legacy') _wipeDataCaches();
   if(from==='local') await VAULT.clearLocal();
   acctClose();
   await _enterMode('cloud');
@@ -353,100 +359,7 @@ async function acctSignOut(){
   if(wasCloud) toast('Signed out. Your data is safe in your account.');
 }
 
-// ── Legacy import (owner's data from the old shared collections) ──────────
-const LEGACY_COLLECTIONS=['transactions','income','cashBalances','cashLedger','investments','debtors','loans','budgets','transfers','historicalSummary','specialBudgets','aiChats','appConfig'];
-function acctShowImport(){
-  _acctShow(`
-    <h2>Bring your existing data across</h2>
-    <div class="acct-sub">This copies everything from the old shared database into your new account, encrypted. The old copy isn't changed or deleted.</div>
-    <div class="acct-prog"><div id="acct-bar"></div></div>
-    <div class="acct-sub" id="acct-imp-log" style="font-family:var(--mono);font-size:0.68rem;white-space:pre-line"></div>
-    <div class="acct-err" id="acct-err"></div>
-    <div class="acct-spacer"></div>
-    <button class="btn btn-p btn-full" id="acct-go" onclick="acctDoImport()">Import my data</button>
-    <div class="acct-link" style="color:var(--text2)" onclick="acctSkipImport()">Skip and start fresh</div>
-  `);
-}
-async function acctSkipImport(){_wipeDataCaches();acctClose();await _enterMode('cloud');}
-function acctDoImport(){
-  _acctBusy('acct-go','Importing…',async()=>{
-    const log=document.getElementById('acct-imp-log'),bar=document.getElementById('acct-bar');
-    const raw=VAULT.raw,manifest={at:new Date().toISOString(),uid:VAULT.uid,collections:{}};
-    const say=t=>{if(log)log.textContent+=t+'\n';};
-    let done=0;
-    for(const c of LEGACY_COLLECTIONS){
-      const snap=await raw.collection(c).get({source:'server'});
-      const docs=snap.docs;
-      for(let i=0;i<docs.length;i+=200){
-        const b=VAULT.udb.batch();
-        docs.slice(i,i+200).forEach(d=>b.set(VAULT.udb.collection(c).doc(d.id),d.data()));
-        await b.commit();
-      }
-      // verify: re-read from the account and compare ids (+ amounts for txns/income)
-      const back=await VAULT.udb.collection(c).get({source:'server'});
-      const srcIds=new Set(docs.map(d=>d.id)),dstIds=new Set(back.docs.map(d=>d.id));
-      const missing=[...srcIds].filter(id=>!dstIds.has(id));
-      let sumOk=true;
-      if(c==='transactions'||c==='income'){
-        const sum=arr=>arr.reduce((s,x)=>s+(+x.amtNGN||+x.amount||0),0);
-        const a=Math.round(sum(docs.map(d=>d.data()))),b2=Math.round(sum(back.docs.map(d=>d.data())));
-        sumOk=a===b2;manifest.collections[c]={count:docs.length,total:a,ids:[...srcIds]};
-      }else manifest.collections[c]={count:docs.length,ids:[...srcIds]};
-      if(missing.length||!sumOk) throw new VAULT.VaultError(`Check failed on ${c}: ${missing.length} missing${sumOk?'':', totals differ'}. Nothing was deleted; try again.`);
-      say(`✓ ${c}: ${docs.length}`);
-      done++;if(bar)bar.style.width=Math.round(done/LEGACY_COLLECTIONS.length*100)+'%';
-    }
-    say('Moving your personal defaults into your account…');
-    manifest.ownerExtras=await _acctApplyLegacyProfile();
-    say('✓ payee lines, categories, budgets, fixed bills, bank accounts');
-    const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(manifest,null,1)],{type:'application/json'}));a.download='spendwise-import-manifest-'+manifest.at.slice(0,10)+'.json';a.click();
-    say('\nAll collections copied and checked. A manifest file was downloaded; keep it with the repo.');
-    try{localStorage.setItem(LOCAL_MODE_LS,'1');}catch{}
-    const go=document.getElementById('acct-go');
-    if(go){go.textContent='Open SpendWise';go.onclick=async()=>{_wipeDataCaches();acctClose();await _enterMode('cloud');};}
-    return true;
-  });
-}
-
-// The owner's old built-in defaults (legacy-profile.js, loaded only here)
-// become ordinary per-account settings, merged with what the import copied.
-function _acctLoadLegacyProfile(){
-  if(window.LEGACY_PROFILE) return Promise.resolve(window.LEGACY_PROFILE);
-  return new Promise((res,rej)=>{const s=document.createElement('script');s.src='legacy-profile.js?x='+Date.now();s.onload=()=>res(window.LEGACY_PROFILE);s.onerror=()=>rej(new VAULT.VaultError("Couldn't load your old defaults. Check your connection and try again."));document.head.appendChild(s);});
-}
-async function _acctApplyLegacyProfile(){
-  const L=await _acctLoadLegacyProfile();
-  const cfg=VAULT.udb.collection('appConfig');
-  const get=async id=>{const d=await cfg.doc(id).get({source:'server'});return d.exists?d.data():null;};
-  // payee lines: old built-ins -> customLines, skipping any the owner removed
-  const cl=(await get('customLines'))||{};
-  const lines={...(cl.lines||{})},removed=cl.removed||{};
-  let movedLines=0;
-  for(const cat in L.catLines){
-    const gone=new Set(removed[cat]||[]);
-    const cur=new Set(lines[cat]||[]);
-    L.catLines[cat].forEach(p=>{if(!gone.has(p)&&!cur.has(p)&&!(CAT_LINES[cat]||[]).includes(p)){cur.add(p);movedLines++;}});
-    if(cur.size) lines[cat]=[...cur];
-  }
-  await cfg.doc('customLines').set({lines,removed},{merge:true});
-  // categories that are no longer built in
-  const cc=(await get('customCats'))||{};
-  const cats=[...new Set([...(cc.cats||[]),...L.extraCats])];
-  await cfg.doc('customCats').set({cats},{merge:true});
-  // bank accounts: the old undeletable defaults + the custom ones
-  const ca=(await get('cashAccounts'))||{};
-  const accounts=[...new Set([...L.cashAccounts,...(ca.accounts||[])])];
-  const usd=[...new Set([...(ca.usd||[]),...L.usdAccounts])];
-  await cfg.doc('cashAccounts').set({accounts,usd});
-  // platforms only if the account has none saved
-  const inv=(await get('investments'))||{};
-  if(!Array.isArray(inv.platforms)||!inv.platforms.length) await cfg.doc('investments').set({platforms:L.platforms},{merge:true});
-  // budgets + fixed bills fallbacks, and skip onboarding
-  await cfg.doc('profile').set({onboarded:true,defBudgets:L.defBudgets,fixedObl:L.fixedObl,legacyImport:new Date().toISOString()},{merge:true});
-  return {movedLines,cats,accounts,usd};
-}
-
-// ── Account card (More → Data) ────────────────────────────────────────────
+// ── Account card (Settings → Data) ────────────────────────────────────────────
 function renderAccountCard(){
   if(typeof DATA_MODE==='undefined') return '';
   if(DATA_MODE==='cloud'){
@@ -457,7 +370,8 @@ function renderAccountCard(){
         <button class="btn btn-g btn-sm" style="flex:1" onclick="acctShowChangePw()">Change password</button>
         <button class="btn btn-g btn-sm" style="flex:1" onclick="acctConfirmSignOut()">Sign out</button>
       </div>
-      <button class="btn btn-g btn-sm btn-full" style="margin-top:8px" onclick="acctShowRecovery()">Recovery code &amp; email</button></div>`;
+      <button class="btn btn-g btn-sm btn-full" style="margin-top:8px" onclick="acctShowRecovery()">Recovery code &amp; email</button>
+      <div style="color:var(--red);margin-top:12px;font-size:0.7rem;font-weight:600;text-align:center;cursor:pointer" onclick="acctShowDelete()">Delete my account</div></div>`;
   }
   return `<div class="exp-card" style="margin-top:10px">
     <div class="exp-card-title" style="margin-bottom:6px">Account</div>
@@ -474,6 +388,36 @@ function acctConfirmSignOut(){
     <button class="btn btn-g btn-full" onclick="acctClose()">Cancel</button>
   `);
 }
+// ── Delete account (signed in) ────────────────────────────────────────────
+function acctShowDelete(){
+  _acctShow(`
+    <div class="acct-back" onclick="acctClose()">‹ Back</div>
+    <h2>Delete your account?</h2>
+    <div class="acct-sub">This permanently deletes your account and <b>all your data</b> on every device: transactions, balances, investments, budgets, AI chats and settings. It can't be undone, and nobody can recover it for you.</div>
+    <div class="acct-sub">Want a copy first? Go to Settings → Export and download a backup.</div>
+    <div><label class="ilabel">Type your username to confirm</label><input class="ifield" id="acct-u" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
+    <div><label class="ilabel">Password</label><input class="ifield" id="acct-p" type="password" autocomplete="current-password" onkeydown="_acctOnEnter(event,acctDoDelete)"></div>
+    <div class="acct-err" id="acct-err"></div>
+    <div class="acct-spacer"></div>
+    <button class="btn btn-d btn-full" id="acct-go" onclick="acctDoDelete()">Delete everything</button>
+    <button class="btn btn-g btn-full" onclick="acctClose()">Cancel</button>
+  `);
+}
+function acctDoDelete(){
+  if(VAULT.normUser(_acctVal('acct-u'))!==VAULT.normUser(VAULT.username)){_acctErr("That isn't your username.");return;}
+  _acctBusy('acct-go','Deleting…',async()=>{
+    const b=document.getElementById('acct-go');
+    await VAULT.deleteAccount(_acctVal('acct-p'),n=>{if(b)b.textContent=`Deleting… (${n})`;});
+    _wipeDataCaches();
+    try{localStorage.removeItem(LOCK_LS);}catch{}
+    await VAULT.clearLocal();
+    acctClose();
+    await _enterMode('local');
+    if(typeof renderAll==='function') renderAll();
+    toast('Your account and data have been deleted.');
+  });
+}
+
 // ── Recovery code & email (signed in) ─────────────────────────────────────
 let _acctRec=null; // {code,email,username} while this screen is open
 async function acctShowRecovery(){
@@ -501,7 +445,7 @@ async function acctShowRecovery(){
     <div class="acct-spacer"></div>
     <div><label class="ilabel">Lost your code? Enter your password to create a new one</label><input class="ifield" id="acct-p" type="password" autocomplete="current-password" onkeydown="_acctOnEnter(event,acctDoNewCode)"></div>
     <button class="btn btn-g btn-full" id="acct-go" onclick="acctDoNewCode()">Create a new recovery code</button>
-    <div class="acct-muted" style="text-align:left">Your old code stops working once a new one is created.</div>
+    <div class="acct-muted" style="text-align:left">Your old code stops working once a new one is created.</div>
   `);
 }
 function acctSaveRecEmail(){
@@ -542,3 +486,140 @@ function acctDoChangePw(){
     acctClose();toast('Password changed');
   });
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// APP LOCK — fingerprint / Face ID / device PIN via WebAuthn
+// ══════════════════════════════════════════════════════════════════════════
+// A privacy screen for people who hand their phone to others. It is a gate in
+// front of the UI, not extra encryption: the data on the device is protected
+// by the account's encryption and the phone's own lock, not by this. The OS
+// prompt (fingerprint, face or device PIN) does the checking; the signature it
+// returns is not verified because there's no server to verify it against.
+// Needs an account so the password is always there as a fallback.
+const LOCK_LS='sw3_applock';           // {credId, uid, after(min)} on this device
+const LOCK_AFTER=[0,1,5,15];
+let _lockHiddenAt=0,_lockOpen=false;
+function lockCfg(){try{const c=JSON.parse(localStorage.getItem(LOCK_LS)||'null');return c&&c.credId?c:null;}catch{return null;}}
+function _lockB64(buf){let s='';new Uint8Array(buf).forEach(b=>s+=String.fromCharCode(b));return btoa(s);}
+function _lockUnb64(s){return Uint8Array.from(atob(s),c=>c.charCodeAt(0));}
+async function lockSupported(){
+  try{return !!(window.PublicKeyCredential&&await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable());}catch{return false;}
+}
+async function lockEnable(){
+  if(DATA_MODE!=='cloud'){toast('Create an account first');return;}
+  if(!await lockSupported()){toast("This device or browser doesn't support fingerprint or face unlock");return;}
+  try{
+    const name=VAULT.username||'SpendWise';
+    const cred=await navigator.credentials.create({publicKey:{
+      challenge:crypto.getRandomValues(new Uint8Array(32)),
+      rp:{name:'SpendWise'},
+      user:{id:new TextEncoder().encode(String(VAULT.uid).slice(0,64)),name,displayName:name},
+      pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
+      authenticatorSelection:{authenticatorAttachment:'platform',userVerification:'required',residentKey:'discouraged'},
+      timeout:60000,
+    }});
+    if(!cred) return;
+    try{await VAULT.primeVerifier();}catch(e){console.warn('lock: password check not cached',e);}
+    localStorage.setItem(LOCK_LS,JSON.stringify({credId:_lockB64(cred.rawId),uid:VAULT.uid,after:1}));
+    toast('App lock is on');
+  }catch(e){
+    if(e&&e.name==='NotAllowedError'){toast('App lock was not turned on');return;}
+    console.warn('lock enable failed',e);toast("Couldn't turn on app lock on this device");
+  }
+  if(typeof renderSettData==='function') renderSettData();
+}
+function lockDisable(){
+  try{localStorage.removeItem(LOCK_LS);}catch{}
+  toast('App lock is off');
+  if(typeof renderSettData==='function') renderSettData();
+}
+function lockSetAfter(v){
+  const c=lockCfg();if(!c)return;c.after=+v;
+  try{localStorage.setItem(LOCK_LS,JSON.stringify(c));}catch{}
+}
+function renderAppLockCard(){
+  const c=lockCfg();
+  const body=DATA_MODE!=='cloud'
+    ?`<div class="exp-card-sub" style="margin-bottom:0">Lock SpendWise with your fingerprint, face or phone PIN. Sign in first: your password is the backup if the scan doesn't work.</div>`
+    :c?`<div class="exp-card-sub" style="margin-bottom:10px">On. SpendWise asks for your fingerprint, face or phone PIN when you open it.</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label class="ilabel" style="margin:0;flex:1">Lock when I leave the app for</label>
+          <select class="sfield" style="width:auto;font-size:0.72rem;padding:5px 8px" onchange="lockSetAfter(this.value)">
+            ${LOCK_AFTER.map(m=>`<option value="${m}" ${(c.after??1)===m?'selected':''}>${m===0?'Immediately':m+' min'}</option>`).join('')}
+          </select>
+        </div>
+        <button class="btn btn-g btn-sm btn-full" style="margin-top:10px" onclick="lockDisable()">Turn off app lock</button>`
+    :`<div class="exp-card-sub" style="margin-bottom:10px">Ask for your fingerprint, face or phone PIN whenever SpendWise opens, so nobody else can look at your finances.</div>
+      <button class="btn btn-p btn-sm btn-full" onclick="lockEnable()">Turn on app lock</button>`;
+  return`<div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:6px">🔒 App lock</div>${body}</div>`;
+}
+function _lockOv(){
+  let ov=document.getElementById('lock-ov');
+  if(!ov){ov=document.createElement('div');ov.id='lock-ov';document.body.appendChild(ov);}
+  return ov;
+}
+function lockShow(){
+  if(_lockOpen) return;
+  _lockOpen=true;
+  const ov=_lockOv();
+  ov.innerHTML=`<div class="lk">
+    <div class="lk-i">🔒</div>
+    <h2>SpendWise is locked</h2>
+    <div class="lk-s">Use your fingerprint, face or phone PIN to open it.</div>
+    <button class="btn btn-p btn-full" id="lk-go" onclick="lockTryUnlock()">Unlock</button>
+    <div class="acct-err" id="lk-err"></div>
+    <div class="lk-l" onclick="lockShowPassword()">Use my password instead</div>
+  </div>`;
+  ov.style.display='block';
+  // Android Chrome allows the prompt straight away; iOS needs the tap.
+  if(!/iPhone|iPad|iPod/.test(navigator.userAgent)) setTimeout(lockTryUnlock,250);
+}
+function _lockDone(){
+  _lockOpen=false;
+  const ov=document.getElementById('lock-ov');if(ov){ov.style.display='none';ov.innerHTML='';}
+}
+async function lockTryUnlock(){
+  const c=lockCfg();if(!c){_lockDone();return;}
+  const err=document.getElementById('lk-err');if(err)err.textContent='';
+  try{
+    const a=await navigator.credentials.get({publicKey:{
+      challenge:crypto.getRandomValues(new Uint8Array(32)),
+      allowCredentials:[{type:'public-key',id:_lockUnb64(c.credId)}],
+      userVerification:'required',timeout:60000,
+    }});
+    if(a) _lockDone();
+  }catch(e){
+    if(err) err.textContent=e&&e.name==='NotAllowedError'?'Not unlocked. Tap Unlock to try again.':"Couldn't use fingerprint or face here. Use your password instead.";
+  }
+}
+function lockShowPassword(){
+  const ov=_lockOv();
+  ov.innerHTML=`<div class="lk">
+    <div class="lk-i">🔑</div>
+    <h2>Enter your password</h2>
+    <div class="lk-s">Your SpendWise account password${VAULT.username?' for <b>'+_acctEsc(VAULT.username)+'</b>':''}.</div>
+    <input class="ifield" id="lk-p" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')lockDoPassword()">
+    <div class="acct-err" id="lk-err"></div>
+    <button class="btn btn-p btn-full" id="lk-go" onclick="lockDoPassword()">Unlock</button>
+    <div class="lk-l" onclick="_lockOpen=false;lockShow()">Use fingerprint or face</div>
+  </div>`;
+  setTimeout(()=>document.getElementById('lk-p')?.focus(),50);
+}
+async function lockDoPassword(){
+  const b=document.getElementById('lk-go'),err=document.getElementById('lk-err');
+  if(b){b.disabled=true;b.textContent='Checking…';}
+  try{
+    if(await VAULT.verifyPassword(_acctVal('lk-p'))) _lockDone();
+    else if(err) err.textContent="That password isn't right.";
+  }catch(e){if(err)err.textContent=e instanceof VAULT.VaultError?e.message:'Something went wrong. Try again.';}
+  finally{if(b&&document.body.contains(b)){b.disabled=false;b.textContent='Unlock';}}
+}
+// Lock on open, and again after being away longer than the chosen time.
+(function lockInit(){
+  if(lockCfg()) lockShow();
+  document.addEventListener('visibilitychange',()=>{
+    const c=lockCfg();if(!c) return;
+    if(document.visibilityState==='hidden'){if(!_lockOpen)_lockHiddenAt=Date.now();}
+    else if(!_lockOpen&&_lockHiddenAt&&Date.now()-_lockHiddenAt>=(c.after??1)*60000) lockShow();
+  });
+})();

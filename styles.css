@@ -453,68 +453,6 @@ datalist option{background:var(--bg2);color:var(--text)}
   .ai-typing span:nth-child(3){animation-delay:0.4s;}
   @keyframes aiBlink{0%,80%,100%{opacity:0.25;}40%{opacity:1;}}
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   MONARCH DESIGN MODE — everything below is scoped under body.monarch.
-   The Classic :root{} and body.light{} token blocks above are NEVER touched;
-   removing body.monarch restores Classic exactly. Toggled from Settings
-   (sw3_design_mode) via setDesignMode() in app.js.
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-/* ── Monarch DARK tokens ── */
-body.monarch{
-  --bg:#17191d;--bg1:#1f2227;--bg2:#262a30;--bg3:#2d3239;
-  --border:#2c3138;--border2:#3a4048;
-  --text:#edeae3;--text2:#a09d92;--text3:#615f56;
-  --accent:#3fa98c;--adim:rgba(63,169,140,0.12);--ab:rgba(63,169,140,0.26);
-  --red:#e8705f;--rdim:rgba(232,112,95,0.12);
-  --blue:#7d93b8;--bdim:rgba(125,147,184,0.12);
-  --gold:#d9a13c;--gdim:rgba(217,161,60,0.12);
-  --green:#57bd94;--gdim2:rgba(87,189,148,0.12);
-  --r:16px;--rsm:10px;
-  --font:'Inter',-apple-system,'Segoe UI',Roboto,sans-serif;
-  --shadow:0 1px 2px rgba(0,0,0,0.3),0 10px 30px rgba(0,0,0,0.24);
-  --shadow-sm:0 1px 2px rgba(0,0,0,0.22);
-}
-
-/* ── Monarch LIGHT tokens (warm off-white canvas) ── */
-body.monarch.light{
-  --bg:#faf9f6;--bg1:#ffffff;--bg2:#f4f2ec;--bg3:#ece9e0;
-  --border:#eceae2;--border2:#d9d5c9;
-  --text:#26251f;--text2:#71705f;--text3:#aeab9c;
-  --accent:#0e7a63;--adim:rgba(14,122,99,0.09);--ab:rgba(14,122,99,0.22);
-  --red:#d64f3d;--rdim:rgba(214,79,61,0.09);
-  --blue:#4a6fa5;--bdim:rgba(74,111,165,0.09);
-  --gold:#b7791f;--gdim:rgba(183,121,31,0.1);
-  --green:#1e8e68;--gdim2:rgba(30,142,104,0.1);
-  --shadow:0 1px 2px rgba(60,55,35,0.05),0 10px 32px rgba(60,55,35,0.08);
-  --shadow-sm:0 1px 2px rgba(60,55,35,0.05);
-}
-
-/* ── Monarch component polish (soft cards, calmer chrome) ── */
-body.monarch .card{padding:18px 16px;border-color:transparent}
-body.monarch .exp-card,body.monarch .dc{border-color:transparent;box-shadow:var(--shadow)}
-body.monarch:not(.light) .card,
-body.monarch:not(.light) .exp-card,
-body.monarch:not(.light) .dc{border-color:var(--border)}
-body.monarch .btn{border-radius:12px}
-body.monarch .btn-p{box-shadow:0 2px 10px var(--ab)}
-body.monarch .tabs{border-color:transparent;background:var(--bg2);border-radius:12px}
-body.monarch .tab{border-radius:9px;font-weight:600}
-body.monarch .ifield,body.monarch .sfield{border-radius:12px}
-body.monarch .modal{border-radius:20px 20px 0 0;border-top-width:1px;border-top-color:var(--border)}
-body.monarch .bnav{border-color:transparent;box-shadow:0 10px 34px rgba(0,0,0,0.18),0 2px 8px rgba(0,0,0,0.1)}
-body.monarch .nw-hero{border-color:transparent;background:var(--bg1)}
-body.monarch .nw-hero::after{display:none}
-body.monarch .nw-big{font-family:var(--font);font-weight:700;letter-spacing:-0.04em;color:var(--text)}
-body.monarch .pg-title{letter-spacing:-0.02em}
-body.monarch .clabel{letter-spacing:0.1em}
-body.monarch .prog{height:6px;border-radius:4px}
-body.monarch .mpill,body.monarch .cfpill,body.monarch .filter-chip,body.monarch .chart-btn{font-family:var(--font)}
-body.monarch .search-bar,body.monarch .period-sel{border-radius:12px}
-
-/* ── Monarch category icon badges (rendered only in Monarch by app.js) ── */
-body.monarch .catb{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--catbg,var(--bg2));font-size:0.78rem;margin-right:8px;vertical-align:middle;flex-shrink:0;line-height:1}
-body.monarch .cr-name{display:inline-flex;align-items:center}
   /* AI-generated charts (```spendwise-chart blocks in a reply) */
   .ai-chart{margin:10px 0;}
   .ai-chart-t{font-size:0.66rem;font-weight:700;color:var(--text2);margin-bottom:5px;}
@@ -533,3 +471,34 @@ body.monarch .cr-name{display:inline-flex;align-items:center}
 .gd-b ul,.gd-b ol{margin:0 0 8px;padding-left:18px}
 .gd-b li{margin-bottom:5px}
 .gd-tip{background:var(--bg2);border-left:3px solid var(--accent);border-radius:var(--rsm);padding:8px 10px}
+/* ── Settings → Data: collapsed "Advanced" section ── */
+.sett-adv{margin-top:16px}
+.sett-adv>summary{list-style:none;cursor:pointer;display:flex;flex-direction:column;gap:2px;padding:12px 16px;border:1px dashed var(--border);border-radius:var(--r);font-size:0.8rem;font-weight:700;color:var(--text2);position:relative}
+.sett-adv>summary::-webkit-details-marker{display:none}
+.sett-adv>summary span{font-size:0.66rem;font-weight:400;color:var(--text3)}
+.sett-adv>summary::after{content:'›';position:absolute;right:16px;top:50%;transform:translateY(-50%);font-size:1.1rem;color:var(--text3);transition:transform .2s}
+.sett-adv[open]>summary::after{transform:translateY(-50%) rotate(90deg)}
+/* ── Quick add (top of the + form) ── */
+.qa-box{display:flex;gap:6px;align-items:center;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:4px 4px 4px 10px;margin-bottom:4px}
+.qa-input{flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--text);font:inherit;font-size:0.8rem;padding:6px 0}
+.qa-input::-webkit-search-cancel-button{display:none}
+.qa-btn{flex-shrink:0;width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--bg1);color:var(--text);font-size:0.95rem;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.qa-btn.qa-go{background:var(--accent);border-color:var(--accent);color:#fff}
+.qa-btn.on{background:var(--red);border-color:var(--red);color:#fff;animation:qaPulse 1.2s infinite}
+@keyframes qaPulse{50%{opacity:0.6}}
+.qa-status{font-size:0.68rem;color:var(--text3);min-height:0;margin:0 2px 12px;line-height:1.45}
+.qa-status:empty{margin-bottom:10px}
+.qa-status.qa-ok{color:var(--accent)}
+.qa-status.qa-warn{color:var(--gold)}
+/* ── Home: Getting started checklist ── */
+.gs-card{padding-bottom:10px}
+.gs-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);cursor:pointer}
+.gs-row.done{cursor:default}
+.gs-tick{width:20px;height:20px;border-radius:50%;border:1.5px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:0.66rem;font-weight:800;color:#fff}
+.gs-row.done .gs-tick{background:var(--accent);border-color:var(--accent)}
+.gs-t{font-size:0.76rem;font-weight:600;color:var(--text)}
+.gs-row.done .gs-t{color:var(--text3);text-decoration:line-through}
+.gs-s{font-size:0.64rem;color:var(--text3);margin-top:1px}
+.gs-go{color:var(--text3);font-size:1rem}
+.gs-foot{font-size:0.68rem;color:var(--text2);padding-top:9px;cursor:pointer}
+.gs-foot b{color:var(--accent)}
