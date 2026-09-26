@@ -1266,7 +1266,7 @@ let DATA_MODE='local';
 // The owner's uid — set after the owner creates their account (also in
 // firestore.rules). Unlocks publishing shared AI keys and the owner-only
 // repair tools.
-const OWNER_UID='';
+const OWNER_UID='pkuOGxHr19goU9qJjmPq2f3MzEw2';
 const LOCAL_MODE_LS='sw3_local_mode';
 function _hasLegacyCache(){
   try{if(localStorage.getItem(LOCAL_MODE_LS))return false;
@@ -8438,7 +8438,7 @@ function renderSettData(){
   // below on each release rather than prepending to a running changelog.
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.5.0</div><div>Firebase: spendwise-d6393</div><div style="color:var(--text3);margin-top:4px">v4.5.0: SpendWise now works without an account, and optional private accounts sync your data across devices, encrypted on your device so nobody else can read it.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.5.1</div><div>Firebase: spendwise-d6393</div><div style="color:var(--text3);margin-top:4px">v4.5.1: The app owner can now share an AI key so the AI Analyst works for everyone without setting up their own.</div></div></div>
     ${renderAccountCard()}
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
@@ -9329,7 +9329,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.5.0';
+const APP_VERSION='v4.5.1';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});

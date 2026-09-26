@@ -1,7 +1,7 @@
 rules_version = '2';
 // SpendWise (v4.5+) — paste into Firebase console → Firestore → Rules.
-// Replace OWNER_UID below with the owner's uid (Authentication → Users) — the
-// same value as OWNER_UID in app.js.
+// The uid in the publicConfig rule is the owner's (Authentication → Users) —
+// keep it identical to OWNER_UID in app.js.
 //
 // Only paste this AFTER the owner has run "Import my existing data": the last
 // rule locks the old shared top-level collections, which the import reads.
@@ -29,7 +29,7 @@ service cloud.firestore {
     // Shared Gemini keys: everyone reads, only the owner writes.
     match /publicConfig/{doc} {
       allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == 'OWNER_UID';
+      allow write: if request.auth != null && request.auth.uid == 'pkuOGxHr19goU9qJjmPq2f3MzEw2';
     }
 
     // Everything else — including the legacy shared collections — is closed.

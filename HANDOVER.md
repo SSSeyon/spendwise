@@ -1,6 +1,6 @@
-# SpendWise — Handover Note (v4.4.22)
+# SpendWise — Handover Note (v4.5.1)
 
-Personal-finance PWA. No auth (single-user, trusted device model).
+Personal-finance PWA, shared with the owner's friends since v4.5 (2026-09-26). Works signed out (data stays on the device); optional username/password accounts sync across devices with every document **encrypted on the device** — the project owner cannot read other users' data.
 Live: https://ssseyon.github.io/spendwise/
 Repo: github.com/SSSeyon/spendwise, deployed via GitHub Pages from `main`. No CLI/build step — pushing to `main` *is* the deploy.
 Source root: `G:\My Drive\Personal things\App\Spendwise\spendwise\`
@@ -9,7 +9,9 @@ Source root: `G:\My Drive\Personal things\App\Spendwise\spendwise\`
 
 ## Start here
 
-Working tree is **clean and fully pushed** at **v4.4.22** (`main` == `origin/main`). Nothing is half-finished. `.claude/` is untracked on purpose (local launch config).
+Read **Accounts & encryption (v4.5)** first — it changed where every byte of data lives. `.claude/` is untracked on purpose (local launch config + `test-accounts.local.md`).
+
+**Cutover status (2026-09-26):** owner account `seyon` (uid `pkuOGxHr19goU9qJjmPq2f3MzEw2`) created; legacy import verified id-for-id across all 13 collections (1,199 transactions). Owner still to do: paste `firestore.rules` in the console, publish shared AI keys (More → Data), restrict the Gemini key in Google Cloud, sign in on other devices, delete test accounts `swtest-a-0926` / `swtest-b-0926` (Auth + `users/<uid>`). After that, `legacy-profile.js` can be deleted.
 
 Read, in order: **Current state** → **Production data cleanup** (so the data doesn't confuse you) → whichever of the architecture sections touches what you're about to change. The **Version bump convention** and **Testing / preview** sections are non-negotiable; the encoding warning in the former cost a full rebuild once.
 
@@ -20,10 +22,25 @@ Read, in order: **Current state** → **Production data cleanup** (so the data d
 - Version **v4.4.22**, committed and pushed. Standing pattern: the user often pushes independently without announcing it, so **always re-verify `git status` / `git fetch`** rather than trusting an earlier read.
 - Files: `index.html` (shell, ~782 lines) + `app.js` (**~10,400 lines, all logic**) + `styles.css` + `sw.js` + `bump-version.ps1`.
 - The app is **in daily use** — the `transactions` collection grew from 1,078 to ~1,193 docs during/after the 2026-09 session. Never assume a count you read earlier is still current.
-- Firebase project `spendwise-d6393` — Firestore, **no authentication**, public client config, **no staging environment**. Every preview/dev session talks directly to the user's real, only copy of their financial data. Both the repo and the Firestore project are effectively publicly readable at the client-key level — a known, accepted tradeoff for this single-user app, not an oversight. Do not "fix" it unasked.
-- **Gemini API keys are multi-key and Firestore-synced** (`appConfig/aiKeys`). This supersedes any older "localStorage only, never Firestore" claim. The in-code comments that wrongly repeated that claim were corrected in v4.4.19.
+- Firebase project `spendwise-d6393` — Firestore + **Firebase Auth (Email/Password only; the Google provider is deliberately off, `GOOGLE_SIGNIN=false` in account.js)**, **no staging environment**. User data lives under `users/{uid}/…` as ciphertext. The old top-level collections are the pre-v4.5 shared copy, kept as a backup and closed by `firestore.rules` once pasted.
+- **Gemini keys:** the owner publishes shared keys to `publicConfig/aiKeys` (world-readable, owner-writable) so AI works for every user with no key of their own. A user's own keys (optional) live encrypted in their `appConfig/aiKeys` and win over the shared one.
 - The user sometimes edits files directly via the GitHub web UI in parallel with agent sessions, which has twice caused local/origin divergence (see incidents below).
 - **The user is hands-on and specific.** They will overrule a recommendation with a better-informed answer about their own data (e.g. reversing a merge direction, or telling you two similarly-named people are different). Ask rather than assume on anything touching their records, and do the work they actually asked for rather than a nearby larger refactor.
+
+## Accounts & encryption (v4.5) — read before touching any data code
+
+Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB local db, the offline increment queue) · `account.js` (sign-in screens, legacy import) · `setup.js` (onboarding, logo catalogue + picker) · `legacy-profile.js` (the owner's old built-in defaults, loaded only by the import — delete once no longer needed) · `firestore.rules`.
+
+- **Data modes** (`DATA_MODE` in app.js): `local` (signed out — `db` is an IndexedDB db with the same API), `cloud` (`db = VAULT.udb`), `locked`, `legacy` (a pre-v4.5 device: renders its cache with `db=null` until the user signs in / imports). App code keeps calling `db.collection(...)` unchanged.
+- **Encryption:** PBKDF2(600k)+HKDF from the password gives the Firebase auth secret (the real password never leaves the device) and a key that wraps a random AES-GCM data key. Docs are stored as `{v,_enc,year,month}`; AAD binds ciphertext to its path; bodies over 512 B are gzipped first (1 MiB doc limit). Only `year`/`month` are plaintext, so **server-side queries can only filter/order on year, month or document id** — anything else (payee, category, date) is filtered/sorted on the device by `udb`, which means reading the whole collection. Keep new queries month-scoped.
+- **Recovery code** is the only way back from a forgotten password (there is no email). It can also sign in: `recovery/{hash(username,code)}` holds the auth secret sealed under a code-derived key. A password change re-seals it via `meta/keys.recSealed`.
+- **Sentinels:** use `FV.serverTimestamp() / increment() / arrayUnion() / delete()` — never `firebase.firestore.FieldValue` in app code. Increments run as transactions (read-decrypt-add-encrypt). Offline (`navigator.onLine===false`) they go to a persisted queue (`sw3_vault_incq`, uid-tagged, kept across sign-out), flushed at cloud boot and on `online`. `arrayUnion` encrypts each entry separately; entries are de-duplicated on read.
+- **Settings that used to be code constants are now per user:** cash accounts (`appConfig/cashAccounts` = full list + `usd`), platforms, budget/fixed-bill fallbacks (`appConfig/profile`), payee lines (`customLines`). `CAT_LINES`, `DEFAULT_CASH_ACCOUNTS`, `PLATFORMS_DEFAULT`, `DEF_BUDGETS`, `FIXED_OBL` are generic/empty now. **Never put personal data back into code — the repo is public.**
+- `OWNER_UID` in app.js (must equal the uid in `firestore.rules`) gates publishing the shared AI keys.
+- **UI wording:** users see "Spent on" for the `payee` field and "items" for payee lines.
+- **Logos:** served from the app's own `Logos/`; `LOGO_CATALOG` in setup.js resolves a logo by account/platform name at render time (20 added from official Play Store icons); users can upload their own (a 64px data URL stored in their settings).
+- The one-time Fife→Kids / USD Cash / Energy→Fuel repairs no longer run at boot.
+- Tested 2026-09-26 on localhost with two test accounts: sign-up + upload of local data, ciphertext-only storage, restore on sign-in, recovery, password change, concurrent increments from two tabs, live listeners, offline-then-reload, cross-user isolation. Known gap (pre-existing): if the boot sync throws, realtime listeners stay off until a reload.
 
 ## Recent history (v4.4.5 → v4.4.22)
 
@@ -132,7 +149,7 @@ Twice now, local `HEAD` and `origin/main` have diverged because the user uploads
 
 ## Version bump convention (must-follow, easy to get wrong)
 
-**Use the script — don't hand-edit the six spots:**
+**Use the script — don't hand-edit the seven spots:**
 
 ```powershell
 .\bump-version.ps1 -Version 4.4.23 -Note "One user-facing sentence about what changed."
@@ -148,6 +165,7 @@ The six spots, for reference:
 4. `index.html` → `styles.css?v=x.x.x`
 5. `index.html` → `<span class="ver-lbl">vx.x.x</span>`
 6. `index.html` → `app.js?v=x.x.x`
+7. `index.html` → `vault.js` / `account.js` / `setup.js` `?v=x.x.x` (v4.5+)
 
 `sw.js` → bump `const CACHE='spendwise-vN'` **only** when the precached STATIC assets change. `index.html`, `app.js` and `styles.css` are deliberately excluded from the precache list, so `?v=` busting is sufficient for ordinary releases and the script leaves `sw.js` alone.
 
@@ -187,6 +205,8 @@ Tap the version label in the header (`forceHardRefresh()`) to force a client pas
 
 Preview dev-server config lives in this repo's own `.claude/launch.json`, config name `"spendwise"`, port **8972**, serving this repo via a PowerShell static-file script (`serve-spendwise.ps1`). (Earlier note about it living in a sibling project's launch.json is outdated — it's in-repo now.)
 
+**v4.5:** a fresh preview profile boots in **local** mode (IndexedDB only, no Firestore writes), so exploratory clicking is safe there. For cloud mode, use the test accounts in `.claude/test-accounts.local.md` — the page can `fetch('.claude/test-accounts.local.md')`, so passwords never appear in commands — which write only under their own `users/{uid}`. The service worker caches `?v=` assets cache-first: after an edit, unregister it and `fetch(file,{cache:'reload'})` each changed file before reloading.
+
 **Reminder**: this preview connects to live production Firestore (no staging exists). Prefer read-only inspection (`.get({source:'server'})`) when diagnosing data issues, and get explicit user confirmation before writing agent-inferred values to production docs — Claude Code's own permission system will generally block such writes until confirmed anyway.
 
 **Safe-testing harness** (the established pattern — use it, the preview talks to production):
@@ -209,6 +229,6 @@ No open bugs. Deliberately **not** done, with reasons:
 2. **`app.js` is still one ~10,400-line file** — the user explicitly deferred splitting it. Splitting *first* would only relocate the problems; the correctness fixes landed first for that reason.
 3. **`S` is still a god object** — mixes UI state (`page`, `chartType`, `catChart`) with domain data (`txns`, `cash`, `investments`) and a transient lock (`saving`). Splitting into `S.ui` / `S.data` would make the month-switching bugs structurally impossible, but it touches hundreds of references. Deferred by the user as too risky for the value.
 4. **`customExpLines.__removed__`** is a sentinel key stored *inside* the data map. Firestore rejects field names that both start and end with `__`, which crashed the `customLines` sync until `saveCustomLines`/`loadCustomLines` split it into a separate `removed` field. The sentinel itself remains — a cleaner model would hold it outside the map, but that needs a data migration.
-5. **The Gemini key is readable by anyone who can read the repo** (it is synced to `appConfig/aiKeys` in a public Firestore project). v4.4.19 made the in-app copy honest about this; the actual fix would be to stop syncing keys, or to put security rules on `appConfig/aiKeys`. The user has not asked for either.
+5. **The shared Gemini key is readable by anyone** — `publicConfig/aiKeys` is world-readable by design. Protection lives in Google Cloud: HTTP-referrer + API restriction and a daily quota on the key.
 6. **The Debtors page's own "Expected Back" stat** still counts settled/zero/negative debts. The Net Worth breakdown filters them (v4.4.18) but the user scoped that change to the NW card only.
 7. **817 inline `style="…"` vs 288 CSS classes** — any theming change is a shotgun edit across template literals. This is why Monarch mode needed render-branching rather than plain CSS.
