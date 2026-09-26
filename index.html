@@ -21,7 +21,8 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-<link rel="stylesheet" href="styles.css?v=4.4.22">
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<link rel="stylesheet" href="styles.css?v=4.5.0">
 </head>
 <body>
 <div id="ptr-indicator"><span class="ptr-arrow" id="ptr-arrow">↓</span><span class="ptr-label" id="ptr-label">Pull to refresh</span></div>
@@ -37,7 +38,7 @@
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
       <span id="oq-badge" style="display:none;margin-left:4px;font-size:0.58rem;color:var(--gold);font-family:var(--mono)"></span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v4.4.22</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v4.5.0</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -254,7 +255,7 @@
     <div style="display:flex;gap:8px;margin-bottom:10px">
       <div class="search-bar" style="flex:1">
         <span class="search-icon">🔍</span>
-        <input type="text" id="exp-search" placeholder="Search actual expense or notes…" oninput="renderExpenses()">
+        <input type="text" id="exp-search" placeholder="Search items or notes…" oninput="renderExpenses()">
       </div>
       <button class="btn btn-g btn-sm" onclick="openGlobalSearch()" style="flex-shrink:0;padding:8px 12px" title="Search every month, not just this one">All months</button>
       <button class="btn btn-g btn-sm" onclick="openFilterDrawer()" style="flex-shrink:0;padding:8px 12px">Filter ↑</button>
@@ -328,12 +329,7 @@
         <button class="btn btn-p btn-full" style="margin-top:8px" onclick="openMoveFunds()">Move: Cash ↔ Investment</button>
       </div>
       <div class="card">
-        <div class="clabel" style="margin-bottom:10px">Add New Account</div>
-        <div class="gform">
-          <div class="ig"><label class="ilabel">Account Name</label><input class="ifield" type="text" id="new-acct-name" placeholder="e.g. Kuda"></div>
-          <div class="ig"><label class="ilabel">Logo filename</label><input class="ifield" type="text" id="new-acct-logo" placeholder="e.g. kuda.png"><div class="csub" style="font-size:0.6rem;margin-top:3px">File in your Logos/ folder on GitHub</div></div>
-          <div class="ig" style="display:flex;align-items:flex-end"><button class="btn btn-g btn-full" onclick="addCashAccount()">Add</button></div>
-        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div class="clabel" style="margin:0">Your Accounts</div><button class="btn btn-p btn-sm" onclick="suOpenPicker('bank')">+ Add accounts</button></div>
         <div id="custom-accts-list" style="margin-top:8px"></div>
       </div>
     </div>
@@ -462,14 +458,14 @@
         </div>
       </div>
       <div class="ig">
-        <label class="ilabel">Actual Expense <span id="e-autocat-hint" style="color:var(--accent);font-size:0.58rem;font-weight:600;margin-left:6px"></span></label>
+        <label class="ilabel">Spent on <span id="e-autocat-hint" style="color:var(--accent);font-size:0.58rem;font-weight:600;margin-left:6px"></span></label>
         <select class="sfield" id="e-payee-sel" onchange="handlePayeeSel()"></select>
       </div>
       <div class="ig" id="e-payee-new-wrap" style="display:none">
-        <label class="ilabel">New Expense Name</label>
+        <label class="ilabel">New item</label>
         <div style="display:flex;gap:6px;align-items:center">
           <button class="emoji-trigger" id="e-payee-emoji" onclick="openEmojiPicker(this,e=>document.getElementById('e-payee-emoji').textContent=e)" title="Pick emoji">📦</button>
-          <input class="ifield" type="text" id="e-payee-new" placeholder="Enter new expense name" oninput="autoSuggestCat(this.value)" style="flex:1">
+          <input class="ifield" type="text" id="e-payee-new" placeholder="Lunch, Spar, Netflix, Mum…" oninput="autoSuggestCat(this.value)" style="flex:1">
         </div>
       </div>
     </div>
@@ -537,7 +533,7 @@
     </div>
     <div class="search-bar" style="margin-bottom:10px">
       <span class="search-icon">🔍</span>
-      <input type="text" id="global-search-input" placeholder="Payee, category or notes…" oninput="_debounceGlobalSearch()">
+      <input type="text" id="global-search-input" placeholder="Item, category or notes…" oninput="_debounceGlobalSearch()">
     </div>
     <div id="global-search-body"><div class="csub">Type to search every transaction across every month.</div></div>
   </div>
@@ -777,6 +773,9 @@
   </div>
 </div>
 
-<script src="app.js?v=4.4.22"></script>
+<script src="vault.js?v=4.5.0"></script>
+<script src="account.js?v=4.5.0"></script>
+<script src="setup.js?v=4.5.0"></script>
+<script src="app.js?v=4.5.0"></script>
 </body>
 </html>

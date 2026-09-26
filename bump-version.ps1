@@ -1,7 +1,7 @@
 <#
   bump-version.ps1 - update every place the app version is written, in one go.
 
-  There are SIX spots, and missing any one of them is a real deploy hazard:
+  There are SEVEN spots, and missing any one of them is a real deploy hazard:
   the ?v= query strings are what bust the service-worker cache, so a version
   that isn't bumped there means the fix never reaches an installed device.
 
@@ -11,6 +11,7 @@
     index.html  4. styles.css?v=X.Y.Z
                 5. <span class="ver-lbl" ...>vX.Y.Z</span>
                 6. app.js?v=X.Y.Z
+                7. vault.js / account.js / setup.js ?v=X.Y.Z   (v4.5+)
 
   sw.js CACHE is deliberately NOT touched: index.html, app.js and styles.css are
   excluded from the precache list (see sw.js), so ?v= busting is sufficient.
@@ -77,9 +78,12 @@ $hits['ver-lbl'] = ([regex]::Matches($idx, ">v$([regex]::Escape($Version))<")).C
 $idx = $idx -replace "app\.js\?v=$oldEsc", "app.js?v=$Version"
 $hits['app.js ?v='] = ([regex]::Matches($idx, "app\.js\?v=$([regex]::Escape($Version))")).Count
 
+$idx = $idx -replace "(vault|account|setup)\.js\?v=$oldEsc", ('$1.js?v=' + $Version)
+$hits['vault/account/setup ?v='] = [int](([regex]::Matches($idx, "(vault|account|setup)\.js\?v=$([regex]::Escape($Version))")).Count -eq 3)
+
 # ---- report & write --------------------------------------------------------
 $failed = $false
-foreach ($k in 'APP_VERSION','App Info version','Release note','styles.css ?v=','ver-lbl','app.js ?v=') {
+foreach ($k in 'APP_VERSION','App Info version','Release note','styles.css ?v=','ver-lbl','app.js ?v=','vault/account/setup ?v=') {
   $c = $hits[$k]
   if ($c -lt 1) { Write-Host ("  MISS  {0}" -f $k) -ForegroundColor Red; $failed = $true }
   else          { Write-Host ("  ok    {0}" -f $k) -ForegroundColor Green }
@@ -102,5 +106,5 @@ if ($WhatIf) { Write-Host "`n-WhatIf: no files written." -ForegroundColor Yellow
 $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($appJs,   $app, $utf8NoBom)
 [System.IO.File]::WriteAllText($indexHt, $idx, $utf8NoBom)
-Write-Host "`nAll 6 spots updated to v$Version." -ForegroundColor Green
+Write-Host "`nAll 7 spots updated to v$Version." -ForegroundColor Green
 Write-Host "Reminder: bump sw.js CACHE only if the precached STATIC list changed." -ForegroundColor DarkGray

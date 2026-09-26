@@ -1,0 +1,40 @@
+rules_version = '2';
+// SpendWise (v4.5+) — paste into Firebase console → Firestore → Rules.
+// Replace OWNER_UID below with the owner's uid (Authentication → Users) — the
+// same value as OWNER_UID in app.js.
+//
+// Only paste this AFTER the owner has run "Import my existing data": the last
+// rule locks the old shared top-level collections, which the import reads.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Each user's own data. Everything except year/month is encrypted on the
+    // device before it gets here.
+    match /users/{uid}/{doc=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Password recovery: the doc id is a hash of (username, recovery code), so
+    // only someone holding the code can find it; its content is sealed under a
+    // key derived from the code. get only — never list.
+    match /recovery/{id} {
+      allow get: if true;
+      allow create: if request.auth != null
+                    && request.resource.data.uid == request.auth.uid;
+      allow update: if request.auth != null
+                    && resource.data.uid == request.auth.uid
+                    && request.resource.data.uid == request.auth.uid;
+    }
+
+    // Shared Gemini keys: everyone reads, only the owner writes.
+    match /publicConfig/{doc} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == 'OWNER_UID';
+    }
+
+    // Everything else — including the legacy shared collections — is closed.
+    match /{doc=**} {
+      allow read, write: if false;
+    }
+  }
+}

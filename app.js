@@ -86,24 +86,26 @@ function setDesignMode(mode){
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 const MS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-// Categories with their expense lines from Excel
+// Built-in categories and their starter "actual expense" lines. Generic on
+// purpose (v4.5): each user adds their own payees, stored in their account
+// (appConfig/customLines). The owner's old personal lines were moved into
+// their account by the legacy import (see legacy-profile.js).
 const CAT_LINES = {
-  'Utilities': ['Power'],
-  'Fuel': ['Gas','Fuel - Old Ford','Fuel - Ford'],
-  'Car maintenance': ['Ford maintenance','Old Ford maintenance','Vehicle papers renewal'],
-  'Itunu': ['Itunu'],
-  'Domestic': ['Car purchase','Car wash','Service charge','Laundry','Home repairs','Rent','Temu','Cleaner'],
+  'Utilities': ['Power','Water'],
+  'Fuel': ['Fuel','Gas'],
+  'Car maintenance': ['Car service','Car wash','Vehicle papers renewal'],
+  'Domestic': ['Rent','Service charge','Laundry','Home repairs','Cleaner'],
   'Food': ['Lunch','Eat out'],
-  'Groceries': ['Ozzy shopping','Super Saver','Globus','Spar','Ebeano','Blenco','Sinomart','Cash groceries','Other groceries'],
-  'Kids': ["Fife's school fees","Fife's (Other)","Fife's Bday"],
-  'Internet services': ['Netflix/Amazon','Internet +Airtime'],
-  'Recreation': ['UK Visa','DSTV','Outing','Outing BDG'],
+  'Groceries': ['Supermarket','Market'],
+  'Kids': ['School fees','Kids (other)'],
+  'Internet services': ['Internet','Airtime'],
+  'Recreation': ['Outing','DSTV'],
   'Personal care': ['Medications','Personal care'],
-  'Gifts and donations': ['Mama','Mum','Pentho','Pego','Dunsin','Gbago Day','Jennifer','Gbago','Tadeyon','Senapon Whesu','Mausi Whesu','Cash gifts','Baba Sesi','Athingban','Segowe','Sejiro','Yemi','Tope','Francis','MBO',"Dad's Bday","JO's Bday","Kola's Wedding","Olamide's wedding",'Pirotress','Xmas Gifts','Xmas gift (Gatemen)','Others'],
-  'Loans': ['Semasa','Gbewato','Morin','House of Mayrie','Mauton','Tobi Talia','Jennifer','Maugbe'],
+  'Gifts and donations': ['Gifts','Donations'],
+  'Loans': [],
   'Others': ['Cash Withdrawal','Others'],
-  'Work Travel': ['Home-MMIA','MMIA - Home','Westgate','Westgate - RB','LC Waikiki','RB - The View','Java House','RB - Westgate (Jen)','RB - Pizza Garden (all)','Pizza Garden (All)','Mall to RB (FJ)','RB to Mercure (JO)','RB to Riverside (JO)','Radisson - Address (All)','Address -Radisson (All)','Riverside - Marriot (All)'],
-  'Education': ['Tuition','School fees'],
+  'Work Travel': ['Taxi','Flights','Hotel'],
+  'Education': ['Tuition','Books'],
 };
 const _BASE_CATS = Object.keys(CAT_LINES);
 // getCustomCats is safe to call any time — reads localStorage directly, no dependency on cGet/S
@@ -111,7 +113,7 @@ function getCustomCats(){try{const v=localStorage.getItem('sw3_custom_cats');ret
 function saveCustomCats(arr){
   try{localStorage.setItem('sw3_custom_cats',JSON.stringify(arr));}catch{}
   if(db)db.collection('appConfig').doc('customCats')
-    .set({cats:arr,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .set({cats:arr,updatedAt:FV.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('customCats sync failed',e));
 }
 // The user-added "actual expense" lines (payees per category, kept in
@@ -131,7 +133,7 @@ function saveCustomLines(){
   const {__removed__:removed, ...lines}=all;
   try{
     db.collection('appConfig').doc('customLines')
-      .set({lines,removed:removed||{},updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+      .set({lines,removed:removed||{},updatedAt:FV.serverTimestamp()},{merge:true})
       .catch(e=>console.warn('customLines sync failed',e));
   }catch(e){console.warn('customLines sync failed',e);}
 }
@@ -181,7 +183,6 @@ const CAT_ICONS = {
   'Utilities':          '💡',
   'Fuel':               '⛽',
   'Car maintenance':    '🔧',
-  'Itunu':              '👤',
   'Domestic':           '🏠',
   'Food':               '🍽️',
   'Groceries':          '🛒',
@@ -202,10 +203,12 @@ const _CATB_PALETTE=['#0e9384','#e04f16','#444ce7','#ba24d5','#0086c9','#e31b54'
 function catColor(cat){let h=0;const s=String(cat||'');for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return _CATB_PALETTE[h%_CATB_PALETTE.length];}
 function catBadge(cat){return`<span class="catb" style="--catbg:${catColor(cat)}26">${CAT_ICONS[cat]||'📦'}</span>`;}
 
-// ── GITHUB-HOSTED LOGOS ────────────────────────────────────────────────────
-// Upload logo files to the Logos/ folder in your GitHub repo.
-// Filename must match exactly what you enter in the settings (case-sensitive).
-const LOGOS_BASE_URL='https://raw.githubusercontent.com/SSSeyon/spendwise/main/Logos/';
+// ── LOGOS ──────────────────────────────────────────────────────────────────
+// A logo value is either a filename in the app's own Logos/ folder (the
+// built-in catalogue in setup.js) or a small data: URL the user uploaded,
+// which is stored in their account like any other setting.
+const LOGOS_BASE_URL='Logos/';
+function logoUrl(v){return /^data:image\//.test(v)?v:LOGOS_BASE_URL+encodeURIComponent(v);}
 function getCashLogos(){return cGet('sw3_cash_logos')||{};}
 function setCashLogo(acctName,filename){
   const m=getCashLogos();
@@ -215,7 +218,7 @@ function setCashLogo(acctName,filename){
   // Mirror to Firestore — use {merge:true} so concurrent per-account writes don't
   // erase each other (each call only changes the one field that changed).
   if(db){
-    const payload=filename?{[acctName]:filename.trim()}:{[acctName]:firebase.firestore.FieldValue.delete()};
+    const payload=filename?{[acctName]:filename.trim()}:{[acctName]:FV.delete()};
     db.collection('appConfig').doc('cashLogos').set(payload,{merge:true}).catch(e=>console.warn("cashLogos write failed",e));
   }
   // Update the thumbnail in the settings list immediately without re-rendering the page.
@@ -235,31 +238,36 @@ function _logoFallbackPlatform(el,color,size){
   el.parentNode.replaceChild(d,el);
 }
 function bankLogoEl(name,size=20){
-  const file=getCashLogos()[name]||'';
+  const file=getCashLogos()[name]||(typeof catalogLogo==='function'?catalogLogo('bank',name):'');
   const initials=name.slice(0,2).toUpperCase();
   if(!file) return `<div style="width:${size}px;height:${size}px;border-radius:4px;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:${Math.round(size*0.45)}px;font-weight:700;color:var(--text2);flex-shrink:0">${initials}</div>`;
-  const url=LOGOS_BASE_URL+encodeURIComponent(file);
+  const url=logoUrl(file);
   return `<img src="${url}" width="${size}" height="${size}" style="border-radius:4px;object-fit:contain;background:#fff;flex-shrink:0" onerror="_logoFallbackBank(this,'${name}',${size})">`;
 }
 function platformLogoEl(key,color,size=20){
   const plat=getPlatforms().find(p=>p.key===key);
-  const file=plat?.logo||'';
+  const file=plat?.logo||(plat&&typeof catalogLogo==='function'?catalogLogo('platform',plat.label):'');
   if(!file) return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};opacity:0.85;flex-shrink:0"></div>`;
-  const url=LOGOS_BASE_URL+encodeURIComponent(file);
+  const url=logoUrl(file);
   return `<img src="${url}" width="${size}" height="${size}" style="border-radius:50%;object-fit:contain;background:#fff;flex-shrink:0" onerror="_logoFallbackPlatform(this,'${color}',${size})">`;
 }
 
-const DEFAULT_CASH_ACCOUNTS = ['GTB','Access','Renmoney','USD Cash'];
-const USD_CASH_ACCOUNTS = ['USD Cash']; // cash accounts denominated in USD
-function isUSDCashAccount(name){return USD_CASH_ACCOUNTS.includes(name);}
+// v4.5: no built-in accounts. Each user's full list lives in
+// appConfig/cashAccounts (the owner's old GTB/Access/Renmoney/USD Cash
+// defaults were written into their account by the legacy import).
+const DEFAULT_CASH_ACCOUNTS = [];
+// USD-denominated cash accounts: the legacy 'USD Cash' name plus any account
+// the user marked as USD (appConfig/cashAccounts.usd).
+function getUsdAccounts(){return cGet('sw3_usd_accounts')||[];}
+function isUSDCashAccount(name){return name==='USD Cash'||getUsdAccounts().includes(name);}
 function cashTotalNGN(cashObj,m,y){const r=getFxRates(m||S.expMonth,y||S.expYear);return getCashAccounts().reduce((s,b)=>{const v=(cashObj||S.cash)[b]||0;return s+(isUSDCashAccount(b)?v*(r.USD||1650):v);},0);}
-function getCashAccounts(){const saved=cGet('sw3_cash_accounts');if(!saved)return DEFAULT_CASH_ACCOUNTS;const merged=[...DEFAULT_CASH_ACCOUNTS];saved.forEach(a=>{if(!merged.includes(a))merged.push(a);});return merged;}
-// Persist the custom-account list locally AND to Firestore so it syncs across devices.
-// Only the non-default (custom) accounts are stored, matching the localStorage shape.
-function setCashAccounts(allAccounts){
-  const custom=allAccounts.filter(a=>!DEFAULT_CASH_ACCOUNTS.includes(a));
-  cSet('sw3_cash_accounts',custom);
-  if(db) db.collection('appConfig').doc('cashAccounts').set({accounts:custom},{merge:false}).catch(e=>console.warn("cashAccounts write failed",e));
+function getCashAccounts(){return cGet('sw3_cash_accounts')||[];}
+// Persist the full account list (+ which are USD) locally AND to Firestore.
+function setCashAccounts(allAccounts,usd){
+  const list=[...new Set(allAccounts)];
+  const usdList=(usd||getUsdAccounts()).filter(a=>list.includes(a));
+  cSet('sw3_cash_accounts',list);cSet('sw3_usd_accounts',usdList);
+  if(db) db.collection('appConfig').doc('cashAccounts').set({accounts:list,usd:usdList},{merge:false}).catch(e=>console.warn("cashAccounts write failed",e));
 }
 async function loadFxOverrides(){
   if(!db) return;
@@ -276,6 +284,7 @@ async function loadCashAccounts(){
     const doc=await db.collection('appConfig').doc('cashAccounts').get();
     if(doc.exists&&Array.isArray(doc.data()?.accounts)){
       cSet('sw3_cash_accounts',doc.data().accounts);
+      cSet('sw3_usd_accounts',Array.isArray(doc.data().usd)?doc.data().usd:[]);
     }
   }catch(e){_warnLoad('loadCashAccounts',e);}
 }
@@ -321,7 +330,7 @@ function getNWConfig(){
 function saveNWConfig(cfg){
   cSet(NW_CFG_KEY,cfg);
   if(db)db.collection('appConfig').doc('nwConfig')
-    .set({cfg,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .set({cfg,updatedAt:FV.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('nwConfig sync failed',e));
 }
 async function loadNWConfig(){
@@ -357,14 +366,7 @@ function nwLoansOutstanding(cfg){
 }
 
 
-const PLATFORMS_DEFAULT = [
-  {key:'Piggy',label:'Piggy',color:'#c8f542',currency:'NGN'},
-  {key:'PiggySafelock',label:'Piggy Safelock',color:'#a8d430',currency:'NGN'},
-  {key:'RenVault',label:'RenVault',color:'#4a8aee',currency:'NGN'},
-  {key:'Risevest',label:'Risevest',color:'#f5c842',currency:'USD'},
-  {key:'Trove',label:'Trove',color:'#ff9f5c',currency:'USD'},
-  {key:'Bamboo',label:'Bamboo',color:'#ff5c9f',currency:'USD'},
-];
+const PLATFORMS_DEFAULT = [];
 const PLATFORMS_KEY='sw3_platforms';
 function getPlatforms(){return cGet(PLATFORMS_KEY)||PLATFORMS_DEFAULT;}
 // Historical month docs can hold platforms that have since been removed from
@@ -441,7 +443,7 @@ function _syncInvConfig(){
       platforms:getPlatforms(),
       invMeta:getInvMeta(),
       invSubs:getInvSubs(),
-      updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+      updatedAt:FV.serverTimestamp()
     };
     db.collection('appConfig').doc('investments').set(payload,{merge:true}).catch(e=>console.warn('invConfig sync failed',e));
   },800);
@@ -626,8 +628,10 @@ const FX_RATES = {
   '2026-04':{USD:1600,GBP:2040},'2026-05':{USD:1590,GBP:2020},
 };
 
-const DEF_BUDGETS={Utilities:90000,Fuel:150000,Carmaintenance:50000,Itunu:0,Domestic:200000,Food:150000,Groceries:400000,Kids:200000,Internetservices:50000,Recreation:100000,Personalcare:50000,Giftsanddonations:200000,Loans:0,Others:50000,WorkTravel:0,Education:0};
-const FIXED_OBL=[{label:'Service Charge',amount:55000},{label:'Internet & Airtime',amount:30000},{label:'Power',amount:90000},{label:'Fuel',amount:150000}];
+// Per-user fallbacks, set from appConfig/profile by _applyProfile() (the owner's
+// old hard-coded values live in their profile doc now).
+let DEF_BUDGETS={};
+let FIXED_OBL=[];
 // School fees loaded from localStorage via seed JSON.
 const SCHOOL_FEES_DEFAULT=[];
 
@@ -647,8 +651,34 @@ function smartCat(payee){
   if(!payee)return null;
   const lower=payee.toLowerCase().trim();
   if(PAYEE_CAT_MAP[lower])return PAYEE_CAT_MAP[lower];
+  // The user's own payee lines (appConfig/customLines) — most payees live here now
+  const cl=(typeof S!=='undefined'&&S.customExpLines)||{};
+  for(const cat in cl){if(cat==='__removed__'||!Array.isArray(cl[cat]))continue;if(cl[cat].some(p=>String(p).toLowerCase()===lower))return cat;}
   for(const{kw,cat}of PAYEE_KEYWORDS){if(lower.includes(kw))return cat;}
   return null;
+}
+
+// ── Per-user profile (appConfig/profile) ──
+// {onboarded, defBudgets, fixedObl}. New users get empty fallbacks; the
+// owner's old hard-coded budgets/fixed bills were written here by the import.
+const PROFILE_KEY='sw3_profile';
+function getProfile(){return cGet(PROFILE_KEY)||null;}
+function _applyProfile(p){
+  DEF_BUDGETS=(p&&p.defBudgets&&typeof p.defBudgets==='object')?{...p.defBudgets}:{};
+  FIXED_OBL=(p&&Array.isArray(p.fixedObl))?p.fixedObl.map(o=>({...o})):[];
+}
+function saveProfile(patch){
+  const p={...(getProfile()||{}),...patch};
+  cSet(PROFILE_KEY,p);_applyProfile(p);
+  if(db)db.collection('appConfig').doc('profile').set({...p,updatedAt:FV.serverTimestamp()},{merge:true}).catch(e=>console.warn('profile write failed',e));
+  return p;
+}
+async function loadProfile(){
+  if(!db) return;
+  try{
+    const doc=await db.collection('appConfig').doc('profile').get();
+    if(doc.exists){const p=doc.data();delete p.updatedAt;cSet(PROFILE_KEY,p);_applyProfile(p);}
+  }catch(e){_warnLoad('loadProfile',e);}
 }
 
 // ── RECURRING ENGINE ──
@@ -657,7 +687,7 @@ function getRecurring(){return cGet(CK_RECUR)||[];}
 function saveRecurring(list){
   cSet(CK_RECUR,list);
   if(db)db.collection('appConfig').doc('recurring')
-    .set({list,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .set({list,updatedAt:FV.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('recurring sync failed',e));
 }
 async function loadRecurring(){
@@ -699,7 +729,7 @@ async function postRecurring(idx){
     const isUSD=isUSDCashAccount(bank);
     const fxRates=getFxRates(pM,pY);
     const amtNGN=isUSD?Math.round(r.amount*fxRates.USD):r.amount;
-    const data={amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.incCat||'Other',bank,notes:r.notes||'',date:postDate,month:pM,year:pY,type:'income',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+    const data={amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.incCat||'Other',bank,notes:r.notes||'',date:postDate,month:pM,year:pY,type:'income',createdAt:FV.serverTimestamp()};
     try{
       const ref=await db.collection('income').add(data);
       if(pM===S.expMonth&&pY===S.expYear) S.income.unshift({...data,id:ref.id});
@@ -714,7 +744,7 @@ async function postRecurring(idx){
     const isUSD=isUSDCashAccount(bank);
     const fxRates=getFxRates(pM,pY);
     const amtNGN=isUSD?Math.round(r.amount*fxRates.USD):r.amount;
-    const data={amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.category,bank,payee:r.payee,notes:r.notes||'',date:postDate,month:pM,year:pY,type:'expense',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+    const data={amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.category,bank,payee:r.payee,notes:r.notes||'',date:postDate,month:pM,year:pY,type:'expense',createdAt:FV.serverTimestamp()};
     try{
       const ref=await db.collection('transactions').add(data);
       if(pM===S.expMonth&&pY===S.expYear) S.txns.unshift({...data,id:ref.id});
@@ -767,7 +797,7 @@ function getRules(){return cGet(CK_RULES)||[];}
 function saveRules(list){
   cSet(CK_RULES,list);
   if(db)db.collection('appConfig').doc('rules')
-    .set({list,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .set({list,updatedAt:FV.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('rules sync failed',e));
 }
 async function loadRules(){
@@ -802,7 +832,7 @@ function getGoals(){return cGet(CK_GOALS)||[];}
 function saveGoals(list){
   cSet(CK_GOALS,list);
   if(db)db.collection('appConfig').doc('goals')
-    .set({list,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .set({list,updatedAt:FV.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('goals sync failed',e));
 }
 async function loadGoals(){
@@ -882,7 +912,7 @@ const DEF_CAT_GROUPS={
   'Home & Utilities':['Utilities','Domestic','Internet services'],
   'Food':['Food','Groceries'],
   'Transport':['Fuel','Car maintenance','Work Travel'],
-  'Family':['Kids','Education','Itunu'],
+  'Family':['Kids','Education'],
   'Personal':['Personal care','Recreation'],
   'Giving & Loans':['Gifts and donations','Loans'],
 };
@@ -933,6 +963,7 @@ let _lsWarned=false;
 const cSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){if(!_lsWarned){_lsWarned=true;console.warn("localStorage write failed - cached data may be stale (quota or private mode):",e);}}};
 
 function loadFromCache(){
+  _applyProfile(getProfile());
   // ── Migrate Energy → Fuel (one-time, background) ──────────────────────
   if(!cGet('sw3_migrated_energy_to_fuel')){
     // Rewrite all cached transaction months synchronously
@@ -959,8 +990,6 @@ function loadFromCache(){
     // Remove Energy from custom cats if present
     const custom=getCustomCats().filter(c=>c!=='Energy');saveCustomCats(custom);
     cSet('sw3_migrated_energy_to_fuel',true);
-    // Fire async Firestore batch in the background (non-blocking)
-    _migrateEnergyFirestore();
   }
 
   if(!cGet('sw3_migrated_usd_cash')){
@@ -1029,7 +1058,7 @@ function getFxOverrides(){return cGet(FX_OVR_KEY)||{};}
 function _syncFxOverrides(ovr){
   if(!db) return;
   db.collection('appConfig').doc('fxOverrides')
-    .set({overrides:ovr,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:false})
+    .set({overrides:ovr,updatedAt:FV.serverTimestamp()},{merge:false})
     .catch(e=>console.warn('fxOverrides sync failed',e));
 }
 function getFxRates(m,y){const k=fxKey(m,y);const ovr=getFxOverrides();return ovr[k]||FX_RATES[k]||{USD:1600,GBP:2050};}
@@ -1200,7 +1229,8 @@ function setSyncStatus(st){
   const dot=document.getElementById('sync-dot'),lbl=document.getElementById('sync-lbl');
   if(!dot||!lbl) return;
   dot.className='sync-dot';
-  const map={syncing:{cls:'yellow',text:'Syncing'},synced:{cls:'green',text:'Synced'},offline:{cls:'red',text:'Offline'},error:{cls:'red',text:'Error'}};
+  if(DATA_MODE==='local'&&st!=='error') st='local';
+  const map={syncing:{cls:'yellow',text:'Syncing'},synced:{cls:'green',text:'Synced'},offline:{cls:'red',text:'Offline'},error:{cls:'red',text:'Error'},local:{cls:'yellow',text:'This device'},legacy:{cls:'yellow',text:'Not syncing'},locked:{cls:'yellow',text:'Locked'}};
   const s=map[st]||map.offline;
   dot.classList.add(s.cls);lbl.textContent=s.text;
   _updateOqBadge();
@@ -1222,17 +1252,65 @@ function hideStaleBar(){document.getElementById('stale-bar').style.display='none
 // ══════════════════════════════════════════════════════════════════════════
 // FIREBASE
 // ══════════════════════════════════════════════════════════════════════════
+// ── Data modes (v4.5) ──
+// 'cloud'  signed in + key unlocked on this device: db = VAULT.udb, every doc
+//          encrypted under users/{uid}/…
+// 'local'  not signed in: db = VAULT's IndexedDB-backed local db, nothing
+//          leaves the device. Same API, so the rest of the app doesn't care.
+// 'locked' signed in but this device has no key yet (e.g. returning from a
+//          Google redirect): db = null until the user unlocks.
+// 'legacy' a device that ran a pre-accounts version: caches hold the owner's
+//          data from the old shared collections. db = null (render from cache,
+//          never overwrite it) until the user creates an account and imports.
+let DATA_MODE='local';
+// The owner's uid — set after the owner creates their account (also in
+// firestore.rules). Unlocks publishing shared AI keys and the owner-only
+// repair tools.
+const OWNER_UID='';
+const LOCAL_MODE_LS='sw3_local_mode';
+function _hasLegacyCache(){
+  try{if(localStorage.getItem(LOCAL_MODE_LS))return false;
+    for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(/^sw3_txns_/.test(k))return true;}}catch{}
+  return false;
+}
 function initFirebase(){
   try{loadFromCache();}catch(e){console.error('loadFromCache threw',e);}
   try{renderAll();}catch(e){console.error('renderAll threw',e);}
   if(S.isStale) showStaleBar();
   (async()=>{
-    await new Promise(resolve=>{function check(){if(typeof firebase!=='undefined')resolve();else setTimeout(check,50);}check();});
+    await new Promise(resolve=>{function check(){if(typeof firebase!=='undefined'&&firebase.auth)resolve();else setTimeout(check,50);}check();});
     firebase.initializeApp({apiKey:"AIzaSyCIe7f02DrbrwZLIBmNlvslXWmNLVMiluw",authDomain:"spendwise-d6393.firebaseapp.com",projectId:"spendwise-d6393",storageBucket:"spendwise-d6393.firebasestorage.app",messagingSenderId:"460779232494",appId:"1:460779232494:web:cd3c178b88d0f22044a7ff"});
-    db=firebase.firestore();
-    db.enablePersistence().catch(()=>{});
-    if(!navigator.onLine){_invMigrateGate=true;setSyncStatus('offline');return;}
-    setSyncStatus('syncing');
+    const fs=firebase.firestore();
+    fs.enablePersistence().catch(()=>{});
+    VAULT.attach(fs);
+    try{await firebase.auth().getRedirectResult();}catch(e){console.warn('google redirect result',e);}
+    const user=await new Promise(res=>{const u=firebase.auth().onAuthStateChanged(x=>{u();res(x);});});
+    if(user&&await VAULT.restoreDevice(user.uid)){await _enterMode('cloud');}
+    else if(user){await _enterMode('locked');}
+    else if(_hasLegacyCache()){await _enterMode('legacy');}
+    else{await _enterMode('local');}
+  })();
+}
+
+// Switch the data source and (re)load everything from it.
+async function _enterMode(mode){
+  stopRealtimeListeners();
+  DATA_MODE=mode;
+  if(mode==='cloud') db=VAULT.udb;
+  else if(mode==='local'){db=await VAULT.openLocal();try{localStorage.setItem(LOCAL_MODE_LS,'1');}catch{}}
+  else db=null;
+  _renderModeBar();
+  if(mode==='locked'){setSyncStatus('locked');if(typeof acctShowUnlock==='function')acctShowUnlock();return;}
+  if(mode==='legacy'){_invMigrateGate=false;setSyncStatus('legacy');return;}
+  if(mode==='local'){setSyncStatus('local');}
+  await _bootSync();
+  if(typeof suShouldOnboard==='function'&&suShouldOnboard()) suStart();
+}
+
+async function _bootSync(){
+    if(DATA_MODE==='cloud'&&!navigator.onLine){_invMigrateGate=true;setSyncStatus('offline');return;}
+    if(DATA_MODE==='cloud')setSyncStatus('syncing');
+    if(DATA_MODE==='cloud'){try{await VAULT.flushPending();}catch(e){console.warn('pending balance changes not yet applied',e);}}
     try{
       const m=S.expMonth,y=S.expYear;
       await syncAll();
@@ -1244,17 +1322,41 @@ function initFirebase(){
       S.investments=cGet(CK.inv(m,y))||S.investments;
       S.cash=cGet(CK.cash(m,y))||S.cash;
       S.debtors=cGet(CK.debtors)||S.debtors;
-      cSet(CK.lastSync,Date.now());setSyncStatus('synced');hideStaleBar();renderAll();startRealtimeListeners();
+      cSet(CK.lastSync,Date.now());setSyncStatus(DATA_MODE==='local'?'local':'synced');hideStaleBar();renderAll();startRealtimeListeners();
       _checkMonthEndClose(); // fire-and-forget: freezes any months that closed since the app was last opened
       _prefetchHistoryMonths(); // fire-and-forget: pulls prior months so smart insights have history on this device
       _healCashLedgers(); // fire-and-forget: pushes any ledger entries stranded locally on this device up to Firestore
     }catch(e){console.error(e);setSyncStatus('error');}
-  })();
+}
+
+// Wipe every per-account data cache on this device (sign-out, or replacing
+// this device's local data with an account's). UI prefs survive.
+const _KEEP_ON_WIPE=new Set(['sw3_vault_incq','sw3_theme','sw3_design_mode','sw3_dash_order','sw3_hidden_cards','sw3_last_page','sw3_dash_currency',LOCAL_MODE_LS]);
+function _wipeDataCaches(){
+  try{
+    const ks=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith('sw3_')&&!_KEEP_ON_WIPE.has(k))ks.push(k);}
+    ks.forEach(k=>localStorage.removeItem(k));
+  }catch(e){console.warn('cache wipe failed',e);}
+  S.txns=[];S.income=[];S.investments={};S.cash={};S.debtors=[];
+}
+
+// Header strip telling the user where their data lives.
+function _renderModeBar(){
+  let el=document.getElementById('mode-bar');
+  if(!el){el=document.createElement('div');el.id='mode-bar';const app=document.querySelector('.app');if(app)app.prepend(el);else return;}
+  const msg={
+    local:['📱 Saved on this device only.','Sign in to sync','acctShowWhy()'],
+    legacy:['SpendWise now has private accounts.','Create yours to keep syncing','acctShowWhy(true)'],
+    locked:['🔒 Enter your password to unlock your data on this device.','Unlock','acctShowUnlock()'],
+  }[DATA_MODE];
+  if(!msg){el.style.display='none';el.innerHTML='';return;}
+  el.style.display='';
+  el.innerHTML=`<span>${msg[0]}</span> <a onclick="${msg[2]}">${msg[1]} ›</a>`;
 }
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadCustomLines(),loadAiChats(),loadGoals(),loadRules(),loadAiKeys(),loadSpecialBudgets(),loadInterestPosts()]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadCustomLines(),loadAiChats(),loadGoals(),loadRules(),loadAiKeys(),loadSpecialBudgets(),loadInterestPosts(),loadProfile(),loadSharedAiKeys()]);
 }
 
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
@@ -1352,6 +1454,7 @@ function startRealtimeListeners(){
       const arr=snap.data()?.accounts;
       if(Array.isArray(arr)){
         cSet('sw3_cash_accounts',arr);
+        cSet('sw3_usd_accounts',Array.isArray(snap.data().usd)?snap.data().usd:[]);
         renderCashPage();renderDashboard();
       }
     },err=>console.warn('cashAccounts listener:',err));
@@ -1612,7 +1715,7 @@ async function loadTxns(m,y){
 // engine has history to learn from on any device, not just ones where the
 // user has browsed back through old months. Skips months already cached.
 async function _prefetchHistoryMonths(){
-  if(!db||!navigator.onLine) return;
+  if(!_dbReady()) return;
   let fetched=0;
   for(const {m:mm,y:yy} of _prevMonthsList(S.expMonth,S.expYear,6)){
     if(Array.isArray(cGet(CK.txns(mm,yy)))) continue;
@@ -1879,7 +1982,7 @@ async function _checkMonthEndClose(){
           await db.collection('historicalSummary').doc(docId).set({
             year:y,month:m,label:MS2[m-1]+" '"+String(y).slice(2),
             income,expenses,closingCash,closed:true,
-            closedAt:firebase.firestore.FieldValue.serverTimestamp()
+            closedAt:FV.serverTimestamp()
           },{merge:true});
           closedAny++;
         }
@@ -1948,7 +2051,7 @@ function reloadMonth(m,y){
   S.budgets=cGet(CK.budgets(m,y))||{...DEF_BUDGETS};
   renderExpenses();renderDashboard();
   if(document.getElementById('inc-pane')?.style.display!=='none') renderIncome();
-  if(db&&navigator.onLine){
+  if(_dbReady()){
     setSyncStatus('syncing');
     Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadBudgets(m,y)])
       .then(()=>{
@@ -2047,7 +2150,7 @@ function dashPeriodChange(){
     S.budgets=cGet(CK.budgets(S.dashMonth,S.dashYear))||{...DEF_BUDGETS};
   }
   renderDashboard();renderExpenses();renderForecast();renderInvestments();renderCashPage();
-  if(db&&navigator.onLine&&S.dashMonth>0){
+  if(_dbReady()&&S.dashMonth>0){
     const m=S.dashMonth,y=S.dashYear;
     setSyncStatus('syncing');
     Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y)])
@@ -4417,7 +4520,7 @@ function _logCashLedger(bank, delta, m, y, source, ref, dateStr){
     if(db){
       db.collection('cashLedger').doc(sid(m,y)).set({
         month:m, year:y,
-        entries: firebase.firestore.FieldValue.arrayUnion(entry)
+        entries: FV.arrayUnion(entry)
       },{merge:true}).catch(e=>console.warn("cashLedger write failed",e));
     }
   }catch(e){console.warn("cash ledger entry not recorded",e);}
@@ -4433,7 +4536,7 @@ function _logCashLedger(bank, delta, m, y, source, ref, dateStr){
 // dedupes on exact match, so entries that already synced are no-ops.
 // Returns the number of entries pushed.
 async function _syncCashLedgerUp(m,y){
-  if(!db||!navigator.onLine) return 0;
+  if(!_dbReady()) return 0;
   const local=cGet(`sw3_cash_ledger_${y}_${m}`)||[];
   if(!local.length) return 0;
   let remote=[];
@@ -4444,7 +4547,7 @@ async function _syncCashLedgerUp(m,y){
   try{
     await db.collection('cashLedger').doc(sid(m,y)).set({
       month:m, year:y,
-      entries: firebase.firestore.FieldValue.arrayUnion(...missing)
+      entries: FV.arrayUnion(...missing)
     },{merge:true});
     return missing.length;
   }catch(e){return 0;}
@@ -4454,7 +4557,7 @@ async function _syncCashLedgerUp(m,y){
 // so a device that stranded entries heals automatically without the user
 // having to open the audit.
 async function _healCashLedgers(){
-  if(!db||!navigator.onLine) return;
+  if(!_dbReady()) return;
   const seen=new Set();
   for(const {m,y} of _prevMonthsList(S.expMonth+1,S.expYear,7)){ // current month + 6 prior
     const k=`${y}-${m}`; if(seen.has(k))continue; seen.add(k);
@@ -4518,13 +4621,13 @@ function _rippleQueueAdd(bank,delta,m,y){
   cSet('sw3_ripple_queue',q.slice(-200));
 }
 async function _rippleQueueFlush(){
-  if(!db||!navigator.onLine) return;
+  if(!_dbReady()) return;
   const q=cGet('sw3_ripple_queue')||[];
   if(!q.length) return;
   cSet('sw3_ripple_queue',[]);
   for(const it of q){
     try{await db.collection('cashBalances').doc(sid(it.m,it.y))
-      .set({[it.bank]:firebase.firestore.FieldValue.increment(it.delta)},{merge:true});}
+      .set({[it.bank]:FV.increment(it.delta)},{merge:true});}
     catch(e){_rippleQueueAdd(it.bank,it.delta,it.m,it.y);}
   }
 }
@@ -4543,7 +4646,7 @@ async function _rippleCashForward(bank,delta,m,y){
       const parts=d.id.split('-'),ry=+parts[0],rm=+parts[1];
       _markCashDirty(rm,ry,bank);
       writes.push(
-        d.ref.set({[bank]:firebase.firestore.FieldValue.increment(delta)},{merge:true})
+        d.ref.set({[bank]:FV.increment(delta)},{merge:true})
           .then(()=>_clearCashDirty(rm,ry,bank))
           .catch(()=>{_clearCashDirty(rm,ry,bank);_rippleQueueAdd(bank,delta,rm,ry);})
       );
@@ -4580,7 +4683,7 @@ function _adjustCash(bank, delta, m, y, source, ref, dateStr){
       try{
         await _ensureCashDoc(m,y);
         await db.collection('cashBalances').doc(sid(m,y)).set({
-          [bank]: firebase.firestore.FieldValue.increment(delta),
+          [bank]: FV.increment(delta),
           month:m, year:y
         },{merge:true});
         _clearCashDirty(m,y,bank);
@@ -4743,7 +4846,7 @@ function getInterestPosts(){return cGet(INT_POSTS_KEY)||{};}
 function saveInterestPosts(obj){
   cSet(INT_POSTS_KEY,obj);
   if(db)db.collection('appConfig').doc('interestPosts')
-    .set({posts:obj,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .set({posts:obj,updatedAt:FV.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('interestPosts sync failed',e));
 }
 async function loadInterestPosts(){
@@ -4833,7 +4936,7 @@ function postInterest(acctKey){
   const isView=(S.expMonth===cm&&S.expYear===cy);
   const arr=isView?S.income:(cGet(CK.inc(cm,cy))||[]);
   arr.unshift(entry);cSet(CK.inc(cm,cy),arr);if(isView)S.income=arr;
-  if(db)db.collection('income').doc(id).set({...entry,createdAt:firebase.firestore.FieldValue.serverTimestamp()}).catch(e=>console.warn('interest income sync failed',e));
+  if(db)db.collection('income').doc(id).set({...entry,createdAt:FV.serverTimestamp()}).catch(e=>console.warn('interest income sync failed',e));
   // Keep the month's history income total current
   const hist=cGet('sw3_history')||[];const hi=hist.findIndex(h=>h.year===cy&&h.month===cm);
   const totalInc=arr.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
@@ -5022,7 +5125,7 @@ async function saveExpense(){
     // carries the write through automatically. The offline queue below is a
     // fallback for genuine failures (not just a slow write).
     setSyncStatus('syncing');
-    ref.set({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()})
+    ref.set({...data,createdAt:FV.serverTimestamp()})
       .then(()=>setSyncStatus('synced'))
       .catch(e=>{
         console.warn('[income] background save failed — queued for retry',e);
@@ -5102,7 +5205,7 @@ async function saveExpense(){
   // carries the write through automatically. The offline queue below is a
   // fallback for genuine failures (not just a slow write).
   setSyncStatus('syncing');
-  const _write=editId?docRef.update(data):docRef.set({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+  const _write=editId?docRef.update(data):docRef.set({...data,createdAt:FV.serverTimestamp()});
   _write.then(()=>setSyncStatus('synced')).catch(e=>{
     console.warn('[expense] background save failed — queued for retry',e);
     oqAdd('transactions',docRef.id,data,true);
@@ -5208,7 +5311,7 @@ function saveIncome(){
   // carries the write through automatically. The offline queue below is a
   // fallback for genuine failures (not just a slow write).
   setSyncStatus('syncing');
-  const _write=editId?docRef.update(data):docRef.set({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+  const _write=editId?docRef.update(data):docRef.set({...data,createdAt:FV.serverTimestamp()});
   _write.then(()=>setSyncStatus('synced')).catch(e=>{
     console.warn('[income] background save failed — queued for retry',e);
     oqAdd('income',docRef.id,data,true);
@@ -5439,18 +5542,7 @@ function _renderInvInto(suffix){
     // Add Platform section only — per-platform edit is now inline in each row
     elEditFields.innerHTML=`
       <div class="card" style="margin-top:4px">
-        <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.06em">Add Investment Platform</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-          <div class="ig" style="margin-bottom:0;grid-column:1/-1"><label class="ilabel">Platform Name</label><input class="ifield" id="new-plat-name${s}" placeholder="e.g. Stanbic" style="font-size:0.8rem;padding:6px 10px"></div>
-          <div class="ig" style="margin-bottom:0"><label class="ilabel">Currency</label><select class="sfield" id="new-plat-cur${s}" style="font-size:0.78rem;padding:6px 10px">
-            <option value="NGN">NGN ₦</option>
-            <option value="USD">USD $</option>
-            <option value="GBP">GBP £</option>
-          </select></div>
-          <div class="ig" style="margin-bottom:0"><label class="ilabel">Colour</label><input type="color" id="new-plat-col${s}" value="#c8f542" style="width:100%;height:36px;border:none;border-radius:var(--rsm);background:none;cursor:pointer;padding:0"></div>
-          <div class="ig" style="margin-bottom:0;grid-column:1/-1"><label class="ilabel">Logo filename</label><input class="ifield" id="new-plat-logo${s}" placeholder="e.g. piggyvest.png" style="font-size:0.8rem;padding:6px 10px"><div class="csub" style="font-size:0.6rem;margin-top:3px">File in your Logos/ folder on GitHub</div></div>
-        </div>
-        <button class="btn btn-inc btn-full" onclick="addPlatform(document.getElementById('new-plat-name${s}').value,document.getElementById('new-plat-cur${s}').value,document.getElementById('new-plat-col${s}').value,document.getElementById('new-plat-logo${s}').value)">+ Add Platform</button>
+        <button class="btn btn-inc btn-full" onclick="suOpenPicker('platform')">+ Add investment platforms</button>
       </div>`;
   }
 }
@@ -5687,7 +5779,7 @@ function openLiqModal(pKey, subId){
 async function _recordInvestmentInterestIncome(label,bank,amtNGN,date,m,y){
   const data={amount:amtNGN,amtNGN,currency:'NGN',category:'Interest Income',bank,notes:`${label} — fixed income payout`,date,month:m,year:y};
   try{
-    const ref=await db.collection('income').add({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+    const ref=await db.collection('income').add({...data,createdAt:FV.serverTimestamp()});
     S.income.unshift({...data,id:ref.id});
   }catch(e){
     const offId='offline_inc_'+Date.now();
@@ -5999,7 +6091,7 @@ async function changeCashMonth(m){
   // paint instantly from cache (or the previous month's cache as a
   // placeholder — see _getInvData), then refresh live like Cash does.
   renderInvestments();
-  if(db&&navigator.onLine){
+  if(_dbReady()){
     loadCashData(m,S.cashYear).then(()=>{if(S.cashMonth===m)renderCashPage();}).catch(e=>_warnLoad("loadCashData (month switch)",e));
     loadInvData(m,S.cashYear).then(()=>{if(S.cashMonth===m)renderInvestments();}).catch(e=>_warnLoad("loadInvData (month switch)",e));
   }
@@ -6297,7 +6389,7 @@ async function saveDebtor(){
         }
       }
     } else {
-      data.createdAt=firebase.firestore.FieldValue.serverTimestamp();
+      data.createdAt=FV.serverTimestamp();
       // Generate the ID client-side so the same doc can be queued for retry
       // if the write fails while offline.
       const newId=db.collection('debtors').doc().id;
@@ -6371,7 +6463,7 @@ async function _doAddDebt(id){
     expectRepayment:true,disbursedFrom:bank||''};
   try{
     const newId=db.collection('debtors').doc().id;
-    await db.collection('debtors').doc(newId).set({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+    await db.collection('debtors').doc(newId).set({...data,createdAt:FV.serverTimestamp()});
     S.debtors=[{...data,id:newId},...(S.debtors||[])];
     cSet(CK.debtors,S.debtors);
     if(bank){
@@ -6580,7 +6672,7 @@ async function saveLoan(){
       }
       toast('Loan updated');
     } else {
-      data.createdAt=firebase.firestore.FieldValue.serverTimestamp();
+      data.createdAt=FV.serverTimestamp();
       // Generate the ID client-side so the doc can be queued for retry if
       // the write fails while offline; the cash credit below still lands
       // immediately via _adjustCash's own offline queue either way.
@@ -7170,7 +7262,7 @@ function deleteFixedObl(i){
   if(!confirm('Remove this fixed bill?')) return;
   const fixed=cGet('sw3_fixed_obl')||FIXED_OBL.map(o=>({...o}));
   fixed.splice(i,1);
-  cSet('sw3_fixed_obl',fixed);
+  cSet('sw3_fixed_obl',fixed);saveProfile({fixedObl:fixed});
   renderProjObligations();renderProjTreasury();toast('Bill removed');
 }
 function saveFixedObl(i){
@@ -7179,7 +7271,7 @@ function saveFixedObl(i){
   if(!lbl||isNaN(amt)||amt<0){toast('Enter a valid label and amount');return;}
   const fixed=cGet('sw3_fixed_obl')||FIXED_OBL.map(o=>({...o}));
   fixed[i]={label:lbl,amount:amt};
-  cSet('sw3_fixed_obl',fixed);
+  cSet('sw3_fixed_obl',fixed);saveProfile({fixedObl:fixed});
   renderProjObligations();renderProjTreasury();toast('Bill updated');
 }
 function addObligation(){document.getElementById('obl-add-card').style.display='block';document.getElementById('obl-lbl').value='';document.getElementById('obl-amt').value='';}
@@ -7331,7 +7423,7 @@ async function _loadHistDetail(d, el){
   _renderHistDetail(el,txns,inc,invData,cashData,m,y,sid_);
 
   // Then try to refresh from Firestore in the background
-  if(!db||!navigator.onLine) return;
+  if(!_dbReady()) return;
   try{
     const [txSnap,incSnap,invDoc,cashDoc]=await Promise.all([
       db.collection('transactions').where('year','==',y).where('month','==',m).get(),
@@ -7515,8 +7607,8 @@ function renderSettBudget(){
       <button class="btn btn-p" style="flex:1" onclick="saveBudget()">Save Budget</button>
     </div>
     <div style="border-top:1px solid var(--border);padding-top:14px">
-      <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Manage Categories &amp; Actual Expenses</div>
-      <div style="font-size:0.66rem;color:var(--text3);margin-bottom:10px">Tap a category to expand its actual expense lines. Built-in categories cannot be deleted (but can be merged). Custom categories with transactions must be merged before removal.</div>
+      <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Manage Categories &amp; Items</div>
+      <div style="font-size:0.66rem;color:var(--text3);margin-bottom:10px">Tap a category to see its items: what you spend on, like Lunch, Spar or Netflix. Built-in categories cannot be deleted (but can be merged). Custom categories with transactions must be merged before removal.</div>
       <div id="cat-payee-accordion">
         ${getAllCats().map((c)=>{
           const isCustom=!_BASE_CATS.includes(c);
@@ -7524,7 +7616,7 @@ function renderSettBudget(){
           return`<div class="cat-acc-item" id="cat-acc-${c.replace(/[^a-z0-9]/gi,'_')}">
             <div class="cat-acc-hdr" onclick="toggleCatAcc('${c.replace(/'/g,"\\'")}')">
               <span style="font-size:0.76rem;flex:1">${CAT_ICONS[c]||'📦'} ${c}</span>
-              <span style="font-size:0.62rem;color:var(--text3);margin-right:8px">${allPayees.length} expense${allPayees.length!==1?'s':''}</span>
+              <span style="font-size:0.62rem;color:var(--text3);margin-right:8px">${allPayees.length} item${allPayees.length!==1?'s':''}</span>
               ${isCustom?`<button class="cat-remove-btn" onclick="event.stopPropagation();removeCustomCat('${c.replace(/'/g,"\\'")}')">×</button>`:''}
               <span class="cat-acc-chevron">›</span>
             </div>
@@ -7537,10 +7629,10 @@ function renderSettBudget(){
                       <button class="btn btn-g btn-sm" style="padding:2px 7px;font-size:0.66rem" onclick="startEditPayee('${c.replace(/'/g,"\\'")}','${p.replace(/'/g,"\\'")}')">Edit</button>
                       <button class="txi-del" onclick="removePayeeLine('${c.replace(/'/g,"\\'")}','${p.replace(/'/g,"\\'")}','${(CAT_LINES[c]||[]).includes(p)?'builtin':'custom'}')">×</button>
                     </div>
-                  </div>`).join(''):'<div style="font-size:0.7rem;color:var(--text3);padding:6px 0">No actual expenses yet.</div>'}
+                  </div>`).join(''):'<div style="font-size:0.7rem;color:var(--text3);padding:6px 0">No items yet.</div>'}
               </div>
               <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
-                <input class="ifield" id="new-payee-${c.replace(/[^a-z0-9]/gi,'_')}" placeholder="Add actual expense…" style="flex:1;font-size:0.74rem;padding:5px 8px">
+                <input class="ifield" id="new-payee-${c.replace(/[^a-z0-9]/gi,'_')}" placeholder="Add item…" style="flex:1;font-size:0.74rem;padding:5px 8px">
                 <button class="btn btn-p btn-sm" style="font-size:0.72rem" onclick="addPayeeToCategory('${c.replace(/'/g,"\\'")}')">+ Add</button>
               </div>
             </div>
@@ -7567,8 +7659,8 @@ function renderSettBudget(){
       <button class="btn btn-d btn-full" onclick="openMergeCatModal()" style="font-size:0.76rem">Merge & Reassign</button>
     </div>
     <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:14px">
-      <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Merge Expense Lines</div>
-      <div class="csub" style="margin-bottom:10px">Combine two actual-expense lines within a category into one. Past transactions are updated too, across every month and device.</div>
+      <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Merge Items</div>
+      <div class="csub" style="margin-bottom:10px">Combine two items within a category into one. Past transactions are updated too, across every month and device.</div>
       ${(()=>{const c0=getAllCats()[0]||'';const lines=_payeeLinesForCat(c0);const lopts=lines.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('');return`
       <div style="margin-bottom:8px"><label class="ilabel">Category</label><select class="sfield" id="pmerge-cat" style="font-size:0.75rem" onchange="_pmergeFillLines()">${getAllCats().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></div>
       <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:6px;align-items:center;margin-bottom:8px">
@@ -7658,9 +7750,9 @@ function addPayeeToCategory(cat){
   const inp=document.getElementById('new-payee-'+key);
   if(!inp) return;
   const name=inp.value.trim();
-  if(!name){toast('Enter a payee name');return;}
+  if(!name){toast('Enter a name');return;}
   const existing=[...(CAT_LINES[cat]||[]),...(S.customExpLines[cat]||[])];
-  if(existing.map(p=>p.toLowerCase()).includes(name.toLowerCase())){toast('Actual expense already exists in this category');return;}
+  if(existing.map(p=>p.toLowerCase()).includes(name.toLowerCase())){toast('That item already exists in this category');return;}
   if(!S.customExpLines[cat]) S.customExpLines[cat]=[];
   S.customExpLines[cat].push(name);
   saveCustomLines();
@@ -7720,7 +7812,7 @@ function _rewritePayeeHistory(cat, oldPayee, newPayee){
   return n;
 }
 function commitEditPayee(cat,oldPayee,newPayee,src){
-  if(!newPayee){toast('Payee name cannot be empty');return;}
+  if(!newPayee){toast('Name cannot be empty');return;}
   if(newPayee===oldPayee){renderSettBudget();return;}
   // Count how many past transactions this touches so the confirm is informed.
   let hist=0;
@@ -8104,7 +8196,7 @@ function _buildTxnSheet(txns,incomeRecs,label){
   const incRows=(incomeRecs||[]).map(i=>([i.date||'','Income',i.category||'Income','',i.bank||'',i.notes||'',0,i.amtNGN||i.amount||0]));
   const all=[...expRows,...incRows].sort((a,b)=>a[0]>b[0]?1:a[0]<b[0]?-1:0);
   const header=[`${label} — Transactions`];
-  const cols=['Date','Type','Category','Actual Expense','Bank','Notes','Expense (₦)','Income (₦)'];
+  const cols=['Date','Type','Category','Spent on','Bank','Notes','Expense (₦)','Income (₦)'];
   const rows=[header,[],cols,...all];
   // Summary
   const totExp=txns.reduce((s,t)=>s+(t.amount||0),0);
@@ -8155,7 +8247,7 @@ function _buildMonthMatrixWS(m,y,txns,incRecs,aux){
     (groups[cat]=groups[cat]||{});
     (groups[cat][name]=groups[cat][name]||Array(days).fill(0))[day-1]+=(t.amount||0);
   });
-  aoa.push([null,'Actual expenses']);
+  aoa.push([null,'Spent on']);
   aoa.push([null,'Expenses','Category','Total','Budget']);
   const firstItem=aoa.length+1;                     // 1-based Excel row of first item
   const budgetCats=(aux.budBy[sid(m,y)]||{}).categories||{};
@@ -8346,7 +8438,8 @@ function renderSettData(){
   // below on each release rather than prepending to a running changelog.
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.22</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.22: The AI Analyst now runs on the newest Gemini Flash automatically, and can draw a chart in its replies when the numbers read better as a picture. The badge shows which model actually answered.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.5.0</div><div>Firebase: spendwise-d6393</div><div style="color:var(--text3);margin-top:4px">v4.5.0: SpendWise now works without an account, and optional private accounts sync your data across devices, encrypted on your device so nobody else can read it.</div></div></div>
+    ${renderAccountCard()}
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8367,55 +8460,11 @@ function renderSettData(){
       <div class="exp-card-sub" style="margin-bottom:10px">Bills and income that repeat. Due items appear on the dashboard as Upcoming Bills. Add one via the expense form's recurring option.</div>
       <button class="btn btn-g btn-sm btn-full" onclick="openRecurModal()">Manage Recurring (${getRecurring().length})</button>
     </div>
-    <div class="exp-card" style="margin-top:10px">
-      <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
-      <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
-      <div id="default-accts-list">
-        ${DEFAULT_CASH_ACCOUNTS.filter(a=>a!=='USD Cash').map(a=>`
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)">
-            <span style="font-size:0.76rem">${a}</span>
-            <button class="btn btn-d btn-sm" style="padding:2px 8px;font-size:0.68rem" onclick="removeDefaultAccount('${jsq(a)}')">Remove</button>
-          </div>`).join('')}
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)">
-          <span style="font-size:0.76rem">USD Cash</span>
-          <span style="font-size:0.62rem;color:var(--text3)">fixed</span>
-        </div>
-      </div>
-      <div style="display:flex;gap:6px;margin-top:10px;align-items:center">
-        <input class="ifield" id="new-default-acct" placeholder="e.g. Zenith" style="flex:1;font-size:0.76rem;padding:6px 10px">
-        <button class="btn btn-p btn-sm" onclick="addDefaultAccount()">+ Add</button>
-      </div>
-    </div>
     ${renderNWConfigCard()}
     ${renderFxCard()}
   `;
 }
 
-function addDefaultAccount(){
-  const inp=document.getElementById('new-default-acct');
-  if(!inp) return;
-  const name=inp.value.trim();
-  if(!name){toast('Enter an account name');return;}
-  if(DEFAULT_CASH_ACCOUNTS.map(a=>a.toLowerCase()).includes(name.toLowerCase())){toast('Account already exists');return;}
-  DEFAULT_CASH_ACCOUNTS.push(name);
-  // Also add to saved list
-  const saved=cGet('sw3_cash_accounts')||[...DEFAULT_CASH_ACCOUNTS];
-  if(!saved.includes(name)) saved.push(name);
-  cSet('sw3_cash_accounts',saved);
-  inp.value='';
-  renderSettData();renderCashPage();renderDashboard();
-  toast(`Added "${name}" to default accounts`);
-}
-function removeDefaultAccount(name){
-  if(name==='USD Cash'){toast('USD Cash cannot be removed');return;}
-  const idx=DEFAULT_CASH_ACCOUNTS.indexOf(name);
-  if(idx===-1) return;
-  DEFAULT_CASH_ACCOUNTS.splice(idx,1);
-  const saved=cGet('sw3_cash_accounts')||[];
-  cSet('sw3_cash_accounts',saved.filter(a=>a!==name));
-  renderSettData();renderCashPage();renderDashboard();
-  toast(`Removed "${name}" from default accounts`);
-}
 function clearFxOverride(k){
   const ovr=getFxOverrides();
   delete ovr[k];
@@ -8588,7 +8637,7 @@ async function forceHardRefresh(){
   window.location.reload();
 }
 async function forceSyncNow(){
-  if(!db||!navigator.onLine){toast('Not connected');return;}
+  if(!_dbReady()){toast('Not connected');return;}
   setSyncStatus('syncing');toast('Pulling from Firebase…');
   // Force-sync: clear local cache first so loadX functions fetch from Firebase
   const m=S.expMonth,y=S.expYear;
@@ -9220,9 +9269,12 @@ async function confirmSeedImport(){
 // ══════════════════════════════════════════════════════════════════════════
 // ONLINE/OFFLINE
 // ══════════════════════════════════════════════════════════════════════════
+// Local mode reads IndexedDB, so connectivity only matters when signed in.
+function _dbReady(){return !!db&&(db.isLocal||navigator.onLine);}
 window.addEventListener('online',()=>{
-  document.getElementById('offl').style.display='none';setSyncStatus('syncing');
-  if(db){
+  document.getElementById('offl').style.display='none';
+  if(DATA_MODE==='cloud'&&db){
+    setSyncStatus('syncing');
     const m=S.expMonth,y=S.expYear;
     syncAll().then(()=>{
       if(S.expMonth===m&&S.expYear===y){
@@ -9235,8 +9287,8 @@ window.addEventListener('online',()=>{
     }).catch(()=>setSyncStatus('error'));
   }
 });
-window.addEventListener('offline',()=>{document.getElementById('offl').style.display='block';setSyncStatus('offline');});
-if(!navigator.onLine) document.getElementById('offl').style.display='block';
+window.addEventListener('offline',()=>{if(DATA_MODE!=='cloud')return;document.getElementById('offl').style.display='block';setSyncStatus('offline');});
+if(!navigator.onLine&&!localStorage.getItem(LOCAL_MODE_LS)) document.getElementById('offl').style.display='block';
 ['exp-modal','deb-modal','inc-modal','move-modal','merge-cat-modal'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('click',function(e){if(e.target===this)closeMod(id);});});
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 
@@ -9277,7 +9329,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.4.22';
+const APP_VERSION='v4.5.0';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});
@@ -9359,15 +9411,10 @@ async function _repairUSDCash(){
 initFirebase();
 _requestNotifPermission();
 setTimeout(checkForUpdate, 3000); // check after initial load settles
-// Wait until db is initialised before running one-time migrations
-(function _waitForDbThenMigrate(){
-  if(typeof db !== 'undefined' && db){
-    _migrateFifeToKids();
-    _repairUSDCash();
-  } else {
-    setTimeout(_waitForDbThenMigrate, 500);
-  }
-})();
+// v4.5: the one-time Fife→Kids / USD Cash / Energy→Fuel repairs are no longer
+// run at boot. They fixed the owner's pre-2026 data, which was imported
+// already repaired; on encrypted accounts their category queries would scan
+// every transaction on each sign-in. The functions remain for reference.
 
 // ══════════════════════════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════════════════════════
@@ -9908,7 +9955,7 @@ function _aiKeys(){
 function _aiSyncKeys(){
   cSet(AI_KEYS_LS,_aiKeys());
   if(db) db.collection('appConfig').doc('aiKeys')
-    .set({list:_aiKeys(),activeId:cGet(AI_ACTIVE_KEY_LS)||'',updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .set({list:_aiKeys(),activeId:cGet(AI_ACTIVE_KEY_LS)||'',updatedAt:FV.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('aiKeys sync failed',e));
 }
 async function loadAiKeys(){
@@ -9937,7 +9984,35 @@ function _aiActiveKeyId(){
 }
 function _aiKey(){
   const k=_aiKeys().find(k=>k.id===_aiActiveKeyId());
-  return k?k.key:'';
+  if(k&&k.key) return k.key;
+  return _aiSharedKey(); // no key of their own → the app's shared key
+}
+
+// ── Shared Gemini keys (v4.5) ──
+// The owner's keys, published at publicConfig/aiKeys (readable by anyone,
+// writable only by OWNER_UID per firestore.rules), so AI works for every user
+// without them creating a key. A user's own key, if they add one, wins.
+// Read through the raw Firestore handle so it works signed out too.
+var AI_SHARED_LS='sw3_shared_ai_keys'; // var, not const: settings render at boot, before this line runs
+function _aiShared(){return cGet(AI_SHARED_LS)||{list:[],activeId:''};}
+function _aiSharedKey(){const s=_aiShared();const k=(s.list||[]).find(x=>x.id===s.activeId)||(s.list||[])[0];return k?k.key:'';}
+function isOwner(){return !!(typeof OWNER_UID==='string'&&OWNER_UID&&VAULT.uid===OWNER_UID&&DATA_MODE==='cloud');}
+async function loadSharedAiKeys(){
+  if(!VAULT.raw) return;
+  try{
+    const d=await VAULT.raw.collection('publicConfig').doc('aiKeys').get();
+    cSet(AI_SHARED_LS,d.exists?{list:d.data().list||[],activeId:d.data().activeId||''}:{list:[],activeId:''});
+  }catch(e){_warnLoad('loadSharedAiKeys',e);}
+}
+async function publishSharedAiKeys(){
+  if(!isOwner()){toast('Only the app owner can do this');return;}
+  const list=_aiKeys().filter(k=>k.key);
+  if(!list.length){toast('Add a key first');return;}
+  try{
+    await VAULT.raw.collection('publicConfig').doc('aiKeys').set({list,activeId:_aiActiveKeyId(),updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
+    cSet(AI_SHARED_LS,{list,activeId:_aiActiveKeyId()});
+    toast('Shared with everyone');renderSettData();
+  }catch(e){console.warn('shared key publish failed',e);toast("Couldn't publish: "+(e.code||e.message));}
 }
 function renderApiKeysCard(){
   const keys=_aiKeys();
@@ -9959,10 +10034,17 @@ function renderApiKeysCard(){
       </div>
     </div>`;
   }).join('')||'<div style="font-size:0.7rem;color:var(--text3);padding:2px 0 6px">No API keys saved yet.</div>';
+  const shared=_aiShared(),hasShared=(shared.list||[]).length>0;
+  const intro=isOwner()
+    ?`Your keys, encrypted in your account. <b>Everyone else uses the shared key</b> (${hasShared?shared.list.length+' published':'none published yet'}). After changing keys here, publish them again.`
+    :hasShared
+      ?`AI is included: the AI Analyst uses SpendWise's shared key. You don't need to add anything. Optionally add your own Gemini key below and it will be used instead.`
+      :`Add a Gemini API key to use the AI Analyst (Analytics → AI).`;
   return`<div class="exp-card" style="margin-top:10px">
     <div class="exp-card-title" style="margin-bottom:6px">AI API Keys</div>
-    <div class="exp-card-sub" style="margin-bottom:10px">Gemini API keys for the AI Analyst (Analytics → AI). Synced across your devices via the cloud. Pick which one is active — switch any time.</div>
-    ${rows}
+    <div class="exp-card-sub" style="margin-bottom:10px">${intro}</div>
+    ${isOwner()?`<button class="btn btn-inc btn-sm btn-full" style="margin-bottom:8px" onclick="publishSharedAiKeys()">Publish my keys as the shared keys</button>`:''}
+    ${keys.length||isOwner()||!hasShared?rows:''}
     <div style="display:flex;gap:6px;margin-top:10px">
       <input class="ifield" id="new-ai-key-label" placeholder="Label (e.g. Personal)" style="flex:1;font-size:0.74rem;padding:6px 10px">
     </div>
