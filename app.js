@@ -7583,8 +7583,96 @@ async function _saveHistBalances(sid_,m,y){
 // ══════════════════════════════════════════════════════════════════════════
 // SETTINGS
 // ══════════════════════════════════════════════════════════════════════════
-function renderSettings(){renderSettData();renderSettBudget();renderSettExport();}
-function settTab(tab,btn){['data','budget','export'].forEach(t=>{document.getElementById('sett-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
+function renderSettings(){renderSettData();renderSettBudget();renderSettExport();renderSettGuide();}
+function settTab(tab,btn){['data','budget','export','guide'].forEach(t=>{document.getElementById('sett-'+t).style.display=t===tab?'block':'none';});btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');}
+// ── GUIDE TAB (More → Guide) ──
+// Static how-to for new users. Keep it in step with the UI: if you rename a
+// screen, tab or button, update the matching line here.
+function renderSettGuide(){
+  const el=document.getElementById('sett-guide');if(!el)return;
+  const sec=(title,body,open)=>`<details class="gd"${open?' open':''}><summary>${title}</summary><div class="gd-b">${body}</div></details>`;
+  el.innerHTML=`
+    <div class="exp-card" style="margin-top:10px">
+      <div class="exp-card-title">How to use SpendWise</div>
+      <div class="exp-card-sub" style="margin-bottom:0">Tap a section to open it.</div>
+    </div>
+    ${sec('Quick start',`
+      <ol>
+        <li><b>Add your accounts.</b> Go to <b>Accounts → Cash → ✎ Edit Balances</b>, add your banks and cash from the logo list, and enter what's in each one today.</li>
+        <li><b>Set a budget.</b> In <b>More → Budget</b>, enter a monthly amount for each category you care about.</li>
+        <li><b>Record spending as it happens.</b> Tap the round <b>+</b> button, enter the amount, pick a category, what you spent it on, and the bank it came from. The balance of that bank goes down automatically.</li>
+        <li><b>Record income</b> the same way, using the <b>Income</b> button at the top of the + form.</li>
+        <li><b>Check Home</b> to see where your money is going and how you're doing against your budget.</li>
+      </ol>
+      <p class="gd-tip">The habit that matters most: log spending the same day. Everything else in the app is built from those entries.</p>`,true)}
+    ${sec('Saving, syncing and privacy',`
+      <p>You can use SpendWise without an account. Your data is then saved <b>on this device only</b>: if you lose the phone or clear the browser, it's gone.</p>
+      <p><b>Create an account</b> (More → Data → Account) to:</p>
+      <ul>
+        <li>use the app on all your devices: sign in with the same username and password and everything syncs;</li>
+        <li>get your data back if you change or lose your phone.</li>
+      </ul>
+      <p>Anything already on this device is uploaded to your new account.</p>
+      <p><b>Your recovery code.</b> When you create an account you get a recovery code. Keep it somewhere safe (a password manager, or written down). It's the <b>only</b> way back in if you forget your password; there's no "reset by email".</p>
+      <p><b>Privacy.</b> Your data is encrypted on your device before it's saved online. Nobody else can read it, including the person who runs the app. The only exception is the AI Analyst (see Analytics below).</p>`)}
+    ${sec('Recording money (the + button)',`
+      <p>The <b>+</b> button at the bottom right works from any page. At the top of the form, choose what you're recording:</p>
+      <ul>
+        <li><b>Expense.</b> Pick a <b>category</b> (e.g. Food) and what it was <b>spent on</b> (e.g. Lunch). To add a new item, choose "New item" and give it a name and emoji. It's remembered for next time.</li>
+        <li><b>Income.</b> Choose the category and the bank it was received into.</li>
+        <li><b>Transfer.</b> Moves money between your own accounts: <b>Cash → Cash</b>, <b>Cash → Invest</b> or <b>Invest → Cash</b>. It isn't counted as spending.</li>
+      </ul>
+      <p>Set the date if it didn't happen today; the right month's balances are updated. Set <b>Recurring transaction</b> (weekly, monthly…) for bills that repeat (rent, subscriptions); they show up on Home as <b>Upcoming Bills</b> when due.</p>
+      <p><b>To fix a mistake:</b> on the Expenses page, tap ✎ on an entry to edit it, or swipe it sideways (or tap ×) to delete it. Tap <b>Undo</b> within a few seconds if you deleted the wrong one.</p>`)}
+    ${sec('Home',`
+      <ul>
+        <li><b>Net Worth</b>: everything you have (cash + investments + money owed to you), minus loans if you choose. Tap it for the breakdown, and tap the 👁 to hide amounts when others can see your screen.</li>
+        <li><b>Year / month / currency</b> selectors change the period and currency you're looking at. <b>Effective</b> shows each account in its own currency.</li>
+        <li><b>Spend vs Budget</b>: how much of each category's budget you've used this month.</li>
+        <li><b>Calendar</b> shows what you spent on each day. <b>Charts</b> cover breakdown, 6-month trend, net worth and cash flow.</li>
+        <li>Tap <b>Edit</b> (top right) to reorder or hide cards.</li>
+        <li>The 🔔 bell shows alerts, like a category on track to go over budget.</li>
+      </ul>`)}
+    ${sec('Expenses page',`
+      <ul>
+        <li>Tap a month in the strip at the top to switch months.</li>
+        <li><b>Search</b> finds entries in the month you're on; <b>All months</b> searches everything. <b>Filter</b> narrows to categories. Sort <b>By date</b> or <b>By expense</b>.</li>
+        <li><b>Income</b> tab: everything you received that month.</li>
+        <li><b>Special Budget</b> tab: plan a trip or event separately from your monthly budget. Add items, compare options (e.g. two airlines or hotels) and switch currency.</li>
+      </ul>`)}
+    ${sec('Accounts page',`
+      <ul>
+        <li><b>Cash</b>: your bank and cash balances. Tap an account to see every movement in and out of it. <b>✎ Edit Balances</b> lets you correct balances, add or remove accounts, and transfer between accounts. <b>⇄ Transfer History</b> lists past transfers.</li>
+        <li><b>Investments</b>: balances on savings and investment platforms. You can record money going in, interest earned, or cashing out back to a bank. <b>Trend</b> shows growth over time. Past months are read-only.</li>
+        <li><b>Debtors</b>: money people owe you. Add a person and record repayments as they come in.</li>
+        <li><b>Loans</b>: money you owe. Record repayments to see what's left.</li>
+      </ul>`)}
+    ${sec('Analytics page',`
+      <ul>
+        <li><b>Insights</b>: a forecast of how the month will end and which categories are running hot.</li>
+        <li><b>Treasury</b>: your <b>runway</b> (how many months your cash would last at your usual spending), savings rate and projections.</li>
+        <li><b>History</b>: income and expenses month by month. Tap a column heading to sort.</li>
+        <li><b>AI ✦</b>: ask questions about your money in plain English ("Where did most of my money go last month?"). It can draw charts too. Chats sync across your devices.</li>
+      </ul>
+      <p class="gd-tip">When you use the AI Analyst, your question and the relevant figures are sent to Google's Gemini service to produce the answer. Nothing is sent unless you ask it something.</p>`)}
+    ${sec('More page',`
+      <ul>
+        <li><b>Data</b>: your account (sign in, sign out, change password), design (Classic or Monarch look), savings <b>goals</b>, recurring transactions, what counts in net worth, and exchange rates.</li>
+        <li><b>Budget</b>: set each category's monthly budget, and manage categories and items. Built-in categories can't be deleted, but any category can be merged into another.</li>
+        <li><b>Export</b>: download your data as Excel (a monthly budget workbook), CSV, or a full JSON backup.</li>
+      </ul>`)}
+    ${sec('Tips and troubleshooting',`
+      <ul>
+        <li><b>Install it like an app.</b> On iPhone, open the site in Safari, tap Share → <b>Add to Home Screen</b>. On Android, open it in Chrome, tap ⋮ → <b>Add to Home screen</b> / <b>Install app</b>.</li>
+        <li><b>Works offline.</b> Entries made without internet sync when you're back online.</li>
+        <li><b>Pull down</b> on a page to refresh.</li>
+        <li>If a bar says <b>Update available</b>, tap <b>Update now</b> to get the latest version.</li>
+        <li><b>Balance looks wrong?</b> Check that the entry used the right bank and date. You can also correct a balance directly in Accounts → Cash → ✎ Edit Balances.</li>
+        <li><b>Forgot your password?</b> On the sign-in screen, tap <b>Forgot password? Use your recovery code</b>, then set a new password.</li>
+        <li><b>Using a shared or borrowed device?</b> Sign out when you're done (More → Data → Account). This removes your data from that device; it stays safe in your account.</li>
+      </ul>`)}
+  `;
+}
 function renderSettBudget(){
   const total=Object.values(S.budgets).reduce((s,v)=>s+(v||0),0);
   const prevM=S.expMonth===1?12:S.expMonth-1,prevY=S.expMonth===1?S.expYear-1:S.expYear;
@@ -8438,7 +8526,7 @@ function renderSettData(){
   // below on each release rather than prepending to a running changelog.
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.5.2</div><div>Firebase: spendwise-d6393</div><div style="color:var(--text3);margin-top:4px">v4.5.2: Passwords now need at least 6 characters, and sign-up errors are shown clearly instead of hiding behind the keyboard.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.5.3</div><div>Firebase: spendwise-d6393</div><div style="color:var(--text3);margin-top:4px">v4.5.3: New Guide tab under More explains how to use every part of the app.</div></div></div>
     ${renderAccountCard()}
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
@@ -9329,7 +9417,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.5.2';
+const APP_VERSION='v4.5.3';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});

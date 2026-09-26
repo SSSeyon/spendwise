@@ -521,3 +521,15 @@ body.monarch .cr-name{display:inline-flex;align-items:center}
   .ai-chart-c{position:relative;height:190px;}
   .ai-chartfail{font-size:0.62rem;color:var(--text3);font-style:italic;margin:6px 0;}
   .ai-pre{background:var(--bg3);border-radius:var(--rsm);padding:8px;overflow-x:auto;font-size:0.66rem;margin:6px 0;}
+/* ── More → Guide ── */
+.gd{background:var(--bg1);border:1px solid var(--border);border-radius:var(--r);margin-bottom:8px;box-shadow:var(--shadow-sm);overflow:hidden}
+.gd>summary{list-style:none;cursor:pointer;padding:13px 16px;font-size:0.8rem;font-weight:700;color:var(--text);display:flex;justify-content:space-between;align-items:center}
+.gd>summary::-webkit-details-marker{display:none}
+.gd>summary::after{content:'›';font-size:1.1rem;color:var(--text3);transition:transform .2s}
+.gd[open]>summary::after{transform:rotate(90deg)}
+.gd-b{padding:0 16px 14px;font-size:0.72rem;line-height:1.6;color:var(--text2)}
+.gd-b b{color:var(--text);font-weight:600}
+.gd-b p{margin:0 0 8px}
+.gd-b ul,.gd-b ol{margin:0 0 8px;padding-left:18px}
+.gd-b li{margin-bottom:5px}
+.gd-tip{background:var(--bg2);border-left:3px solid var(--accent);border-radius:var(--rsm);padding:8px 10px}
