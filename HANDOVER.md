@@ -44,6 +44,13 @@ Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB l
 - The one-time Fife→Kids / USD Cash / Energy→Fuel repairs no longer run at boot.
 - Tested 2026-09-26 on localhost with two test accounts: sign-up + upload of local data, ciphertext-only storage, restore on sign-in, recovery, password change, concurrent increments from two tabs, live listeners, offline-then-reload, cross-user isolation. Known gap (pre-existing): if the boot sync throws, realtime listeners stay off until a reload.
 
+## v4.6.1 (2026-09-26) — bug check
+
+- **Reading amounts:** always use `numVal(idOrEl)` (or `_evalExpr`) for money fields. It accepts commas, `₦/$/£`, `5k` / `2.5m` and simple sums, even if the field never lost focus. A bare `parseFloat(el.value)` turned "5k" into 5 and "10,000" into 10 on fields the number formatter hadn't wrapped (debtor payments, special budgets, onboarding balances).
+- Expenses can no longer be saved with the "-- Select --" placeholder as the item.
+- Fixed: the Cash Flow chart crashed (a Monarch leftover); the full-year Home view crashed (it wrote to a removed element); the app lock re-locked right after a fingerprint unlock; Quick add read "2 days ago" as ₦2 when offline.
+- Known dead code left in place: school fees (`renderProjFees`, no container on the page, empty defaults).
+
 ## v4.6.0 (2026-09-26) — features added for sharing with friends
 
 - **Quick add** (top of the + form, `quickAddParse` / `_qaParseLocal` / `_qaParseAI` in app.js): an on-device parser fills the form instantly and works offline; with a key and a connection, Gemini refines it (`thinkingBudget:0` + JSON mode, ~3 s; with thinking on it took 11 s+ and could cut the JSON off). Only the typed sentence and the user's category/item/account **names** are sent. Nothing saves until the user taps Save. 🎤 uses the Web Speech API when the browser has it.

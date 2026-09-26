@@ -167,7 +167,7 @@ function _suCommit(){
 }
 async function _suSaveOpening(){
   const vals={};
-  document.querySelectorAll('#acct-ov input[data-open]').forEach(i=>{const v=parseFloat(String(i.value).replace(/[^0-9.\-]/g,''));if(v)vals[i.dataset.open]=v;});
+  document.querySelectorAll('#acct-ov input[data-open]').forEach(i=>{const v=typeof numVal==='function'?numVal(i):parseFloat(String(i.value).replace(/[^0-9.\-]/g,''));if(v)vals[i.dataset.open]=v;});
   if(!Object.keys(vals).length||!db) return;
   const m=S.cashMonth||S.expMonth,y=S.cashYear||S.expYear;
   const cur={...(cGet(CK.cash(m,y))||{}),...vals};

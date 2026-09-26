@@ -861,8 +861,8 @@ function openGoalModal(idx){
 }
 function saveGoalFromModal(){
   const name=(document.getElementById('goal-name').value||'').trim();
-  const target=parseFloat(document.getElementById('goal-target').value)||0;
-  const current=parseFloat(document.getElementById('goal-current').value)||0;
+  const target=numVal('goal-target')||0;
+  const current=numVal('goal-current')||0;
   const deadline=document.getElementById('goal-deadline').value||'';
   const icon=(document.getElementById('goal-emoji').textContent||'').trim()||'🎯';
   if(!name){toast('Enter a goal name');return;}
@@ -998,8 +998,9 @@ function _syncNumDisplay(input){
   if(disp) disp.textContent=raw?fmtThousands(raw):'';
 }
 function _evalExpr(raw){
-  // Safely evaluate simple arithmetic expressions: digits, +, -, *, /, (, ), spaces, commas, dots
-  const cleaned=raw.replace(/,/g,'').trim();
+  // Safely evaluate simple arithmetic expressions: digits, +, -, *, /, (, ), spaces, commas, dots.
+  // "5k" / "2.5m" shorthands are expanded first (Quick add teaches them).
+  const cleaned=String(raw==null?'':raw).replace(/[,₦$£]/g,'').trim().replace(/(\d+(?:\.\d+)?)\s*([kKmM])(?![a-zA-Z])/g,(_,d,u)=>String(Math.round(parseFloat(d)*(u.toLowerCase()==='k'?1e3:1e6)*100)/100));
   if(!cleaned) return '';
   if(/^[\d.]+$/.test(cleaned)) return cleaned; // plain number, no eval needed
   if(!/^[\d.+\-*/()\s]+$/.test(cleaned)) return cleaned; // unexpected chars, leave as-is
@@ -1010,6 +1011,9 @@ function _evalExpr(raw){
   }catch(e){}
   return cleaned;
 }
+// Read a money/number field for saving: commas, "5k", "2.5m" and simple sums
+// all work even if the field never lost focus (so the blur formatter never ran).
+function numVal(elOrId){const el=typeof elOrId==='string'?document.getElementById(elOrId):elOrId;return parseFloat(_evalExpr(el?el.value:''));}
 function _makeNumInput(el){
   // Wrap existing input in num-wrap if not already
   if(el.closest('.num-wrap')) return;
@@ -3343,7 +3347,7 @@ function renderDashFullYear(y,totalInc,totalExp,cur){
   document.getElementById('cat-chart').style.display='none';
   document.getElementById('chart-btns').style.display='none';
   document.getElementById('dash-cats').innerHTML='<div class="csub" style="padding:8px 0">Category breakdown available for individual months</div>';
-  document.getElementById('dash-inc-exp').innerHTML=histYear.map(h=>`<div class="inc-row"><span class="pjlabel">${h.label}</span><div style="text-align:right"><div style="font-size:0.72rem;font-family:var(--mono);color:var(--accent)">${fmtCur(h.income,cur,h.month,y)}</div><div style="font-size:0.68rem;font-family:var(--mono);color:var(--red)">${fmtCur(h.expenses,cur,h.month,y)}</div></div></div>`).join('');
+  const _ie=document.getElementById('dash-inc-exp');if(_ie)_ie.innerHTML=histYear.map(h=>`<div class="inc-row"><span class="pjlabel">${h.label}</span><div style="text-align:right"><div style="font-size:0.72rem;font-family:var(--mono);color:var(--accent)">${fmtCur(h.income,cur,h.month,y)}</div><div style="font-size:0.68rem;font-family:var(--mono);color:var(--red)">${fmtCur(h.expenses,cur,h.month,y)}</div></div></div>`).join('');
   const _cb=document.getElementById('dash-cash-badge');
   if(_cb)_cb.textContent=refCashTotal?fmtCur(refCashTotal,cur,refMonth,y):'—';
   const _cbody=document.getElementById('dash-cash-body');
@@ -3535,7 +3539,7 @@ function _sbSave(b){
 }
 
 // ── Money maths (all in base currency; converted only for display) ──
-function _sbNum(v){const n=parseFloat(String(v==null?'':v).replace(/[, ]/g,''));return isFinite(n)?n:0;}
+function _sbNum(v){const n=parseFloat(typeof _evalExpr==='function'?_evalExpr(v):String(v==null?'':v).replace(/[, ]/g,''));return isFinite(n)?n:0;}
 function _sbItemTotal(it){return _sbNum(it.qty)*_sbNum(it.unit);}
 function _sbSubtotal(b){return (b.items||[]).reduce((s,it)=>s+_sbItemTotal(it),0);}
 function _sbContingency(b){return _sbSubtotal(b)*(_sbNum(b.contingencyPct)/100);}
@@ -4435,7 +4439,9 @@ function _qaParseLocal(text){
   const raw=String(text||'').trim(),low=raw.toLowerCase();
   const r={type:'expense',amount:null,category:null,payee:null,bank:null,toBank:null,date:null,notes:''};
   // amount: 5k, 5,000, 2.5m, ₦12000, $40
-  const am=low.match(/(?:₦|\$|usd\s*|ngn\s*|n(?=\d))?\s*(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million|mil)?\b/);
+  // First number that isn't part of "3 days ago" / "2 days".
+  const am=[...low.matchAll(/(?:₦|\$|usd\s*|ngn\s*|n(?=\d))?\s*(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million|mil)?\b/g)]
+    .find(x=>!/^\s*days?\b/.test(low.slice(x.index+x[0].length)));
   let amountTxt='';
   if(am){
     let v=parseFloat(am[1].replace(/,/g,''));
@@ -4573,6 +4579,7 @@ async function quickAddParse(){
   const missing=[];
   if(!r.amount)missing.push('amount');
   if(r.type==='expense'&&!r.category)missing.push('category');
+  if(r.type==='expense'&&!r.payee)missing.push('what it was spent on');
   if(r.type!=='transfer'&&!r.bank)missing.push(r.type==='income'?'account':'bank');
   if(r.type==='transfer'&&(!r.bank||!r.toBank))missing.push('accounts');
   _qaStatus(missing.length?`Filled in${byAI?' ✦':''}. Please pick the ${missing.join(' and ')}, then save.`:`Filled in${byAI?' ✦':''}. Check it, then save.`,missing.length?'qa-warn':'qa-ok');
@@ -5180,7 +5187,7 @@ async function _deleteXfrRecord(recId,m,y){
 async function saveExpense(){
   if(S.saving)return;
   const type=document.getElementById('e-type')?.value||'expense';
-  const amt=parseFloat(document.getElementById('e-amt').value);
+  const amt=numVal('e-amt');
   if(!amt||amt<=0){toast('Enter a valid amount');return;}
 
   // ── Transfer ──
@@ -5260,6 +5267,9 @@ async function saveExpense(){
     if(!S.customExpLines[cat].includes(payee))S.customExpLines[cat].push(payee);
     saveCustomLines();
   }
+  // The placeholder must never be stored as a real item (it leaked into ~10
+  // records before v4.6.1).
+  if(!payee||payee==='-- Select --'){toast('Choose what it was spent on, or pick “+ Add new”');document.getElementById('e-payee-sel')?.focus();return;}
   // Duplicate guard — same payee + amount + date is almost always a double-tap
   if(!document.getElementById('e-edit-id').value){
     const _dupDate=document.getElementById('e-date').value||todayStr();
@@ -5369,7 +5379,7 @@ function openIncModal(){
 }
 function saveIncome(){
   if(S.saving) return; // respects an in-flight save elsewhere (e.g. a debtor/loan form still on the old awaited-write path)
-  const amt=parseFloat(document.getElementById('i-amt').value);
+  const amt=numVal('i-amt');
   if(!amt||amt<=0){toast('Enter a valid amount');return;}
   const bank=document.getElementById('i-bank').value;
   const isUSD=isUSDCashAccount(bank);
@@ -5760,7 +5770,7 @@ function openInvAdjModal(pKey, subId, type){
 
 async function applyInvAdjust(){
   if(!_adjPKey||!_adjSubId||!_adjType) return;
-  const rawAmt=document.getElementById('inv-adj-amount').value.replace(/,/g,'');
+  const rawAmt=_evalExpr(document.getElementById('inv-adj-amount').value);
   const amt=parseFloat(rawAmt);
   if(isNaN(amt)||amt===0){toast('Enter a valid amount');return;}
   const date=document.getElementById('inv-adj-date').value||todayStr();
@@ -5904,7 +5914,7 @@ async function _recordInvestmentInterestIncome(label,bank,amtNGN,date,m,y){
 }
 async function confirmLiquidation(){
   if(!_liqPKey||!_liqSubId){closeMod('liq-modal');return;}
-  const rawAmt=document.getElementById('liq-amount').value.replace(/,/g,'');
+  const rawAmt=_evalExpr(document.getElementById('liq-amount').value);
   const amtNGN=Math.round(parseFloat(rawAmt));
   if(!amtNGN||amtNGN<=0){toast('Enter a valid amount');return;}
   const destVal=document.getElementById('liq-bank').value;
@@ -5996,7 +6006,7 @@ async function saveInvFromEdit(){
         const ctEl=document.getElementById(`inv-sub-ct-${p.key}-${sub.id}${s}`);
         const startEl=document.getElementById(`inv-sub-start-${p.key}-${sub.id}${s}`);
         const matEl=document.getElementById(`inv-sub-mat-${p.key}-${sub.id}${s}`);
-        const raw=prinEl?parseFloat(prinEl.value.replace(/,/g,'')):NaN;
+        const raw=prinEl?numVal(prinEl):NaN;
         const principalNGN=isNaN(raw)?Number(sub.principal)||0:Math.round(isUSD?raw*fxRate:isGBP?raw*fxRate:raw);
         platformTotalNGN+=principalNGN;
         return{
@@ -6167,7 +6177,7 @@ function saveCashInterest(){
     const bkey=b.toLowerCase().replace(/\s+/g,'-');
     const rateEl=document.getElementById('cash-int-'+bkey);
     const sdEl=document.getElementById('cash-sd-'+bkey);
-    const rate=rateEl?parseFloat(rateEl.value):NaN;
+    const rate=rateEl?numVal(rateEl):NaN;
     if(!isNaN(rate)&&rate>0){
       meta[b]={interestRate:rate,compoundType:'daily_accrual'};
       if(sdEl&&sdEl.value) meta[b].startDate=sdEl.value;
@@ -6209,7 +6219,7 @@ async function saveCash(){
   const ACCTS=getCashAccounts();
   const _prevVals={...(S.cash||cGet(CK.cash(S.cashMonth,S.cashYear))||{})};
   const data={month:S.cashMonth,year:S.cashYear};
-  ACCTS.forEach(b=>{const el=document.getElementById('cash-'+b.toLowerCase().replace(/\s+/g,'-'));data[b]=el?parseFloat(el.value)||0:0;});
+  ACCTS.forEach(b=>{const el=document.getElementById('cash-'+b.toLowerCase().replace(/\s+/g,'-'));data[b]=el?numVal(el)||0:0;});
   S.cash=data;cSet(CK.cash(S.cashMonth,S.cashYear),data);
   renderCashPage();renderDashboard();toast('Cash balances saved');haptic([8]);setSyncStatus('syncing');
   ACCTS.forEach(b=>_markCashDirty(S.cashMonth,S.cashYear,b));
@@ -6228,18 +6238,6 @@ async function saveCash(){
     ACCTS.forEach(b=>_clearCashDirty(S.cashMonth,S.cashYear,b));
     toast('Saved locally — sync pending');setSyncStatus('error');
   }
-}
-function addCashAccount(){
-  const name=document.getElementById('new-acct-name').value.trim();
-  if(!name){toast('Enter an account name');return;}
-  const existing=getCashAccounts();
-  if(existing.includes(name)){toast('Account already exists');return;}
-  setCashAccounts([...existing,name]);
-  const logoFile=document.getElementById('new-acct-logo')?.value.trim()||'';
-  if(logoFile) setCashLogo(name,logoFile);
-  document.getElementById('new-acct-name').value='';
-  const le=document.getElementById('new-acct-logo');if(le)le.value='';
-  toast(`${name} added`);renderCashPage();
 }
 function removeCashAccount(name){
   if(DEFAULT_CASH_ACCOUNTS.includes(name)){toast('Cannot remove default accounts');return;}
@@ -6306,7 +6304,7 @@ async function saveMoveFunds(){
     kind:_moveDir,                                  // 'cash-inv' | 'inv-cash'
     from:document.getElementById('move-from').value,
     to:document.getElementById('move-to').value,
-    amt:parseFloat(document.getElementById('move-amt').value),
+    amt:numVal('move-amt'),
     date:document.getElementById('move-date').value||todayStr(),
     notes:document.getElementById('move-notes').value.trim(),
   });
@@ -6325,7 +6323,7 @@ async function transferFunds(){
     kind:'cash-cash',
     from:document.getElementById('xfr-from').value,
     to:document.getElementById('xfr-to').value,
-    amt:parseFloat(document.getElementById('xfr-amt').value)||0,
+    amt:numVal('xfr-amt')||0,
     // No date field on this form — date it inside the month being viewed.
     date:_xfrDefaultDate(S.cashMonth,S.cashYear),
     notes:'',
@@ -6467,9 +6465,9 @@ function openEditDeb(id){
   openMod('deb-modal');
 }
 async function saveDebtor(){
-  if(S.saving) return;const name=document.getElementById('d-name').value.trim();const amt=parseFloat(document.getElementById('d-amt').value);if(!name||!amt){toast('Name and amount required');return;}
+  if(S.saving) return;const name=document.getElementById('d-name').value.trim();const amt=numVal('d-amt');if(!name||!amt){toast('Name and amount required');return;}
   S.saving=true;const btn=document.getElementById('deb-save');btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
-  const cur=document.getElementById('d-cur').value,paid=parseFloat(document.getElementById('d-paid').value)||0,rateIn=parseFloat(document.getElementById('d-rate').value),rate=isNaN(rateIn)?(DEF_RATES[cur]||1):rateIn,bal=amt-paid,eid=document.getElementById('d-eid').value;
+  const cur=document.getElementById('d-cur').value,paid=numVal('d-paid')||0,rateIn=numVal('d-rate'),rate=isNaN(rateIn)?(DEF_RATES[cur]||1):rateIn,bal=amt-paid,eid=document.getElementById('d-eid').value;
   const disbAcct=document.getElementById('d-acct')?.value||'';
   const txDate=document.getElementById('d-date')?.value||todayStr();
   const data={name,currency:cur,amount:amt,paid,balance:bal,rate,ngnBalance:bal*rate,category:document.getElementById('d-type').value,notes:document.getElementById('d-notes').value,date:txDate,expectRepayment:true,disbursedFrom:disbAcct};
@@ -6557,7 +6555,7 @@ function openAddDebt(id){
 }
 async function _doAddDebt(id){
   const d=S.debtors.find(x=>x.id===id);if(!d)return;
-  const add=parseFloat(String(document.getElementById('ad-amt')?.value||'').replace(/,/g,''));
+  const add=numVal('ad-amt');
   if(!add||add<=0){toast('Enter a valid amount');return;}
   const bank=document.getElementById('ad-bank')?.value||'';
   const dDate=document.getElementById('ad-date')?.value||todayStr();
@@ -6608,7 +6606,7 @@ async function recordPmt(id,amt,paid,rate){
 }
 async function _doRecordPmt(id,amt,paid,rate){
   const pmtEl=document.getElementById('rp-amt');
-  const pmt=parseFloat(pmtEl?.value);
+  const pmt=numVal(pmtEl);
   if(!pmt||pmt<=0){toast('Enter a valid amount');return;}
   const bankAcct=document.getElementById('rp-bank')?.value||'';
   const pmtDate=document.getElementById('rp-date')?.value||todayStr();
@@ -6728,14 +6726,14 @@ function openEditLoan(id){
 async function saveLoan(){
   if(S.saving) return;
   const lender=document.getElementById('ln-lender').value.trim();
-  const rawAmt=document.getElementById('ln-amt').value.replace(/,/g,'');
+  const rawAmt=_evalExpr(document.getElementById('ln-amt').value);
   const amt=parseFloat(rawAmt);
   if(!lender||!amt||amt<=0){toast('Lender name and principal amount required');return;}
   S.saving=true;
   const btn=document.getElementById('loan-save');
   btn.textContent='Saving…';btn.disabled=true;setSyncStatus('syncing');
   const cur=document.getElementById('ln-cur').value;
-  const fxIn=parseFloat(document.getElementById('ln-fx').value);
+  const fxIn=numVal('ln-fx');
   const fxRate=isNaN(fxIn)||fxIn<=0?(getFxRates(S.expMonth,S.expYear)[cur]||1):fxIn;
   const amtNGN=cur==='NGN'?amt:Math.round(amt*fxRate);
   const eid=document.getElementById('ln-eid').value;
@@ -6748,7 +6746,7 @@ async function saveLoan(){
     amtNGN,
     fxRate,
     loanType:document.getElementById('ln-type').value,
-    ratePA:parseFloat(document.getElementById('ln-rate-pa').value)||0,
+    ratePA:numVal('ln-rate-pa')||0,
     startDate,
     dueDate:document.getElementById('ln-due').value||'',
     notes:document.getElementById('ln-notes').value||'',
@@ -6831,7 +6829,7 @@ function openLoanRepay(id){
 async function saveLoanRepayment(){
   if(S.saving) return;
   const id=document.getElementById('lrp-lid').value;
-  const rawAmt=document.getElementById('lrp-amt').value.replace(/,/g,'');
+  const rawAmt=_evalExpr(document.getElementById('lrp-amt').value);
   const amt=parseFloat(rawAmt);
   if(!id||!amt||amt<=0){toast('Amount required');return;}
   const loan=S.loans.find(x=>x.id===id);
@@ -7131,7 +7129,7 @@ function renderCashFlowChart(){
   if(legEl){
     const items=[
       {color:colorMap['Income'],label:`Income ${fmtCur(incTotal,cur,m,y)}`},
-      {color:_mon?'#d97862':'#f87171',label:`Expenses ${fmtCur(totalExp,cur,m,y)}`},
+      {color:'#f87171',label:`Expenses ${fmtCur(totalExp,cur,m,y)}`},
       savings>=0
         ?{color:colorMap['Savings'],label:`Savings ${fmtCur(savings,cur,m,y)}`}
         :{color:colorMap['Deficit'],label:`Deficit ${fmtCur(Math.abs(savings),cur,m,y)}`},
@@ -7369,7 +7367,7 @@ function deleteFixedObl(i){
 }
 function saveFixedObl(i){
   const lbl=document.getElementById('obl-fe-lbl-'+i).value.trim();
-  const amt=parseFloat(document.getElementById('obl-fe-amt-'+i).value);
+  const amt=numVal('obl-fe-amt-'+i);
   if(!lbl||isNaN(amt)||amt<0){toast('Enter a valid label and amount');return;}
   const fixed=cGet('sw3_fixed_obl')||FIXED_OBL.map(o=>({...o}));
   fixed[i]={label:lbl,amount:amt};
@@ -7379,7 +7377,7 @@ function saveFixedObl(i){
 function addObligation(){document.getElementById('obl-add-card').style.display='block';document.getElementById('obl-lbl').value='';document.getElementById('obl-amt').value='';}
 function saveObligation(){
   const lbl=document.getElementById('obl-lbl').value.trim();
-  const amt=parseFloat(document.getElementById('obl-amt').value);
+  const amt=numVal('obl-amt');
   if(!lbl||!amt){toast('Enter label and amount');return;}
   const custom=cGet('sw3_custom_obl')||[];
   custom.push({label:lbl,amount:amt});
@@ -7454,7 +7452,7 @@ function editFeeEntry(idx){
 }
 function saveFeeEntry(){
   const lbl=document.getElementById('fee-lbl').value.trim();
-  const amt=parseFloat(document.getElementById('fee-amt').value);
+  const amt=numVal('fee-amt');
   if(!lbl||!amt){toast('Enter label and amount');return;}
   const idx=parseInt(document.getElementById('fee-edit-idx').value);
   const fs=cGet(CK.schoolFees)||SCHOOL_FEES_DEFAULT.map((f,i)=>({...f,id:i}));
@@ -8150,7 +8148,7 @@ function mergePayeeLines(){
   toast(updated?`Merged · ${updated} transaction${updated===1?'':'s'} updated`:`Merged "${from}" into "${into}"`);
 }
 function updateBudgetTotal(){
-  const total=getAllCats().reduce((s,c)=>{const v=parseFloat(document.getElementById('b-'+ck(c))?.value)||0;return s+v;},0);
+  const total=getAllCats().reduce((s,c)=>{const v=numVal('b-'+ck(c))||0;return s+v;},0);
   const el=document.getElementById('budget-total-display');
   if(el) el.textContent=fN(total);
 }
@@ -8163,7 +8161,7 @@ function copyActualSpend(){
   toast('Copied actual spend from '+MS[prevM-1]);
 }
 async function saveBudget(){
-  const cats={};getAllCats().forEach(c=>{const k=ck(c);const el=document.getElementById('b-'+k);const v=el?parseFloat(el.value):NaN;cats[k]=isNaN(v)?0:v;});setSyncStatus('syncing');
+  const cats={};getAllCats().forEach(c=>{const k=ck(c);const el=document.getElementById('b-'+k);const v=el?numVal(el):NaN;cats[k]=isNaN(v)?0:v;});setSyncStatus('syncing');
   try{await db.collection('budgets').doc(sid(S.expMonth,S.expYear)).set({month:S.expMonth,year:S.expYear,categories:cats},{merge:true});S.budgets={...DEF_BUDGETS,...cats};cSet(CK.budgets(S.expMonth,S.expYear),S.budgets);toast('Budget saved');setSyncStatus('synced');renderDashboard();}
   catch(e){toast('Error saving budget');setSyncStatus('error');}
 }
@@ -8659,7 +8657,7 @@ function renderSettData(){
         <button class="btn btn-g btn-sm" style="flex:1" onclick="openGuide()">Open the guide</button>
         <button class="btn btn-g btn-sm" style="flex:1" onclick="reportProblem()">Report a problem</button>
       </div>
-      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.6.0</div><div style="color:var(--text3);margin-top:4px">v4.6.0: Quick add by typing or voice, fingerprint/Face ID app lock, delete account, report a problem, a Getting started checklist, and a tidier Settings page.</div></div>
+      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.6.1</div><div style="color:var(--text3);margin-top:4px">v4.6.1: Bug fixes: amounts like 5k or 10,000 now always save correctly, the Cash Flow chart and full-year view work again, and app lock no longer re-locks after unlocking.</div></div>
     </div>
     <details class="sett-adv" id="sett-adv"${_settAdvOpen?' open':''} ontoggle="_settAdvOpen=this.open">
       <summary>Advanced<span>AI keys, net worth, exchange rates, balance audit</span></summary>
@@ -8822,8 +8820,8 @@ function saveAllFxOverrides(){
   allKeys.forEach(k=>{
     const usdEl=document.getElementById('fx-usd-'+k);
     const gbpEl=document.getElementById('fx-gbp-'+k);
-    const usd=usdEl?parseFloat(usdEl.value):NaN;
-    const gbp=gbpEl?parseFloat(gbpEl.value):NaN;
+    const usd=usdEl?numVal(usdEl):NaN;
+    const gbp=gbpEl?numVal(gbpEl):NaN;
     const base=FX_RATES[k]||{};
     // Only store as override if the value differs from the built-in
     const usdChanged=!isNaN(usd)&&usd>0&&usd!==(base.USD||0);
@@ -9426,7 +9424,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').cat
 
 
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.6.0';
+const APP_VERSION='v4.6.1';
 async function checkForUpdate(){
   try{
     const res=await fetch(location.origin+location.pathname+'?_='+Date.now(),{cache:'no-store'});

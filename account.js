@@ -561,6 +561,9 @@ function _lockOv(){
 function lockShow(){
   if(_lockOpen) return;
   _lockOpen=true;
+  // Forget when the app was left: the OS fingerprint prompt itself hides and
+  // re-shows the page, which must not count as leaving again (re-lock loop).
+  _lockHiddenAt=0;
   const ov=_lockOv();
   ov.innerHTML=`<div class="lk">
     <div class="lk-i">🔒</div>
