@@ -101,7 +101,7 @@ function acctShowCreate(){
     <div class="acct-back" onclick="acctShowWhy()">‹ Back</div>
     <h2>Create your account</h2>
     <div><label class="ilabel">Username</label><input class="ifield" id="acct-u" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="ada.o"></div>
-    <div><label class="ilabel">Password</label><input class="ifield" id="acct-p" type="password" autocomplete="new-password" placeholder="10 or more characters"></div>
+    <div><label class="ilabel">Password</label><input class="ifield" id="acct-p" type="password" autocomplete="new-password" placeholder="${VAULT.MIN_PASSWORD} or more characters"></div>
     <div><label class="ilabel">Confirm password</label><input class="ifield" id="acct-p2" type="password" autocomplete="new-password" onkeydown="_acctOnEnter(event,acctDoCreate)"></div>
     <div class="acct-muted" style="text-align:left">Your password also locks your data. It never leaves this device, so nobody can reset it for you. You'll get a recovery code next in case you forget it.</div>
     <div class="acct-err" id="acct-err"></div>
@@ -179,7 +179,7 @@ function acctShowRecover(){
     <div class="acct-sub">Enter your username and the recovery code you saved when you created your account, then choose a new password.</div>
     <div><label class="ilabel">Username</label><input class="ifield" id="acct-u" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
     <div><label class="ilabel">Recovery code</label><input class="ifield" id="acct-c" autocapitalize="characters" spellcheck="false" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" style="font-family:var(--mono)"></div>
-    <div><label class="ilabel">New password</label><input class="ifield" id="acct-p" type="password" autocomplete="new-password" placeholder="10 or more characters"></div>
+    <div><label class="ilabel">New password</label><input class="ifield" id="acct-p" type="password" autocomplete="new-password" placeholder="${VAULT.MIN_PASSWORD} or more characters"></div>
     <div><label class="ilabel">Confirm new password</label><input class="ifield" id="acct-p2" type="password" autocomplete="new-password" onkeydown="_acctOnEnter(event,acctDoRecover)"></div>
     <div class="acct-err" id="acct-err"></div>
     <button class="btn btn-p btn-full" id="acct-go" onclick="acctDoRecover()">Reset password</button>
@@ -210,7 +210,7 @@ function acctShowGoogleSetPw(){
   _acctShow(`
     <h2>Set a data password</h2>
     <div class="acct-sub">Google signs you in, but your data is locked with a password only you know. You'll enter it once on each new device.</div>
-    <div><label class="ilabel">Data password</label><input class="ifield" id="acct-p" type="password" autocomplete="new-password" placeholder="10 or more characters"></div>
+    <div><label class="ilabel">Data password</label><input class="ifield" id="acct-p" type="password" autocomplete="new-password" placeholder="${VAULT.MIN_PASSWORD} or more characters"></div>
     <div><label class="ilabel">Confirm</label><input class="ifield" id="acct-p2" type="password" autocomplete="new-password" onkeydown="_acctOnEnter(event,acctDoGoogleSetPw)"></div>
     <div class="acct-err" id="acct-err"></div>
     <button class="btn btn-p btn-full" id="acct-go" onclick="acctDoGoogleSetPw()">Continue</button>
@@ -462,7 +462,7 @@ function acctShowChangePw(){
     <div class="acct-back" onclick="acctClose()">‹ Back</div>
     <h2>Change password</h2>
     <div><label class="ilabel">Current password</label><input class="ifield" id="acct-o" type="password" autocomplete="current-password"></div>
-    <div><label class="ilabel">New password</label><input class="ifield" id="acct-p" type="password" autocomplete="new-password" placeholder="10 or more characters"></div>
+    <div><label class="ilabel">New password</label><input class="ifield" id="acct-p" type="password" autocomplete="new-password" placeholder="${VAULT.MIN_PASSWORD} or more characters"></div>
     <div><label class="ilabel">Confirm new password</label><input class="ifield" id="acct-p2" type="password" autocomplete="new-password"></div>
     <div class="acct-muted" style="text-align:left">Your recovery code keeps working.</div>
     <div class="acct-err" id="acct-err"></div>

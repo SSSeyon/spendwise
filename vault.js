@@ -31,6 +31,9 @@ const VAULT=(()=>{
   const subtle=crypto.subtle;
   const PBKDF2_ITER=600000;
   const SYNTH_DOMAIN='spendwise.invalid';
+  // The only password rule (owner's choice, 2026-09-26). Short or simple
+  // passwords weaken the encryption against someone with project access.
+  const MIN_PASSWORD=6;
   const PLAIN=new Set(['year','month']);
   const META_FIELDS=new Set(['v','_enc','year','month']);
 
@@ -590,7 +593,7 @@ const VAULT=(()=>{
   async function signUp(username,password){
     const u=normUser(username);
     if(!validUser(u)) fail('Usernames are 3–24 characters: letters, numbers, dots, dashes or underscores.');
-    if(String(password).length<10) fail('Use at least 10 characters for your password.');
+    if(String(password).length<MIN_PASSWORD) fail(`Use at least ${MIN_PASSWORD} characters for your password.`);
     const salt=userSalt(u);
     const pk=await passwordKeys(password,salt);
     let cred;
@@ -620,7 +623,7 @@ const VAULT=(()=>{
   // sets a new password. No email involved.
   async function recover(username,code,newPassword){
     const u=normUser(username);
-    if(String(newPassword).length<10) fail('Use at least 10 characters for your new password.');
+    if(String(newPassword).length<MIN_PASSWORD) fail(`Use at least ${MIN_PASSWORD} characters for your new password.`);
     const salt=userSalt(u);
     const rk=await recoveryKeys(code,salt);
     if(!rk) fail("That recovery code isn't valid. Check it and try again.");
@@ -642,7 +645,7 @@ const VAULT=(()=>{
     await _updateRecoveryAuth(meta,pk.authSecret);
   }
   async function changePassword(oldPassword,newPassword){
-    if(String(newPassword).length<10) fail('Use at least 10 characters for your new password.');
+    if(String(newPassword).length<MIN_PASSWORD) fail(`Use at least ${MIN_PASSWORD} characters for your new password.`);
     const user=_auth().currentUser;if(!user) fail('Sign in first.');
     const meta=(await metaRef().get({source:'server'})).data();
     const salt=meta.salt;
@@ -673,7 +676,7 @@ const VAULT=(()=>{
     return {hasKeys:ms.exists};
   }
   async function googleSetPassword(password){
-    if(String(password).length<10) fail('Use at least 10 characters for your data password.');
+    if(String(password).length<MIN_PASSWORD) fail(`Use at least ${MIN_PASSWORD} characters for your data password.`);
     const salt=googleSalt(uid);
     return _createKeys(uid,salt,await passwordKeys(password,salt),null);
   }
@@ -685,7 +688,7 @@ const VAULT=(()=>{
     await _installDek(dekRaw,uid);
   }
   async function googleRecover(code,newPassword){
-    if(String(newPassword).length<10) fail('Use at least 10 characters for your new password.');
+    if(String(newPassword).length<MIN_PASSWORD) fail(`Use at least ${MIN_PASSWORD} characters for your new password.`);
     const meta=(await metaRef().get({source:'server'})).data();
     const rk=await recoveryKeys(code,meta.salt);
     if(!rk) fail("That recovery code isn't valid.");
@@ -713,7 +716,7 @@ const VAULT=(()=>{
     // accounts
     signUp,signIn,recover,changePassword,signOut,
     googleSignIn,googleSetPassword,googleUnlock,googleRecover,
-    VaultError,normUser,validUser,
+    VaultError,normUser,validUser,MIN_PASSWORD,
     // data
     udb,FV,
     openLocal,clearLocal,uploadLocal,localDocCount,accountHasData,flushPending,
