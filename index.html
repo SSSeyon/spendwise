@@ -329,12 +329,7 @@
         <button class="btn btn-p btn-full" style="margin-top:8px" onclick="openMoveFunds()">Move: Cash ↔ Investment</button>
       </div>
       <div class="card">
-        <div class="clabel" style="margin-bottom:10px">Add New Account</div>
-        <div class="gform">
-          <div class="ig"><label class="ilabel">Account Name</label><input class="ifield" type="text" id="new-acct-name" placeholder="e.g. Kuda"></div>
-          <div class="ig"><label class="ilabel">Logo filename</label><input class="ifield" type="text" id="new-acct-logo" placeholder="e.g. kuda.png"><div class="csub" style="font-size:0.6rem;margin-top:3px">File in your Logos/ folder on GitHub</div></div>
-          <div class="ig" style="display:flex;align-items:flex-end"><button class="btn btn-g btn-full" onclick="addCashAccount()">Add</button></div>
-        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div class="clabel" style="margin:0">Your Accounts</div><button class="btn btn-p btn-sm" onclick="suOpenPicker('bank')">+ Add accounts</button></div>
         <div id="custom-accts-list" style="margin-top:8px"></div>
       </div>
     </div>
@@ -780,6 +775,7 @@
 
 <script src="vault.js?v=4.4.22"></script>
 <script src="account.js?v=4.4.22"></script>
+<script src="setup.js?v=4.4.22"></script>
 <script src="app.js?v=4.4.22"></script>
 </body>
 </html>

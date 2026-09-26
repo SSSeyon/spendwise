@@ -86,24 +86,26 @@ function setDesignMode(mode){
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 const MS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-// Categories with their expense lines from Excel
+// Built-in categories and their starter "actual expense" lines. Generic on
+// purpose (v4.5): each user adds their own payees, stored in their account
+// (appConfig/customLines). The owner's old personal lines were moved into
+// their account by the legacy import (see legacy-profile.js).
 const CAT_LINES = {
-  'Utilities': ['Power'],
-  'Fuel': ['Gas','Fuel - Old Ford','Fuel - Ford'],
-  'Car maintenance': ['Ford maintenance','Old Ford maintenance','Vehicle papers renewal'],
-  'Itunu': ['Itunu'],
-  'Domestic': ['Car purchase','Car wash','Service charge','Laundry','Home repairs','Rent','Temu','Cleaner'],
+  'Utilities': ['Power','Water'],
+  'Fuel': ['Fuel','Gas'],
+  'Car maintenance': ['Car service','Car wash','Vehicle papers renewal'],
+  'Domestic': ['Rent','Service charge','Laundry','Home repairs','Cleaner'],
   'Food': ['Lunch','Eat out'],
-  'Groceries': ['Ozzy shopping','Super Saver','Globus','Spar','Ebeano','Blenco','Sinomart','Cash groceries','Other groceries'],
-  'Kids': ["Fife's school fees","Fife's (Other)","Fife's Bday"],
-  'Internet services': ['Netflix/Amazon','Internet +Airtime'],
-  'Recreation': ['UK Visa','DSTV','Outing','Outing BDG'],
+  'Groceries': ['Supermarket','Market'],
+  'Kids': ['School fees','Kids (other)'],
+  'Internet services': ['Internet','Airtime'],
+  'Recreation': ['Outing','DSTV'],
   'Personal care': ['Medications','Personal care'],
-  'Gifts and donations': ['Mama','Mum','Pentho','Pego','Dunsin','Gbago Day','Jennifer','Gbago','Tadeyon','Senapon Whesu','Mausi Whesu','Cash gifts','Baba Sesi','Athingban','Segowe','Sejiro','Yemi','Tope','Francis','MBO',"Dad's Bday","JO's Bday","Kola's Wedding","Olamide's wedding",'Pirotress','Xmas Gifts','Xmas gift (Gatemen)','Others'],
-  'Loans': ['Semasa','Gbewato','Morin','House of Mayrie','Mauton','Tobi Talia','Jennifer','Maugbe'],
+  'Gifts and donations': ['Gifts','Donations'],
+  'Loans': [],
   'Others': ['Cash Withdrawal','Others'],
-  'Work Travel': ['Home-MMIA','MMIA - Home','Westgate','Westgate - RB','LC Waikiki','RB - The View','Java House','RB - Westgate (Jen)','RB - Pizza Garden (all)','Pizza Garden (All)','Mall to RB (FJ)','RB to Mercure (JO)','RB to Riverside (JO)','Radisson - Address (All)','Address -Radisson (All)','Riverside - Marriot (All)'],
-  'Education': ['Tuition','School fees'],
+  'Work Travel': ['Taxi','Flights','Hotel'],
+  'Education': ['Tuition','Books'],
 };
 const _BASE_CATS = Object.keys(CAT_LINES);
 // getCustomCats is safe to call any time — reads localStorage directly, no dependency on cGet/S
@@ -181,7 +183,6 @@ const CAT_ICONS = {
   'Utilities':          '💡',
   'Fuel':               '⛽',
   'Car maintenance':    '🔧',
-  'Itunu':              '👤',
   'Domestic':           '🏠',
   'Food':               '🍽️',
   'Groceries':          '🛒',
@@ -202,10 +203,12 @@ const _CATB_PALETTE=['#0e9384','#e04f16','#444ce7','#ba24d5','#0086c9','#e31b54'
 function catColor(cat){let h=0;const s=String(cat||'');for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return _CATB_PALETTE[h%_CATB_PALETTE.length];}
 function catBadge(cat){return`<span class="catb" style="--catbg:${catColor(cat)}26">${CAT_ICONS[cat]||'📦'}</span>`;}
 
-// ── GITHUB-HOSTED LOGOS ────────────────────────────────────────────────────
-// Upload logo files to the Logos/ folder in your GitHub repo.
-// Filename must match exactly what you enter in the settings (case-sensitive).
-const LOGOS_BASE_URL='https://raw.githubusercontent.com/SSSeyon/spendwise/main/Logos/';
+// ── LOGOS ──────────────────────────────────────────────────────────────────
+// A logo value is either a filename in the app's own Logos/ folder (the
+// built-in catalogue in setup.js) or a small data: URL the user uploaded,
+// which is stored in their account like any other setting.
+const LOGOS_BASE_URL='Logos/';
+function logoUrl(v){return /^data:image\//.test(v)?v:LOGOS_BASE_URL+encodeURIComponent(v);}
 function getCashLogos(){return cGet('sw3_cash_logos')||{};}
 function setCashLogo(acctName,filename){
   const m=getCashLogos();
@@ -235,31 +238,36 @@ function _logoFallbackPlatform(el,color,size){
   el.parentNode.replaceChild(d,el);
 }
 function bankLogoEl(name,size=20){
-  const file=getCashLogos()[name]||'';
+  const file=getCashLogos()[name]||(typeof catalogLogo==='function'?catalogLogo('bank',name):'');
   const initials=name.slice(0,2).toUpperCase();
   if(!file) return `<div style="width:${size}px;height:${size}px;border-radius:4px;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:${Math.round(size*0.45)}px;font-weight:700;color:var(--text2);flex-shrink:0">${initials}</div>`;
-  const url=LOGOS_BASE_URL+encodeURIComponent(file);
+  const url=logoUrl(file);
   return `<img src="${url}" width="${size}" height="${size}" style="border-radius:4px;object-fit:contain;background:#fff;flex-shrink:0" onerror="_logoFallbackBank(this,'${name}',${size})">`;
 }
 function platformLogoEl(key,color,size=20){
   const plat=getPlatforms().find(p=>p.key===key);
-  const file=plat?.logo||'';
+  const file=plat?.logo||(plat&&typeof catalogLogo==='function'?catalogLogo('platform',plat.label):'');
   if(!file) return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};opacity:0.85;flex-shrink:0"></div>`;
-  const url=LOGOS_BASE_URL+encodeURIComponent(file);
+  const url=logoUrl(file);
   return `<img src="${url}" width="${size}" height="${size}" style="border-radius:50%;object-fit:contain;background:#fff;flex-shrink:0" onerror="_logoFallbackPlatform(this,'${color}',${size})">`;
 }
 
-const DEFAULT_CASH_ACCOUNTS = ['GTB','Access','Renmoney','USD Cash'];
-const USD_CASH_ACCOUNTS = ['USD Cash']; // cash accounts denominated in USD
-function isUSDCashAccount(name){return USD_CASH_ACCOUNTS.includes(name);}
+// v4.5: no built-in accounts. Each user's full list lives in
+// appConfig/cashAccounts (the owner's old GTB/Access/Renmoney/USD Cash
+// defaults were written into their account by the legacy import).
+const DEFAULT_CASH_ACCOUNTS = [];
+// USD-denominated cash accounts: the legacy 'USD Cash' name plus any account
+// the user marked as USD (appConfig/cashAccounts.usd).
+function getUsdAccounts(){return cGet('sw3_usd_accounts')||[];}
+function isUSDCashAccount(name){return name==='USD Cash'||getUsdAccounts().includes(name);}
 function cashTotalNGN(cashObj,m,y){const r=getFxRates(m||S.expMonth,y||S.expYear);return getCashAccounts().reduce((s,b)=>{const v=(cashObj||S.cash)[b]||0;return s+(isUSDCashAccount(b)?v*(r.USD||1650):v);},0);}
-function getCashAccounts(){const saved=cGet('sw3_cash_accounts');if(!saved)return DEFAULT_CASH_ACCOUNTS;const merged=[...DEFAULT_CASH_ACCOUNTS];saved.forEach(a=>{if(!merged.includes(a))merged.push(a);});return merged;}
-// Persist the custom-account list locally AND to Firestore so it syncs across devices.
-// Only the non-default (custom) accounts are stored, matching the localStorage shape.
-function setCashAccounts(allAccounts){
-  const custom=allAccounts.filter(a=>!DEFAULT_CASH_ACCOUNTS.includes(a));
-  cSet('sw3_cash_accounts',custom);
-  if(db) db.collection('appConfig').doc('cashAccounts').set({accounts:custom},{merge:false}).catch(e=>console.warn("cashAccounts write failed",e));
+function getCashAccounts(){return cGet('sw3_cash_accounts')||[];}
+// Persist the full account list (+ which are USD) locally AND to Firestore.
+function setCashAccounts(allAccounts,usd){
+  const list=[...new Set(allAccounts)];
+  const usdList=(usd||getUsdAccounts()).filter(a=>list.includes(a));
+  cSet('sw3_cash_accounts',list);cSet('sw3_usd_accounts',usdList);
+  if(db) db.collection('appConfig').doc('cashAccounts').set({accounts:list,usd:usdList},{merge:false}).catch(e=>console.warn("cashAccounts write failed",e));
 }
 async function loadFxOverrides(){
   if(!db) return;
@@ -276,6 +284,7 @@ async function loadCashAccounts(){
     const doc=await db.collection('appConfig').doc('cashAccounts').get();
     if(doc.exists&&Array.isArray(doc.data()?.accounts)){
       cSet('sw3_cash_accounts',doc.data().accounts);
+      cSet('sw3_usd_accounts',Array.isArray(doc.data().usd)?doc.data().usd:[]);
     }
   }catch(e){_warnLoad('loadCashAccounts',e);}
 }
@@ -357,14 +366,7 @@ function nwLoansOutstanding(cfg){
 }
 
 
-const PLATFORMS_DEFAULT = [
-  {key:'Piggy',label:'Piggy',color:'#c8f542',currency:'NGN'},
-  {key:'PiggySafelock',label:'Piggy Safelock',color:'#a8d430',currency:'NGN'},
-  {key:'RenVault',label:'RenVault',color:'#4a8aee',currency:'NGN'},
-  {key:'Risevest',label:'Risevest',color:'#f5c842',currency:'USD'},
-  {key:'Trove',label:'Trove',color:'#ff9f5c',currency:'USD'},
-  {key:'Bamboo',label:'Bamboo',color:'#ff5c9f',currency:'USD'},
-];
+const PLATFORMS_DEFAULT = [];
 const PLATFORMS_KEY='sw3_platforms';
 function getPlatforms(){return cGet(PLATFORMS_KEY)||PLATFORMS_DEFAULT;}
 // Historical month docs can hold platforms that have since been removed from
@@ -626,8 +628,10 @@ const FX_RATES = {
   '2026-04':{USD:1600,GBP:2040},'2026-05':{USD:1590,GBP:2020},
 };
 
-const DEF_BUDGETS={Utilities:90000,Fuel:150000,Carmaintenance:50000,Itunu:0,Domestic:200000,Food:150000,Groceries:400000,Kids:200000,Internetservices:50000,Recreation:100000,Personalcare:50000,Giftsanddonations:200000,Loans:0,Others:50000,WorkTravel:0,Education:0};
-const FIXED_OBL=[{label:'Service Charge',amount:55000},{label:'Internet & Airtime',amount:30000},{label:'Power',amount:90000},{label:'Fuel',amount:150000}];
+// Per-user fallbacks, set from appConfig/profile by _applyProfile() (the owner's
+// old hard-coded values live in their profile doc now).
+let DEF_BUDGETS={};
+let FIXED_OBL=[];
 // School fees loaded from localStorage via seed JSON.
 const SCHOOL_FEES_DEFAULT=[];
 
@@ -647,8 +651,34 @@ function smartCat(payee){
   if(!payee)return null;
   const lower=payee.toLowerCase().trim();
   if(PAYEE_CAT_MAP[lower])return PAYEE_CAT_MAP[lower];
+  // The user's own payee lines (appConfig/customLines) — most payees live here now
+  const cl=(typeof S!=='undefined'&&S.customExpLines)||{};
+  for(const cat in cl){if(cat==='__removed__'||!Array.isArray(cl[cat]))continue;if(cl[cat].some(p=>String(p).toLowerCase()===lower))return cat;}
   for(const{kw,cat}of PAYEE_KEYWORDS){if(lower.includes(kw))return cat;}
   return null;
+}
+
+// ── Per-user profile (appConfig/profile) ──
+// {onboarded, defBudgets, fixedObl}. New users get empty fallbacks; the
+// owner's old hard-coded budgets/fixed bills were written here by the import.
+const PROFILE_KEY='sw3_profile';
+function getProfile(){return cGet(PROFILE_KEY)||null;}
+function _applyProfile(p){
+  DEF_BUDGETS=(p&&p.defBudgets&&typeof p.defBudgets==='object')?{...p.defBudgets}:{};
+  FIXED_OBL=(p&&Array.isArray(p.fixedObl))?p.fixedObl.map(o=>({...o})):[];
+}
+function saveProfile(patch){
+  const p={...(getProfile()||{}),...patch};
+  cSet(PROFILE_KEY,p);_applyProfile(p);
+  if(db)db.collection('appConfig').doc('profile').set({...p,updatedAt:FV.serverTimestamp()},{merge:true}).catch(e=>console.warn('profile write failed',e));
+  return p;
+}
+async function loadProfile(){
+  if(!db) return;
+  try{
+    const doc=await db.collection('appConfig').doc('profile').get();
+    if(doc.exists){const p=doc.data();delete p.updatedAt;cSet(PROFILE_KEY,p);_applyProfile(p);}
+  }catch(e){_warnLoad('loadProfile',e);}
 }
 
 // ── RECURRING ENGINE ──
@@ -882,7 +912,7 @@ const DEF_CAT_GROUPS={
   'Home & Utilities':['Utilities','Domestic','Internet services'],
   'Food':['Food','Groceries'],
   'Transport':['Fuel','Car maintenance','Work Travel'],
-  'Family':['Kids','Education','Itunu'],
+  'Family':['Kids','Education'],
   'Personal':['Personal care','Recreation'],
   'Giving & Loans':['Gifts and donations','Loans'],
 };
@@ -933,6 +963,7 @@ let _lsWarned=false;
 const cSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){if(!_lsWarned){_lsWarned=true;console.warn("localStorage write failed - cached data may be stale (quota or private mode):",e);}}};
 
 function loadFromCache(){
+  _applyProfile(getProfile());
   // ── Migrate Energy → Fuel (one-time, background) ──────────────────────
   if(!cGet('sw3_migrated_energy_to_fuel')){
     // Rewrite all cached transaction months synchronously
@@ -1271,6 +1302,7 @@ async function _enterMode(mode){
   if(mode==='legacy'){_invMigrateGate=false;setSyncStatus('legacy');return;}
   if(mode==='local'){setSyncStatus('local');}
   await _bootSync();
+  if(typeof suShouldOnboard==='function'&&suShouldOnboard()) suStart();
 }
 
 async function _bootSync(){
@@ -1321,7 +1353,7 @@ function _renderModeBar(){
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadCustomLines(),loadAiChats(),loadGoals(),loadRules(),loadAiKeys(),loadSpecialBudgets(),loadInterestPosts()]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadCustomLines(),loadAiChats(),loadGoals(),loadRules(),loadAiKeys(),loadSpecialBudgets(),loadInterestPosts(),loadProfile()]);
 }
 
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
@@ -1419,6 +1451,7 @@ function startRealtimeListeners(){
       const arr=snap.data()?.accounts;
       if(Array.isArray(arr)){
         cSet('sw3_cash_accounts',arr);
+        cSet('sw3_usd_accounts',Array.isArray(snap.data().usd)?snap.data().usd:[]);
         renderCashPage();renderDashboard();
       }
     },err=>console.warn('cashAccounts listener:',err));
@@ -5506,18 +5539,7 @@ function _renderInvInto(suffix){
     // Add Platform section only — per-platform edit is now inline in each row
     elEditFields.innerHTML=`
       <div class="card" style="margin-top:4px">
-        <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.06em">Add Investment Platform</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-          <div class="ig" style="margin-bottom:0;grid-column:1/-1"><label class="ilabel">Platform Name</label><input class="ifield" id="new-plat-name${s}" placeholder="e.g. Stanbic" style="font-size:0.8rem;padding:6px 10px"></div>
-          <div class="ig" style="margin-bottom:0"><label class="ilabel">Currency</label><select class="sfield" id="new-plat-cur${s}" style="font-size:0.78rem;padding:6px 10px">
-            <option value="NGN">NGN ₦</option>
-            <option value="USD">USD $</option>
-            <option value="GBP">GBP £</option>
-          </select></div>
-          <div class="ig" style="margin-bottom:0"><label class="ilabel">Colour</label><input type="color" id="new-plat-col${s}" value="#c8f542" style="width:100%;height:36px;border:none;border-radius:var(--rsm);background:none;cursor:pointer;padding:0"></div>
-          <div class="ig" style="margin-bottom:0;grid-column:1/-1"><label class="ilabel">Logo filename</label><input class="ifield" id="new-plat-logo${s}" placeholder="e.g. piggyvest.png" style="font-size:0.8rem;padding:6px 10px"><div class="csub" style="font-size:0.6rem;margin-top:3px">File in your Logos/ folder on GitHub</div></div>
-        </div>
-        <button class="btn btn-inc btn-full" onclick="addPlatform(document.getElementById('new-plat-name${s}').value,document.getElementById('new-plat-cur${s}').value,document.getElementById('new-plat-col${s}').value,document.getElementById('new-plat-logo${s}').value)">+ Add Platform</button>
+        <button class="btn btn-inc btn-full" onclick="suOpenPicker('platform')">+ Add investment platforms</button>
       </div>`;
   }
 }
@@ -7237,7 +7259,7 @@ function deleteFixedObl(i){
   if(!confirm('Remove this fixed bill?')) return;
   const fixed=cGet('sw3_fixed_obl')||FIXED_OBL.map(o=>({...o}));
   fixed.splice(i,1);
-  cSet('sw3_fixed_obl',fixed);
+  cSet('sw3_fixed_obl',fixed);saveProfile({fixedObl:fixed});
   renderProjObligations();renderProjTreasury();toast('Bill removed');
 }
 function saveFixedObl(i){
@@ -7246,7 +7268,7 @@ function saveFixedObl(i){
   if(!lbl||isNaN(amt)||amt<0){toast('Enter a valid label and amount');return;}
   const fixed=cGet('sw3_fixed_obl')||FIXED_OBL.map(o=>({...o}));
   fixed[i]={label:lbl,amount:amt};
-  cSet('sw3_fixed_obl',fixed);
+  cSet('sw3_fixed_obl',fixed);saveProfile({fixedObl:fixed});
   renderProjObligations();renderProjTreasury();toast('Bill updated');
 }
 function addObligation(){document.getElementById('obl-add-card').style.display='block';document.getElementById('obl-lbl').value='';document.getElementById('obl-amt').value='';}
@@ -8413,7 +8435,7 @@ function renderSettData(){
   // below on each release rather than prepending to a running changelog.
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.22</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.22: The AI Analyst now runs on the newest Gemini Flash automatically, and can draw a chart in its replies when the numbers read better as a picture. The badge shows which model actually answered.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.22</div><div>Firebase: spendwise-d6393</div><div style="color:var(--text3);margin-top:4px">v4.4.22: The AI Analyst now runs on the newest Gemini Flash automatically, and can draw a chart in its replies when the numbers read better as a picture. The badge shows which model actually answered.</div></div></div>
     ${renderAccountCard()}
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
@@ -8435,55 +8457,11 @@ function renderSettData(){
       <div class="exp-card-sub" style="margin-bottom:10px">Bills and income that repeat. Due items appear on the dashboard as Upcoming Bills. Add one via the expense form's recurring option.</div>
       <button class="btn btn-g btn-sm btn-full" onclick="openRecurModal()">Manage Recurring (${getRecurring().length})</button>
     </div>
-    <div class="exp-card" style="margin-top:10px">
-      <div class="exp-card-title" style="margin-bottom:6px">Default Cash Accounts</div>
-      <div class="exp-card-sub" style="margin-bottom:10px">These accounts always appear in cash tracking. USD Cash is fixed and cannot be removed.</div>
-      <div id="default-accts-list">
-        ${DEFAULT_CASH_ACCOUNTS.filter(a=>a!=='USD Cash').map(a=>`
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)">
-            <span style="font-size:0.76rem">${a}</span>
-            <button class="btn btn-d btn-sm" style="padding:2px 8px;font-size:0.68rem" onclick="removeDefaultAccount('${jsq(a)}')">Remove</button>
-          </div>`).join('')}
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)">
-          <span style="font-size:0.76rem">USD Cash</span>
-          <span style="font-size:0.62rem;color:var(--text3)">fixed</span>
-        </div>
-      </div>
-      <div style="display:flex;gap:6px;margin-top:10px;align-items:center">
-        <input class="ifield" id="new-default-acct" placeholder="e.g. Zenith" style="flex:1;font-size:0.76rem;padding:6px 10px">
-        <button class="btn btn-p btn-sm" onclick="addDefaultAccount()">+ Add</button>
-      </div>
-    </div>
     ${renderNWConfigCard()}
     ${renderFxCard()}
   `;
 }
 
-function addDefaultAccount(){
-  const inp=document.getElementById('new-default-acct');
-  if(!inp) return;
-  const name=inp.value.trim();
-  if(!name){toast('Enter an account name');return;}
-  if(DEFAULT_CASH_ACCOUNTS.map(a=>a.toLowerCase()).includes(name.toLowerCase())){toast('Account already exists');return;}
-  DEFAULT_CASH_ACCOUNTS.push(name);
-  // Also add to saved list
-  const saved=cGet('sw3_cash_accounts')||[...DEFAULT_CASH_ACCOUNTS];
-  if(!saved.includes(name)) saved.push(name);
-  cSet('sw3_cash_accounts',saved);
-  inp.value='';
-  renderSettData();renderCashPage();renderDashboard();
-  toast(`Added "${name}" to default accounts`);
-}
-function removeDefaultAccount(name){
-  if(name==='USD Cash'){toast('USD Cash cannot be removed');return;}
-  const idx=DEFAULT_CASH_ACCOUNTS.indexOf(name);
-  if(idx===-1) return;
-  DEFAULT_CASH_ACCOUNTS.splice(idx,1);
-  const saved=cGet('sw3_cash_accounts')||[];
-  cSet('sw3_cash_accounts',saved.filter(a=>a!==name));
-  renderSettData();renderCashPage();renderDashboard();
-  toast(`Removed "${name}" from default accounts`);
-}
 function clearFxOverride(k){
   const ovr=getFxOverrides();
   delete ovr[k];

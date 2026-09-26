@@ -41,7 +41,10 @@ function _acctShow(html){
   const ov=_acctOv();
   ov.innerHTML=`<div class="acct-wrap">${html}</div>`;
   ov.style.display='block';ov.scrollTop=0;
-  const f=ov.querySelector('input');if(f)setTimeout(()=>f.focus(),50);
+  // Focus the first field on form screens only — never on picker screens,
+  // where it would pop the keyboard and scroll to the "add your own" box.
+  const f=ov.querySelector('.su-grid')?null:ov.querySelector('input:not([type=checkbox]):not([type=file])');
+  if(f)setTimeout(()=>f.focus(),50);
 }
 function acctClose(){const ov=document.getElementById('acct-ov');if(ov){ov.style.display='none';ov.innerHTML='';}}
 const _acctEsc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -363,6 +366,9 @@ function acctDoImport(){
       say(`✓ ${c}: ${docs.length}`);
       done++;if(bar)bar.style.width=Math.round(done/LEGACY_COLLECTIONS.length*100)+'%';
     }
+    say('Moving your personal defaults into your account…');
+    manifest.ownerExtras=await _acctApplyLegacyProfile();
+    say('✓ payee lines, categories, budgets, fixed bills, bank accounts');
     const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(manifest,null,1)],{type:'application/json'}));a.download='spendwise-import-manifest-'+manifest.at.slice(0,10)+'.json';a.click();
     say('\nAll collections copied and checked. A manifest file was downloaded; keep it with the repo.');
     try{localStorage.setItem(LOCAL_MODE_LS,'1');}catch{}
@@ -370,6 +376,44 @@ function acctDoImport(){
     if(go){go.textContent='Open SpendWise';go.onclick=async()=>{_wipeDataCaches();acctClose();await _enterMode('cloud');};}
     return true;
   });
+}
+
+// The owner's old built-in defaults (legacy-profile.js, loaded only here)
+// become ordinary per-account settings, merged with what the import copied.
+function _acctLoadLegacyProfile(){
+  if(window.LEGACY_PROFILE) return Promise.resolve(window.LEGACY_PROFILE);
+  return new Promise((res,rej)=>{const s=document.createElement('script');s.src='legacy-profile.js?x='+Date.now();s.onload=()=>res(window.LEGACY_PROFILE);s.onerror=()=>rej(new VAULT.VaultError("Couldn't load your old defaults. Check your connection and try again."));document.head.appendChild(s);});
+}
+async function _acctApplyLegacyProfile(){
+  const L=await _acctLoadLegacyProfile();
+  const cfg=VAULT.udb.collection('appConfig');
+  const get=async id=>{const d=await cfg.doc(id).get({source:'server'});return d.exists?d.data():null;};
+  // payee lines: old built-ins -> customLines, skipping any the owner removed
+  const cl=(await get('customLines'))||{};
+  const lines={...(cl.lines||{})},removed=cl.removed||{};
+  let movedLines=0;
+  for(const cat in L.catLines){
+    const gone=new Set(removed[cat]||[]);
+    const cur=new Set(lines[cat]||[]);
+    L.catLines[cat].forEach(p=>{if(!gone.has(p)&&!cur.has(p)&&!(CAT_LINES[cat]||[]).includes(p)){cur.add(p);movedLines++;}});
+    if(cur.size) lines[cat]=[...cur];
+  }
+  await cfg.doc('customLines').set({lines,removed},{merge:true});
+  // categories that are no longer built in
+  const cc=(await get('customCats'))||{};
+  const cats=[...new Set([...(cc.cats||[]),...L.extraCats])];
+  await cfg.doc('customCats').set({cats},{merge:true});
+  // bank accounts: the old undeletable defaults + the custom ones
+  const ca=(await get('cashAccounts'))||{};
+  const accounts=[...new Set([...L.cashAccounts,...(ca.accounts||[])])];
+  const usd=[...new Set([...(ca.usd||[]),...L.usdAccounts])];
+  await cfg.doc('cashAccounts').set({accounts,usd});
+  // platforms only if the account has none saved
+  const inv=(await get('investments'))||{};
+  if(!Array.isArray(inv.platforms)||!inv.platforms.length) await cfg.doc('investments').set({platforms:L.platforms},{merge:true});
+  // budgets + fixed bills fallbacks, and skip onboarding
+  await cfg.doc('profile').set({onboarded:true,defBudgets:L.defBudgets,fixedObl:L.fixedObl,legacyImport:new Date().toISOString()},{merge:true});
+  return {movedLines,cats,accounts,usd};
 }
 
 // ── Account card (More → Data) ────────────────────────────────────────────
