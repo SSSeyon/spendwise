@@ -102,33 +102,39 @@ function acctShowCreate(){
     <h2>Create your account</h2>
     <div><label class="ilabel">Username</label><input class="ifield" id="acct-u" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="ada.o"></div>
     <div><label class="ilabel">Password</label><input class="ifield" id="acct-p" type="password" autocomplete="new-password" placeholder="${VAULT.MIN_PASSWORD} or more characters"></div>
-    <div><label class="ilabel">Confirm password</label><input class="ifield" id="acct-p2" type="password" autocomplete="new-password" onkeydown="_acctOnEnter(event,acctDoCreate)"></div>
-    <div class="acct-muted" style="text-align:left">Your password also locks your data. It never leaves this device, so nobody can reset it for you. You'll get a recovery code next in case you forget it.</div>
+    <div><label class="ilabel">Confirm password</label><input class="ifield" id="acct-p2" type="password" autocomplete="new-password"></div>
+    <div><label class="ilabel">Recovery email <span style="font-weight:400;color:var(--text3)">(optional)</span></label><input class="ifield" id="acct-e" type="email" autocomplete="email" autocapitalize="none" spellcheck="false" placeholder="you@example.com" onkeydown="_acctOnEnter(event,acctDoCreate)"></div>
+    <div class="acct-muted" style="text-align:left">Your password also locks your data. It never leaves this device, so nobody can reset it for you. You'll get a recovery code next in case you forget it. Add an email and you can send that code to your inbox, so it's there if you need it. The email is only used for this, and it's encrypted like the rest of your data.</div>
     <div class="acct-err" id="acct-err"></div>
     <button class="btn btn-p btn-full" id="acct-go" onclick="acctDoCreate()">Create account</button>
   `);
 }
 function acctDoCreate(){
-  const u=_acctVal('acct-u'),p=_acctVal('acct-p'),p2=_acctVal('acct-p2');
+  const u=_acctVal('acct-u'),p=_acctVal('acct-p'),p2=_acctVal('acct-p2'),e=_acctVal('acct-e').trim();
   if(p!==p2){_acctErr("The passwords don't match.");return;}
   _acctBusy('acct-go','Creating…',async()=>{
-    const code=await VAULT.signUp(u,p);
-    acctShowCode(code,()=>_acctAfterAuth({isNew:true}));
+    const code=await VAULT.signUp(u,p,e);
+    acctShowCode(code,()=>_acctAfterAuth({isNew:true}),{email:e,username:u});
   });
 }
 
 // ── 3. Recovery code ──────────────────────────────────────────────────────
-let _acctCodeNext=null;
-function acctShowCode(code,next){
+let _acctCodeNext=null,_acctCodeEmail='',_acctCodeUser='';
+function acctShowCode(code,next,opts){
   _acctCodeNext=next;
+  _acctCodeEmail=(opts&&opts.email)||'';
+  _acctCodeUser=(opts&&opts.username)||VAULT.username||'';
   _acctShow(`
     <h2>Save your recovery code</h2>
     <div class="acct-sub">If you ever forget your password, this code is the only way back into your data. Nobody else has a copy, including the app's creator.</div>
     <div class="acct-code" id="acct-code">${_acctEsc(code)}</div>
+    ${_acctCodeEmail?`<button class="btn btn-inc btn-sm btn-full" onclick="acctEmailCode()">✉ Email it to ${_acctEsc(_acctCodeEmail)}</button>`:''}
     <div style="display:flex;gap:8px">
       <button class="btn btn-g btn-sm" style="flex:1" onclick="acctCopyCode()">Copy</button>
       <button class="btn btn-g btn-sm" style="flex:1" onclick="acctSaveCode()">Save as file</button>
+      ${_acctCodeEmail?'':`<button class="btn btn-g btn-sm" style="flex:1" onclick="acctEmailCode()">Email</button>`}
     </div>
+    ${_acctCodeEmail?`<div class="acct-muted" style="text-align:left">This opens your email app with the code filled in. Tap <b>Send</b> to keep a copy in your inbox. Anyone who can read that email and knows your username could get into your account, so only use an email you keep secure.</div>`:''}
     <label class="acct-check"><input type="checkbox" id="acct-saved"> I've saved it somewhere safe</label>
     <div class="acct-err" id="acct-err"></div>
     <div class="acct-spacer"></div>
@@ -144,6 +150,16 @@ function acctSaveCode(){
   const u=VAULT.username||'';
   const txt=`SpendWise recovery code\n\nUsername: ${u}\nRecovery code: ${c}\n\nKeep this somewhere safe. With your username, it lets you reset a forgotten password.\n`;
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'text/plain'}));a.download='SpendWise-recovery-code.txt';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+// Sent from the user's own email app (mailto:), so the code never passes
+// through anything the app's creator runs.
+function _acctRecoveryMail(to,username,code){
+  const link=location.origin+location.pathname;
+  const body=`SpendWise recovery code\n\nUsername: ${username}\nRecovery code: ${code}\n\nIf you forget your password: open ${link} , choose "I already have an account", then "Forgot password? Use your recovery code".\n\nKeep this email private. With your username, this code lets someone reset your password.`;
+  location.href=`mailto:${encodeURIComponent(to||'')}?subject=${encodeURIComponent('SpendWise recovery code')}&body=${encodeURIComponent(body)}`;
+}
+function acctEmailCode(){
+  _acctRecoveryMail(_acctCodeEmail,_acctCodeUser,document.getElementById('acct-code').textContent);
 }
 function acctCodeDone(){
   if(!document.getElementById('acct-saved').checked){_acctErr('Tick the box once your code is saved.');return;}
@@ -176,7 +192,7 @@ function acctShowRecover(){
   _acctShow(`
     <div class="acct-back" onclick="acctShowSignIn()">‹ Back</div>
     <h2>Reset your password</h2>
-    <div class="acct-sub">Enter your username and the recovery code you saved when you created your account, then choose a new password.</div>
+    <div class="acct-sub">Enter your username and the recovery code you saved when you created your account, then choose a new password. If you emailed the code to yourself, search your inbox for "SpendWise recovery code".</div>
     <div><label class="ilabel">Username</label><input class="ifield" id="acct-u" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
     <div><label class="ilabel">Recovery code</label><input class="ifield" id="acct-c" autocapitalize="characters" spellcheck="false" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" style="font-family:var(--mono)"></div>
     <div><label class="ilabel">New password</label><input class="ifield" id="acct-p" type="password" autocomplete="new-password" placeholder="${VAULT.MIN_PASSWORD} or more characters"></div>
@@ -440,7 +456,8 @@ function renderAccountCard(){
       <div style="display:flex;gap:8px">
         <button class="btn btn-g btn-sm" style="flex:1" onclick="acctShowChangePw()">Change password</button>
         <button class="btn btn-g btn-sm" style="flex:1" onclick="acctConfirmSignOut()">Sign out</button>
-      </div></div>`;
+      </div>
+      <button class="btn btn-g btn-sm btn-full" style="margin-top:8px" onclick="acctShowRecovery()">Recovery code &amp; email</button></div>`;
   }
   return `<div class="exp-card" style="margin-top:10px">
     <div class="exp-card-title" style="margin-bottom:6px">Account</div>
@@ -456,6 +473,55 @@ function acctConfirmSignOut(){
     <button class="btn btn-p btn-full" onclick="acctSignOut()">Sign out</button>
     <button class="btn btn-g btn-full" onclick="acctClose()">Cancel</button>
   `);
+}
+// ── Recovery code & email (signed in) ─────────────────────────────────────
+let _acctRec=null; // {code,email,username} while this screen is open
+async function acctShowRecovery(){
+  _acctShow(`<div class="acct-back" onclick="acctClose()">‹ Back</div><h2>Recovery code &amp; email</h2><div class="acct-sub">Loading…</div>`);
+  try{_acctRec=await VAULT.recoveryInfo();}
+  catch(e){console.warn('recovery info failed',e);_acctRec=null;}
+  if(!_acctRec){_acctShow(`<div class="acct-back" onclick="acctClose()">‹ Back</div><h2>Recovery code &amp; email</h2><div class="acct-sub">Couldn't load this right now. Check your connection and try again.</div>`);return;}
+  const r=_acctRec;
+  _acctShow(`
+    <div class="acct-back" onclick="acctClose()">‹ Back</div>
+    <h2>Recovery code &amp; email</h2>
+    <div class="acct-sub">If you forget your password, your recovery code is the only way back in. Keep it somewhere safe, or email it to yourself.</div>
+    <div><label class="ilabel">Recovery email <span style="font-weight:400;color:var(--text3)">(optional)</span></label><input class="ifield" id="acct-e" type="email" autocomplete="email" autocapitalize="none" spellcheck="false" placeholder="you@example.com" value="${_acctEsc(r.email||'')}"></div>
+    <button class="btn btn-g btn-sm btn-full" id="acct-esave" onclick="acctSaveRecEmail()">Save email</button>
+    <div class="acct-muted" style="text-align:left">Used only to send your recovery code to yourself. It's encrypted like the rest of your data, so nobody else can see it.</div>
+    ${r.code?`
+      <div class="acct-code" id="acct-code" style="filter:blur(6px);cursor:pointer" onclick="this.style.filter='none'" title="Tap to show">${_acctEsc(r.code)}</div>
+      <div class="acct-muted">Tap the code to show it.</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-inc btn-sm" style="flex:1" onclick="acctEmailSavedCode()">✉ Email it to me</button>
+        <button class="btn btn-g btn-sm" style="flex:1" onclick="acctCopyCode()">Copy</button>
+      </div>`
+    :`<div class="acct-sub" style="margin-top:6px">Your account was made before recovery codes could be shown again, so this device can't display it. If you still have it saved, you're fine. If not, create a new one below.</div>`}
+    <div class="acct-err" id="acct-err"></div>
+    <div class="acct-spacer"></div>
+    <div><label class="ilabel">Lost your code? Enter your password to create a new one</label><input class="ifield" id="acct-p" type="password" autocomplete="current-password" onkeydown="_acctOnEnter(event,acctDoNewCode)"></div>
+    <button class="btn btn-g btn-full" id="acct-go" onclick="acctDoNewCode()">Create a new recovery code</button>
+    <div class="acct-muted" style="text-align:left">Your old code stops working once a new one is created.</div>
+  `);
+}
+function acctSaveRecEmail(){
+  _acctBusy('acct-esave','Saving…',async()=>{
+    const e=await VAULT.setRecoveryEmail(_acctVal('acct-e'));
+    if(_acctRec)_acctRec.email=e;
+    toast(e?'Recovery email saved':'Recovery email removed');
+  });
+}
+function acctEmailSavedCode(){
+  if(!_acctRec||!_acctRec.code)return;
+  const to=_acctVal('acct-e').trim()||_acctRec.email||'';
+  _acctRecoveryMail(to,_acctRec.username||VAULT.username,_acctRec.code);
+}
+function acctDoNewCode(){
+  _acctBusy('acct-go','Creating…',async()=>{
+    const code=await VAULT.newRecoveryCodeFor(_acctVal('acct-p'));
+    const email=(_acctRec&&_acctRec.email)||'';
+    acctShowCode(code,()=>{acctClose();toast('New recovery code saved');if(typeof renderSettData==='function')renderSettData();},{email,username:(_acctRec&&_acctRec.username)||VAULT.username});
+  });
 }
 function acctShowChangePw(){
   _acctShow(`

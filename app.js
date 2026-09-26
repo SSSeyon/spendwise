@@ -7613,7 +7613,7 @@ function renderSettGuide(){
         <li>get your data back if you change or lose your phone.</li>
       </ul>
       <p>Anything already on this device is uploaded to your new account.</p>
-      <p><b>Your recovery code.</b> When you create an account you get a recovery code. Keep it somewhere safe (a password manager, or written down). It's the <b>only</b> way back in if you forget your password; there's no "reset by email".</p>
+      <p><b>Your recovery code.</b> When you create an account you get a recovery code. Keep it somewhere safe (a password manager, or written down). It's the <b>only</b> way back in if you forget your password. If you add a recovery email, you can send the code to your inbox so it's there when you need it. You can see the code, email it again or create a new one in <b>More → Data → Account → Recovery code &amp; email</b>.</p>
       <p><b>Privacy.</b> Your data is encrypted on your device before it's saved online. Nobody else can read it, including the person who runs the app. The only exception is the AI Analyst (see Analytics below).</p>`)}
     ${sec('Recording money (the + button)',`
       <p>The <b>+</b> button at the bottom right works from any page. At the top of the form, choose what you're recording:</p>
@@ -7672,6 +7672,10 @@ function renderSettGuide(){
         <li><b>Using a shared or borrowed device?</b> Sign out when you're done (More → Data → Account). This removes your data from that device; it stays safe in your account.</li>
       </ul>`)}
   `;
+  // One section open at a time: opening a section closes the others.
+  el.querySelectorAll('details.gd').forEach(d=>d.addEventListener('toggle',()=>{
+    if(d.open)el.querySelectorAll('details.gd[open]').forEach(o=>{if(o!==d)o.open=false;});
+  }));
 }
 function renderSettBudget(){
   const total=Object.values(S.budgets).reduce((s,v)=>s+(v||0),0);
@@ -8526,7 +8530,7 @@ function renderSettData(){
   // below on each release rather than prepending to a running changelog.
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
-    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.5.3</div><div>Firebase: spendwise-d6393</div><div style="color:var(--text3);margin-top:4px">v4.5.3: New Guide tab under More explains how to use every part of the app.</div></div></div>
+    <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.5.4</div><div>Firebase: spendwise-d6393</div><div style="color:var(--text3);margin-top:4px">v4.5.4: Optional recovery email: send your recovery code to your inbox, and view it or make a new one under More, Data, Account. Guide sections now open one at a time.</div></div></div>
     ${renderAccountCard()}
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
@@ -9417,7 +9421,7 @@ async function _migrateFifeToKids(){
   }
 }
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.5.3';
+const APP_VERSION='v4.5.4';
 async function checkForUpdate(){
   try{
     const res=await fetch('https://ssseyon.github.io/spendwise/?_='+Date.now(),{cache:'no-store'});

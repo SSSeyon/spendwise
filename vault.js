@@ -545,13 +545,18 @@ const VAULT=(()=>{
   function _auth(){return firebase.auth();}
   const metaRef=()=>raw.collection('users').doc(uid).collection('meta').doc('keys');
 
-  async function _createKeys(forUid,salt,pk,username){
+  async function _createKeys(forUid,salt,pk,username,email){
     uid=forUid;
     const dekRaw=rand(32);
     const code=newRecoveryCode();
     const rk=await recoveryKeys(code,salt);
     const dekKey=await aesKey(dekRaw);
     const meta={
+      // Copies only the signed-in user can open, so the account screen can
+      // show or email the code later. The optional recovery email never
+      // leaves the device in readable form.
+      recCode:await seal(dekKey,te.encode(code),'reccode|'+forUid),
+      recEmail:email?await seal(dekKey,te.encode(email),'recemail|'+forUid):null,
       v:1,kind:username?'user':'google',username:username||null,salt,iter:PBKDF2_ITER,
       wrapPass:await seal(pk.kek,dekRaw,'dek|'+forUid),
       wrapRec:await seal(rk.kek,dekRaw,'dek-rec|'+forUid),
@@ -590,16 +595,22 @@ const VAULT=(()=>{
   class VaultError extends Error{}
   const fail=m=>{throw new VaultError(m);};
 
-  async function signUp(username,password){
+  function normEmail(e){
+    e=String(e||'').trim();
+    if(e&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) fail("That email address doesn't look right. Check it, or leave it empty.");
+    return e;
+  }
+  async function signUp(username,password,email){
     const u=normUser(username);
     if(!validUser(u)) fail('Usernames are 3–24 characters: letters, numbers, dots, dashes or underscores.');
     if(String(password).length<MIN_PASSWORD) fail(`Use at least ${MIN_PASSWORD} characters for your password.`);
+    email=normEmail(email);
     const salt=userSalt(u);
     const pk=await passwordKeys(password,salt);
     let cred;
     try{cred=await _auth().createUserWithEmailAndPassword(userEmail(u),pk.authSecret);}
     catch(e){fail(_authErr(e));}
-    return _createKeys(cred.user.uid,salt,pk,u);
+    return _createKeys(cred.user.uid,salt,pk,u,email);
   }
   // Returns {needsSetup:true, code} when the account existed but its key
   // setup never finished (e.g. the app was closed mid-sign-up).
@@ -661,6 +672,51 @@ const VAULT=(()=>{
     await metaRef().update({wrapPass:await seal(pk.kek,dekRaw,'dek|'+uid)});
   }
 
+  // ── recovery code + optional recovery email (signed-in only) ────────────
+  // {code, email}: code is null for accounts made before v4.5.4, which never
+  // stored a copy. Use newRecoveryCodeFor() to give them one.
+  async function recoveryInfo(){
+    if(!dek||!uid) fail('Sign in first.');
+    const m=(await metaRef().get()).data()||{};
+    const rd=async(f,aad)=>{if(!m[f])return null;try{return td.decode(await open(dek,m[f],aad+'|'+uid));}catch(e){console.warn('vault: '+f+' unreadable',e);return null;}};
+    return {code:await rd('recCode','reccode'),email:await rd('recEmail','recemail'),username:m.username||null};
+  }
+  async function setRecoveryEmail(email){
+    if(!dek||!uid) fail('Sign in first.');
+    email=normEmail(email);
+    await metaRef().update({recEmail:email?await seal(dek,te.encode(email),'recemail|'+uid):null});
+    return email;
+  }
+  // Issue a new recovery code (needs the password, which unwraps the data
+  // key). The old code stops working: its recovery doc is overwritten.
+  async function newRecoveryCodeFor(password){
+    const user=_auth().currentUser;if(!user||!uid) fail('Sign in first.');
+    const meta=(await metaRef().get({source:'server'})).data();
+    const pk=await passwordKeys(password,meta.salt);
+    let dekRaw;
+    try{dekRaw=await open(pk.kek,meta.wrapPass,'dek|'+uid);}catch{fail('Your password is wrong.');}
+    const dekKey=await aesKey(dekRaw);
+    const code=newRecoveryCode();
+    const rk=await recoveryKeys(code,meta.salt);
+    if(meta.kind==='user'){
+      await raw.collection('recovery').doc(rk.docId).set({
+        uid,v:1,authEnc:await seal(rk.authKey,te.encode(pk.authSecret),'rec-auth|'+rk.docId),
+      });
+      if(meta.recSealed){
+        try{
+          const old=JSON.parse(td.decode(await open(dekKey,meta.recSealed,'rec|'+uid)));
+          if(old.docId!==rk.docId) await raw.collection('recovery').doc(old.docId).set({uid,v:1,authEnc:null,retired:true});
+        }catch(e){console.warn('vault: could not retire the old recovery code',e);}
+      }
+    }
+    await metaRef().update({
+      wrapRec:await seal(rk.kek,dekRaw,'dek-rec|'+uid),
+      recSealed:await seal(dekKey,te.encode(JSON.stringify({docId:rk.docId,authRaw:b64(rk.authRaw)})),'rec|'+uid),
+      recCode:await seal(dekKey,te.encode(code),'reccode|'+uid),
+    });
+    return code;
+  }
+
   // Google: sign in, then the user sets/enters a separate data password
   // (Google gives the app no secret it could encrypt with).
   async function googleSignIn(){
@@ -715,6 +771,7 @@ const VAULT=(()=>{
     restoreDevice,
     // accounts
     signUp,signIn,recover,changePassword,signOut,
+    recoveryInfo,setRecoveryEmail,newRecoveryCodeFor,
     googleSignIn,googleSetPassword,googleUnlock,googleRecover,
     VaultError,normUser,validUser,MIN_PASSWORD,
     // data
