@@ -1,7 +1,7 @@
 // SpendWise Service Worker
 // Stale-while-revalidate for the HTML shell (instant boot, refreshed in the
 // background); cache-first for version-queried assets, fonts and CDN libs.
-const CACHE = 'spendwise-v19';
+const CACHE = 'spendwise-v20';
 
 // Only truly-static, rarely-changing assets are pre-cached. index.html,
 // app.js and styles.css are intentionally NOT pre-cached here: index.html is
@@ -17,6 +17,7 @@ const STATIC = [
   'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
   'https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js',
   'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js',
+  'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js',
 ];
 
 // Origins that must always go to the network — never cache

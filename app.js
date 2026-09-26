@@ -990,8 +990,6 @@ function loadFromCache(){
     // Remove Energy from custom cats if present
     const custom=getCustomCats().filter(c=>c!=='Energy');saveCustomCats(custom);
     cSet('sw3_migrated_energy_to_fuel',true);
-    // Fire async Firestore batch in the background (non-blocking)
-    _migrateEnergyFirestore();
   }
 
   if(!cGet('sw3_migrated_usd_cash')){
@@ -1265,6 +1263,10 @@ function hideStaleBar(){document.getElementById('stale-bar').style.display='none
 //          data from the old shared collections. db = null (render from cache,
 //          never overwrite it) until the user creates an account and imports.
 let DATA_MODE='local';
+// The owner's uid — set after the owner creates their account (also in
+// firestore.rules). Unlocks publishing shared AI keys and the owner-only
+// repair tools.
+const OWNER_UID='';
 const LOCAL_MODE_LS='sw3_local_mode';
 function _hasLegacyCache(){
   try{if(localStorage.getItem(LOCAL_MODE_LS))return false;
@@ -1353,7 +1355,7 @@ function _renderModeBar(){
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadCustomLines(),loadAiChats(),loadGoals(),loadRules(),loadAiKeys(),loadSpecialBudgets(),loadInterestPosts(),loadProfile()]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadCustomLines(),loadAiChats(),loadGoals(),loadRules(),loadAiKeys(),loadSpecialBudgets(),loadInterestPosts(),loadProfile(),loadSharedAiKeys()]);
 }
 
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
@@ -9408,15 +9410,10 @@ async function _repairUSDCash(){
 initFirebase();
 _requestNotifPermission();
 setTimeout(checkForUpdate, 3000); // check after initial load settles
-// Wait until db is initialised before running one-time migrations
-(function _waitForDbThenMigrate(){
-  if(typeof db !== 'undefined' && db){
-    _migrateFifeToKids();
-    _repairUSDCash();
-  } else {
-    setTimeout(_waitForDbThenMigrate, 500);
-  }
-})();
+// v4.5: the one-time Fife→Kids / USD Cash / Energy→Fuel repairs are no longer
+// run at boot. They fixed the owner's pre-2026 data, which was imported
+// already repaired; on encrypted accounts their category queries would scan
+// every transaction on each sign-in. The functions remain for reference.
 
 // ══════════════════════════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════════════════════════
@@ -9986,7 +9983,35 @@ function _aiActiveKeyId(){
 }
 function _aiKey(){
   const k=_aiKeys().find(k=>k.id===_aiActiveKeyId());
-  return k?k.key:'';
+  if(k&&k.key) return k.key;
+  return _aiSharedKey(); // no key of their own → the app's shared key
+}
+
+// ── Shared Gemini keys (v4.5) ──
+// The owner's keys, published at publicConfig/aiKeys (readable by anyone,
+// writable only by OWNER_UID per firestore.rules), so AI works for every user
+// without them creating a key. A user's own key, if they add one, wins.
+// Read through the raw Firestore handle so it works signed out too.
+var AI_SHARED_LS='sw3_shared_ai_keys'; // var, not const: settings render at boot, before this line runs
+function _aiShared(){return cGet(AI_SHARED_LS)||{list:[],activeId:''};}
+function _aiSharedKey(){const s=_aiShared();const k=(s.list||[]).find(x=>x.id===s.activeId)||(s.list||[])[0];return k?k.key:'';}
+function isOwner(){return !!(typeof OWNER_UID==='string'&&OWNER_UID&&VAULT.uid===OWNER_UID&&DATA_MODE==='cloud');}
+async function loadSharedAiKeys(){
+  if(!VAULT.raw) return;
+  try{
+    const d=await VAULT.raw.collection('publicConfig').doc('aiKeys').get();
+    cSet(AI_SHARED_LS,d.exists?{list:d.data().list||[],activeId:d.data().activeId||''}:{list:[],activeId:''});
+  }catch(e){_warnLoad('loadSharedAiKeys',e);}
+}
+async function publishSharedAiKeys(){
+  if(!isOwner()){toast('Only the app owner can do this');return;}
+  const list=_aiKeys().filter(k=>k.key);
+  if(!list.length){toast('Add a key first');return;}
+  try{
+    await VAULT.raw.collection('publicConfig').doc('aiKeys').set({list,activeId:_aiActiveKeyId(),updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
+    cSet(AI_SHARED_LS,{list,activeId:_aiActiveKeyId()});
+    toast('Shared with everyone');renderSettData();
+  }catch(e){console.warn('shared key publish failed',e);toast("Couldn't publish: "+(e.code||e.message));}
 }
 function renderApiKeysCard(){
   const keys=_aiKeys();
@@ -10008,10 +10033,17 @@ function renderApiKeysCard(){
       </div>
     </div>`;
   }).join('')||'<div style="font-size:0.7rem;color:var(--text3);padding:2px 0 6px">No API keys saved yet.</div>';
+  const shared=_aiShared(),hasShared=(shared.list||[]).length>0;
+  const intro=isOwner()
+    ?`Your keys, encrypted in your account. <b>Everyone else uses the shared key</b> (${hasShared?shared.list.length+' published':'none published yet'}). After changing keys here, publish them again.`
+    :hasShared
+      ?`AI is included: the AI Analyst uses SpendWise's shared key. You don't need to add anything. Optionally add your own Gemini key below and it will be used instead.`
+      :`Add a Gemini API key to use the AI Analyst (Analytics → AI).`;
   return`<div class="exp-card" style="margin-top:10px">
     <div class="exp-card-title" style="margin-bottom:6px">AI API Keys</div>
-    <div class="exp-card-sub" style="margin-bottom:10px">Gemini API keys for the AI Analyst (Analytics → AI). Synced across your devices via the cloud. Pick which one is active — switch any time.</div>
-    ${rows}
+    <div class="exp-card-sub" style="margin-bottom:10px">${intro}</div>
+    ${isOwner()?`<button class="btn btn-inc btn-sm btn-full" style="margin-bottom:8px" onclick="publishSharedAiKeys()">Publish my keys as the shared keys</button>`:''}
+    ${keys.length||isOwner()||!hasShared?rows:''}
     <div style="display:flex;gap:6px;margin-top:10px">
       <input class="ifield" id="new-ai-key-label" placeholder="Label (e.g. Personal)" style="flex:1;font-size:0.74rem;padding:6px 10px">
     </div>
