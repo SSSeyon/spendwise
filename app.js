@@ -1310,6 +1310,7 @@ async function _enterMode(mode){
 async function _bootSync(){
     if(DATA_MODE==='cloud'&&!navigator.onLine){_invMigrateGate=true;setSyncStatus('offline');return;}
     if(DATA_MODE==='cloud')setSyncStatus('syncing');
+    if(DATA_MODE==='cloud'){try{await VAULT.flushPending();}catch(e){console.warn('pending balance changes not yet applied',e);}}
     try{
       const m=S.expMonth,y=S.expYear;
       await syncAll();
@@ -1330,7 +1331,7 @@ async function _bootSync(){
 
 // Wipe every per-account data cache on this device (sign-out, or replacing
 // this device's local data with an account's). UI prefs survive.
-const _KEEP_ON_WIPE=new Set(['sw3_theme','sw3_design_mode','sw3_dash_order','sw3_hidden_cards','sw3_last_page','sw3_dash_currency',LOCAL_MODE_LS]);
+const _KEEP_ON_WIPE=new Set(['sw3_vault_incq','sw3_theme','sw3_design_mode','sw3_dash_order','sw3_hidden_cards','sw3_last_page','sw3_dash_currency',LOCAL_MODE_LS]);
 function _wipeDataCaches(){
   try{
     const ks=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith('sw3_')&&!_KEEP_ON_WIPE.has(k))ks.push(k);}

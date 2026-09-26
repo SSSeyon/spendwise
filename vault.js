@@ -239,7 +239,16 @@ const VAULT=(()=>{
     async set(data,opts){
       const sp=splitPayload(data||{});
       const merge=!!(opts&&opts.merge);
-      if(Object.keys(sp.incs).length) return this._incrementWrite(sp);
+      if(Object.keys(sp.incs).length){
+        // Offline: a transaction would just wait in memory (and be lost if the
+        // app closes), so persist the delta and apply it on reconnect/boot.
+        if(typeof navigator!=='undefined'&&navigator.onLine===false){
+          _incQueueAdd(this._col,this.id,data);
+          plainCache.set(this.path,applyMerge(plainCache.get(this.path)||{},sp));
+          return;
+        }
+        return this._incrementWrite(sp);
+      }
       if(!merge){
         const obj=applyMerge({},sp);
         plainCache.set(this.path,obj);
@@ -274,6 +283,36 @@ const VAULT=(()=>{
       return ()=>{live=false;unsub();};
     }
   }
+
+  // Persisted queue of increment writes made while offline (JSON-safe: the FV
+  // sentinels are plain objects). Applied in order, each as its own
+  // transaction, and removed only once committed — so each applies once.
+  const INCQ_KEY='sw3_vault_incq';
+  function _incQueueGet(){try{return JSON.parse(localStorage.getItem(INCQ_KEY)||'[]');}catch{return [];}}
+  function _incQueueSet(q){try{localStorage.setItem(INCQ_KEY,JSON.stringify(q));}catch(e){console.warn('vault: offline queue write failed',e);}}
+  function _incQueueAdd(col,id,data){const q=_incQueueGet();q.push({uid,col,id,data,ts:Date.now()});_incQueueSet(q);}
+  let _flushing=null;
+  function flushPending(){
+    if(_flushing) return _flushing;
+    _flushing=(async()=>{
+      let n=0;
+      try{
+        while(uid&&dek&&navigator.onLine!==false){
+          const q=_incQueueGet();const i=q.findIndex(x=>x.uid===uid);
+          if(i<0) break;
+          const it=q[i];
+          await new DocRef(it.col,raw.collection('users').doc(uid).collection(it.col).doc(it.id))._incrementWrite(splitPayload(it.data));
+          const q2=_incQueueGet();const j=q2.findIndex(x=>x.ts===it.ts&&x.id===it.id&&x.col===it.col);
+          if(j>=0){q2.splice(j,1);_incQueueSet(q2);}
+          n++;
+        }
+      }catch(e){console.warn('vault: offline queue flush paused',e);}
+      finally{_flushing=null;}
+      return n;
+    })();
+    return _flushing;
+  }
+  if(typeof window!=='undefined') window.addEventListener('online',()=>{flushPending();});
 
   const isDocIdPath=f=>f&&typeof f==='object'&&typeof f.isEqual==='function'&&f.isEqual(firebase.firestore.FieldPath.documentId());
   function cmpOp(a,op,b){
@@ -677,7 +716,8 @@ const VAULT=(()=>{
     VaultError,normUser,validUser,
     // data
     udb,FV,
-    openLocal,clearLocal,uploadLocal,localDocCount,accountHasData,
+    openLocal,clearLocal,uploadLocal,localDocCount,accountHasData,flushPending,
+    pendingCount:()=>_incQueueGet().filter(x=>x.uid===uid).length,
     // test hooks
     _t:{seal,open,passwordKeys,recoveryKeys,newRecoveryCode,codeBytes,encodeDoc,decodeDoc,splitPayload,applyMerge,cmpOp,
         _setKey:async(u,rawDek)=>{uid=u;dek=await aesKey(rawDek);}},
