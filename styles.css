@@ -502,3 +502,28 @@ datalist option{background:var(--bg2);color:var(--text)}
 .gs-go{color:var(--text3);font-size:1rem}
 .gs-foot{font-size:0.68rem;color:var(--text2);padding-top:9px;cursor:pointer}
 .gs-foot b{color:var(--accent)}
+/* ── Expense amount currency (price in $ / £ paid from a naira account) ── */
+.sfield.e-cur{width:auto;font-size:0.66rem;padding:2px 6px;margin-bottom:4px}
+.e-fx-hint{font-size:0.66rem;color:var(--text3);margin-top:4px;min-height:0}
+.e-fx-hint:empty{display:none}
+.fx-note{font-size:0.6rem;color:var(--text3);font-family:var(--mono);margin-left:4px}
+/* ── Floating action button: quick-actions menu + drag to move ── */
+.fab{touch-action:none;user-select:none;-webkit-user-select:none}
+.fab.open{transform:rotate(45deg)}
+.fab.dragging{transform:scale(1.12);box-shadow:0 10px 28px rgba(0,0,0,0.35);transition:none;cursor:grabbing}
+#fab-scrim{position:fixed;inset:0;z-index:88;background:rgba(0,0,0,0.28);opacity:0;pointer-events:none;transition:opacity .15s}
+#fab-scrim.open{opacity:1;pointer-events:auto}
+#fab-menu{position:fixed;z-index:91;display:flex;flex-direction:column;align-items:flex-end;gap:10px;pointer-events:none}
+#fab-menu.left{align-items:flex-start}
+#fab-menu.below{flex-direction:column-reverse}
+#fab-menu .fab-item{display:flex;align-items:center;gap:10px;background:var(--bg1);color:var(--text);border:1px solid var(--border);border-radius:24px;padding:8px 16px 8px 8px;font:inherit;font-size:0.8rem;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,0.22);cursor:pointer;opacity:0;transform:translateY(8px) scale(0.96);transition:opacity .15s,transform .15s;white-space:nowrap}
+#fab-menu.below .fab-item{transform:translateY(-8px) scale(0.96)}
+#fab-menu.open{pointer-events:auto}
+#fab-menu.open .fab-item{opacity:1;transform:none}
+#fab-menu.open .fab-item:nth-child(2){transition-delay:.03s}
+#fab-menu.open .fab-item:nth-child(3){transition-delay:.06s}
+#fab-menu .fab-ic{width:32px;height:32px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:0.95rem}
+#fab-menu .fab-ic-ai{background:linear-gradient(135deg,#4285f4,#9b72cb 55%,#d96570)}
+/* Voice button in the AI chat input */
+.ai-mic{flex-shrink:0;width:40px;border-radius:var(--rsm);border:1px solid var(--border);background:var(--bg2);color:var(--text);font-size:1rem;cursor:pointer}
+.ai-mic.on{background:var(--red);border-color:var(--red);color:#fff;animation:qaPulse 1.2s infinite}

@@ -1255,7 +1255,7 @@ async function _bootSync(){
 
 // Wipe every per-account data cache on this device (sign-out, or replacing
 // this device's local data with an account's). UI prefs survive.
-const _KEEP_ON_WIPE=new Set(['sw3_vault_incq','sw3_theme','sw3_dash_order','sw3_hidden_cards','sw3_last_page','sw3_dash_currency',LOCAL_MODE_LS]);
+const _KEEP_ON_WIPE=new Set(['sw3_vault_incq','sw3_theme','sw3_fab_pos','sw3_dash_order','sw3_hidden_cards','sw3_last_page','sw3_dash_currency',LOCAL_MODE_LS]);
 function _wipeDataCaches(){
   try{
     const ks=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith('sw3_')&&!_KEEP_ON_WIPE.has(k))ks.push(k);}
@@ -1791,7 +1791,7 @@ async function loadHistoricalSummary(){
       const allMonthKeys=new Set([...Object.keys(txByMonth),...Object.keys(incByMonth)]);
       allMonthKeys.forEach(k=>{
         const [ys,ms]=k.split('-');const y=parseInt(ys),m=parseInt(ms);
-        const expenses=(txByMonth[k]||[]).reduce((s,t)=>s+(t.amount||0),0);
+        const expenses=(txByMonth[k]||[]).reduce((s,t)=>s+txNGN(t),0);
         const income=(incByMonth[k]||[]).reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
         if(!expenses&&!income) return;
         const existIdx=hist.findIndex(h=>h.year===y&&h.month===m);
@@ -1813,7 +1813,7 @@ async function loadHistoricalSummary(){
           const txns=cGet(CK.txns(m,y));
           const inc=cGet(CK.inc(m,y));
           if(!txns&&!inc) continue;
-          const expenses=(txns||[]).reduce((s,t)=>s+(t.amount||0),0);
+          const expenses=(txns||[]).reduce((s,t)=>s+txNGN(t),0);
           const income=(inc||[]).reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
           if(!expenses&&!income) continue;
           hist.push({year:y,month:m,label:MS2[m-1]+" '"+String(y).slice(2),income,expenses});
@@ -1826,7 +1826,7 @@ async function loadHistoricalSummary(){
     // Always override the current month with live in-memory totals
     // so the history summary row is never stale for the active month
     const cm=S.expMonth,cy=S.expYear;
-    const liveExp=S.txns.reduce((s,t)=>s+(t.amount||0),0);
+    const liveExp=S.txns.reduce((s,t)=>s+txNGN(t),0);
     const liveInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
     const ci=hist.findIndex(h=>h.year===cy&&h.month===cm);
     if(ci>=0){hist[ci].expenses=liveExp;hist[ci].income=liveInc;}
@@ -1915,7 +1915,7 @@ function _buildHistoryFromCache(){
       const txns=cGet(CK.txns(m,y));
       const inc=cGet(CK.inc(m,y));
       if(!txns&&!inc) continue;
-      const expenses=(txns||[]).reduce((s,t)=>s+(t.amount||0),0);
+      const expenses=(txns||[]).reduce((s,t)=>s+txNGN(t),0);
       const income=(inc||[]).reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
       if(!expenses&&!income) continue;
       hist.push({year:y,month:m,label:MS2[m-1]+" '"+String(y).slice(2),income,expenses});
@@ -1924,7 +1924,7 @@ function _buildHistoryFromCache(){
   if(hist.length){
     // Override current month with live totals
     const cm=S.expMonth,cy=S.expYear;
-    const liveExp=S.txns.reduce((s,t)=>s+(t.amount||0),0);
+    const liveExp=S.txns.reduce((s,t)=>s+txNGN(t),0);
     const liveInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
     const ci=hist.findIndex(h=>h.year===cy&&h.month===cm);
     if(ci>=0&&(liveExp||liveInc)){hist[ci].expenses=liveExp;hist[ci].income=liveInc;}
@@ -1995,6 +1995,95 @@ function openAiInsight(){
   if(btn) projTab('ai',btn);
 }
 
+// ── FLOATING ACTION BUTTON (every tab) ─────────────────────────────────────
+// Tap: opens three quick actions (Quick add · Say it · Ask AI).
+// Drag: moves it anywhere on screen (so it never covers something you need,
+// e.g. the AI send button); the position is remembered on this device.
+const FAB_POS_LS='sw3_fab_pos';
+let _fabOpen=false;
+function _fabEl(){return document.getElementById('fab');}
+function _fabApplyPos(){
+  const fab=_fabEl();if(!fab)return;
+  let p=null;try{p=JSON.parse(localStorage.getItem(FAB_POS_LS)||'null');}catch{}
+  if(!p){fab.style.left='';fab.style.top='';fab.style.right='';fab.style.bottom='';return;}
+  const w=fab.offsetWidth||48,h=fab.offsetHeight||48;
+  // Stored as fractions of the viewport so rotation / resizing keeps it on screen.
+  const x=Math.min(Math.max(8,p.fx*window.innerWidth-w/2),window.innerWidth-w-8);
+  const y=Math.min(Math.max(60,p.fy*window.innerHeight-h/2),window.innerHeight-h-8);
+  fab.style.left=x+'px';fab.style.top=y+'px';fab.style.right='auto';fab.style.bottom='auto';
+}
+function fabMenuClose(){
+  _fabOpen=false;
+  document.getElementById('fab-menu')?.classList.remove('open');
+  document.getElementById('fab-scrim')?.classList.remove('open');
+  _fabEl()?.classList.remove('open');
+}
+function fabMenuToggle(){
+  if(_fabOpen){fabMenuClose();return;}
+  const fab=_fabEl(),menu=document.getElementById('fab-menu');if(!fab||!menu)return;
+  // Open the menu on whichever side of the button has room.
+  const r=fab.getBoundingClientRect();
+  const below=r.top<window.innerHeight/2, leftSide=r.left+r.width/2<window.innerWidth/2;
+  menu.classList.toggle('below',below);menu.classList.toggle('left',leftSide);
+  menu.style.top=below?(r.bottom+10)+'px':'auto';
+  menu.style.bottom=below?'auto':(window.innerHeight-r.top+10)+'px';
+  menu.style.left=leftSide?r.left+'px':'auto';
+  menu.style.right=leftSide?'auto':(window.innerWidth-r.right)+'px';
+  _fabOpen=true;menu.classList.add('open');document.getElementById('fab-scrim').classList.add('open');fab.classList.add('open');
+  haptic([6]);
+}
+function fabAction(a){
+  fabMenuClose();
+  if(a==='add'){openExpModal('expense');setTimeout(()=>document.getElementById('qa-text')?.focus(),120);}
+  else if(a==='voice'){openExpModal('expense');quickAddVoice();} // same tap = user gesture for the mic
+  else if(a==='ai'){openAiInsight();setTimeout(()=>document.getElementById('ai-input')?.focus(),200);}
+}
+(function initFab(){
+  const fab=_fabEl();if(!fab)return;
+  fab.removeAttribute('onclick');fab.title='Quick actions (drag to move)';fab.setAttribute('aria-label','Quick actions');
+  const menu=document.createElement('div');menu.id='fab-menu';
+  menu.innerHTML=`
+    <button class="fab-item" onclick="fabAction('add')"><span class="fab-ic">✍︎</span><span>Quick add</span></button>
+    <button class="fab-item" onclick="fabAction('voice')"><span class="fab-ic">🎤</span><span>Say it</span></button>
+    <button class="fab-item" onclick="fabAction('ai')"><span class="fab-ic fab-ic-ai">✦</span><span>Ask AI</span></button>`;
+  const scrim=document.createElement('div');scrim.id='fab-scrim';scrim.onclick=fabMenuClose;
+  document.body.appendChild(scrim);document.body.appendChild(menu);
+  // Drag vs tap: a press that moves more than 8px is a drag.
+  let sx=0,sy=0,ox=0,oy=0,dragging=false,down=false;
+  fab.addEventListener('pointerdown',e=>{
+    down=true;dragging=false;sx=e.clientX;sy=e.clientY;
+    const r=fab.getBoundingClientRect();ox=sx-r.left;oy=sy-r.top;
+    try{fab.setPointerCapture(e.pointerId);}catch{}
+  });
+  fab.addEventListener('pointermove',e=>{
+    if(!down)return;
+    if(!dragging&&Math.hypot(e.clientX-sx,e.clientY-sy)<8)return;
+    if(!dragging){dragging=true;fabMenuClose();fab.classList.add('dragging');}
+    const w=fab.offsetWidth,h=fab.offsetHeight;
+    const x=Math.min(Math.max(8,e.clientX-ox),window.innerWidth-w-8);
+    const y=Math.min(Math.max(60,e.clientY-oy),window.innerHeight-h-8);
+    fab.style.left=x+'px';fab.style.top=y+'px';fab.style.right='auto';fab.style.bottom='auto';
+    e.preventDefault();
+  });
+  const end=e=>{
+    if(!down)return;down=false;
+    try{fab.releasePointerCapture(e.pointerId);}catch{}
+    if(dragging){
+      fab.classList.remove('dragging');
+      const r=fab.getBoundingClientRect();
+      try{localStorage.setItem(FAB_POS_LS,JSON.stringify({fx:(r.left+r.width/2)/window.innerWidth,fy:(r.top+r.height/2)/window.innerHeight}));}catch{}
+    }else if(e.type==='pointerup')fabMenuToggle();
+  };
+  fab.addEventListener('pointerup',end);fab.addEventListener('pointercancel',end);
+  // Keyboard users: Enter/Space opens the menu (pointer events cover mouse & touch).
+  fab.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fabMenuToggle();}});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&_fabOpen)fabMenuClose();});
+  window.addEventListener('resize',()=>{fabMenuClose();_fabApplyPos();});
+  _fabApplyPos();
+})();
+// Double-tap-free way back: long-press isn't discoverable, so Settings offers a reset.
+function fabResetPosition(){try{localStorage.removeItem(FAB_POS_LS);}catch{}_fabApplyPos();toast('Button moved back to the corner');}
+
 function navTo(pg, deepCat){
   S.page=pg;
   try{localStorage.setItem('sw3_last_page',pg);}catch(e){}
@@ -2002,18 +2091,7 @@ function navTo(pg, deepCat){
   document.getElementById('pg-'+pg).classList.add('active');
   document.querySelectorAll('.bn').forEach(n=>n.classList.toggle('active',n.dataset.pg===pg));
   document.getElementById('app-body').scrollTop=0;
-  const fab=document.getElementById('fab');
-  if(pg==='forecast'){
-    fab.className='fab fab-ai';
-    fab.innerHTML='<img src="Logos/Gemini.webp" alt="AI">';
-    fab.onclick=()=>openAiInsight();
-  }else if(['dashboard','expenses','accounts','debtors'].includes(pg)){
-    fab.className='fab';
-    fab.innerHTML='+';
-    fab.onclick=pg==='debtors'?()=>openDebMod():()=>openExpModal('expense');
-  }else{
-    fab.className='fab hidden';
-  }
+  fabMenuClose();
   if(pg==='expenses'&&deepCat){
     S.expCat=deepCat;
     renderExpenses();
@@ -2164,7 +2242,7 @@ function renderDashboard(){
     return;
   }
 
-  const spent=txns.reduce((s,t)=>s+(t.amount||0),0);
+  const spent=txns.reduce((s,t)=>s+txNGN(t),0);
   const incTotal=incList.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
   // Keep sw3_history current month entry in sync with live data
   (()=>{
@@ -2211,9 +2289,9 @@ function renderDashboard(){
   const prevM=m===1?12:m-1,prevY=m===1?y-1:y;
   const prevTxns=cGet(CK.txns(prevM,prevY))||[];
   const prevHist=getHistory().find(h=>h.year===prevY&&h.month===prevM);
-  const prevSpent=prevTxns.length?prevTxns.reduce((s,t)=>s+(t.amount||0),0):(prevHist?.expenses||0);
+  const prevSpent=prevTxns.length?prevTxns.reduce((s,t)=>s+txNGN(t),0):(prevHist?.expenses||0);
   const prevIncHist=cGet(CK.inc(prevM,prevY))||[];
-  const prevIncAmt=prevIncHist.length?prevIncHist.reduce((s,i)=>s+(i.amount||0),0):(prevHist?.income||0);
+  const prevIncAmt=prevIncHist.length?prevIncHist.reduce((s,i)=>s+txNGN(i),0):(prevHist?.income||0);
   const momBadge=(cur2,prev,invertGood)=>{
     if(!prev||prev===0) return '';
     const pct=Math.round((cur2-prev)/prev*100);
@@ -2243,7 +2321,7 @@ function renderDashboard(){
 
   // Category spend
   const catSpend={};
-  txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+(t.amount||0);});
+  txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+txNGN(t);});
 
   // MoM commentary sentence (catSpend now available)
   (()=>{
@@ -2256,7 +2334,7 @@ function renderDashboard(){
     const dir=diff>0?'higher':'lower';
     const col=diff>0?'var(--red)':'var(--accent)';
     const prevCatSpend={};
-    (cGet(CK.txns(prevM,prevY))||[]).forEach(t=>{prevCatSpend[t.category]=(prevCatSpend[t.category]||0)+(t.amount||0);});
+    (cGet(CK.txns(prevM,prevY))||[]).forEach(t=>{prevCatSpend[t.category]=(prevCatSpend[t.category]||0)+txNGN(t);});
     const catDiffs=Object.keys({...catSpend,...prevCatSpend}).map(c=>({c,d:(catSpend[c]||0)-(prevCatSpend[c]||0)}));
     catDiffs.sort((a,b)=>Math.abs(b.d)-Math.abs(a.d));
     const top=catDiffs[0];
@@ -2339,7 +2417,7 @@ function renderDashboard(){
   if(!combined.length){recEl.innerHTML='<div class="empty"><div class="empty-i">↕</div>No transactions yet</div>';}
   else{recEl.innerHTML='<div class="txlist">'+combined.map(tx=>{
     const _lbl=tx.category?((CAT_ICONS[tx.category]||'')+' '+tx.category):esc(tx.payee)||'—';
-    return`<div class="txi"><div><div class="txi-cat">${_lbl}</div><div class="txi-meta">${esc(tx.payee||tx.notes)||'—'} · ${fmtDate(tx.date)}</div></div><div class="${tx.type==='inc'?'txi-amt txi-inc':'txi-amt txi-exp'}">${tx.type==='inc'?'+':''}${fmtCur(tx.amount,cur,m,y)}</div></div>`;
+    return`<div class="txi"><div><div class="txi-cat">${_lbl}</div><div class="txi-meta">${esc(tx.payee||tx.notes)||'—'} · ${fmtDate(tx.date)}</div></div><div class="${tx.type==='inc'?'txi-amt txi-inc':'txi-amt txi-exp'}">${tx.type==='inc'?'+':''}${fmtCur(txNGN(tx),cur,m,y)}${txFxNote(tx)}</div></div>`;
   }).join('')+'</div>';}
 
   // Calendar
@@ -3069,8 +3147,8 @@ function _spendHistoryStats(m,y,day){
       const c=t.category||'Other';
       const d=parseInt(String(t.date||'').slice(8,10),10)||1;
       byCat[c]=byCat[c]||{total:0,count:0,early:0};
-      byCat[c].total+=t.amount;byCat[c].count++;
-      if(d<=cutoff) byCat[c].early+=t.amount;
+      byCat[c].total+=txNGN(t);byCat[c].count++;
+      if(d<=cutoff) byCat[c].early+=txNGN(t);
     });
     Object.entries(byCat).forEach(([c,v])=>{
       cats[c]=cats[c]||{totals:[],counts:[],fracs:[],monthsPresent:0};
@@ -3099,7 +3177,7 @@ function computeSmartInsights(){
   const out={alerts:[],insights:[],catProj:{},totalProj:0,totalBudget:Object.values(B).reduce((s,v)=>s+(v||0),0),monthsUsed:nMonths};
 
   const catSpend={},catCount={};
-  txns.forEach(t=>{if(!t||!t.amount)return;const c=t.category||'Other';catSpend[c]=(catSpend[c]||0)+t.amount;catCount[c]=(catCount[c]||0)+1;});
+  txns.forEach(t=>{if(!t||!t.amount)return;const c=t.category||'Other';catSpend[c]=(catSpend[c]||0)+txNGN(t);catCount[c]=(catCount[c]||0)+1;});
 
   // ── Per-category projections ──
   new Set([...Object.keys(catSpend),...Object.keys(hist.cats)]).forEach(cat=>{
@@ -3128,7 +3206,7 @@ function computeSmartInsights(){
   });
 
   // ── Total-budget outlook ──
-  const spentTotal=txns.reduce((s,t)=>s+(t.amount||0),0);
+  const spentTotal=txns.reduce((s,t)=>s+txNGN(t),0);
   if(out.totalBudget>0&&spentTotal>0){
     const pct=Math.round(out.totalProj/out.totalBudget*100);
     const histNote=nMonths>=2
@@ -3259,7 +3337,7 @@ function renderDashAlerts(){
     if(targetPct>0){
       const incTotal=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
       if(incTotal>0){
-        const spent2=S.txns.reduce((s,t)=>s+(t.amount||0),0);
+        const spent2=S.txns.reduce((s,t)=>s+txNGN(t),0);
         const savedAmt=incTotal-spent2;
         const actualPct=Math.round(savedAmt/incTotal*100);
         const targetAmt=Math.round(incTotal*targetPct/100);
@@ -3369,7 +3447,7 @@ const CAT_COLORS=['#c8f542','#5c9eff','#f5c842','#ff5c9f','#9f5cff','#ff9f5c','#
 function setChartType(type,btn){
   S.chartType=type;
   document.querySelectorAll('.chart-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');
-  const catSpend={};S.txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+(t.amount||0);});
+  const catSpend={};S.txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+txNGN(t);});
   renderCatChart(catSpend,S.dashCurrency,S.dashMonth,S.dashYear);
 }
 
@@ -4025,17 +4103,17 @@ function renderExpenses(){
     if(_others.length){
       _others.sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:0);
       const _shown=_others.slice(0,30);
-      _crossHtml=`<div class="card" style="margin-top:12px"><div class="clabel" style="margin-bottom:8px">Results in other months (${_others.length})</div>${_shown.map(t=>`<div class="txi" style="cursor:pointer" onclick="reloadMonth(${t._m},${t._y})"><div style="flex:1;min-width:0"><div class="txi-cat" style="font-size:0.76rem">${esc(t.payee)||'—'}</div><div class="txi-meta">${fmtDate(t.date)} · ${MS[t._m-1]} ${t._y} · ${esc(t.bank||'')}</div></div><div class="txi-amt txi-exp">${fmtCur(t.amount,cur,t._m,t._y)}</div></div>`).join('')}${_others.length>30?`<div class="csub" style="margin-top:6px">Showing first 30 — tap a row to open its month</div>`:`<div class="csub" style="margin-top:6px">Tap a row to open its month</div>`}</div>`;
+      _crossHtml=`<div class="card" style="margin-top:12px"><div class="clabel" style="margin-bottom:8px">Results in other months (${_others.length})</div>${_shown.map(t=>`<div class="txi" style="cursor:pointer" onclick="reloadMonth(${t._m},${t._y})"><div style="flex:1;min-width:0"><div class="txi-cat" style="font-size:0.76rem">${esc(t.payee)||'—'}</div><div class="txi-meta">${fmtDate(t.date)} · ${MS[t._m-1]} ${t._y} · ${esc(t.bank||'')}</div></div><div class="txi-amt txi-exp">${fmtCur(txNGN(t),cur,t._m,t._y)}${txFxNote(t)}</div></div>`).join('')}${_others.length>30?`<div class="csub" style="margin-top:6px">Showing first 30 — tap a row to open its month</div>`:`<div class="csub" style="margin-top:6px">Tap a row to open its month</div>`}</div>`;
     }
   }
 
-  const total=txns.reduce((s,t)=>s+(t.amount||0),0);
-  const catSpend={};txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+(t.amount||0);});
+  const total=txns.reduce((s,t)=>s+txNGN(t),0);
+  const catSpend={};txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+txNGN(t);});
 
   const filterDesc=S.expCat!=='All'?` · ${S.expCat}`:'';
   document.getElementById('exp-summary').innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:center${Object.keys(catSpend).length?';margin-bottom:12px':''}">
-      <div><div class="clabel">Total — ${MONTHS[m-1]}${filterDesc}${eyeBtn('exp-summary','renderExpenses')}</div><div class="cval">${maskIf('exp-summary',fmtCur(S.expCat!=='All'?filtered.reduce((s,t)=>s+(t.amount||0),0):total,cur,m,y))}</div></div>
+      <div><div class="clabel">Total — ${MONTHS[m-1]}${filterDesc}${eyeBtn('exp-summary','renderExpenses')}</div><div class="cval">${maskIf('exp-summary',fmtCur(S.expCat!=='All'?filtered.reduce((s,t)=>s+txNGN(t),0):total,cur,m,y))}</div></div>
       <div style="text-align:right"><div class="clabel">Count</div><div class="cval">${filtered.length}${filtered.length!==txns.length?`<span style="font-size:0.6rem;color:var(--text3)"> / ${txns.length}</span>`:''}</div></div>
     </div>
     ${Object.keys(catSpend).length?`<div style="display:flex;flex-wrap:wrap;gap:5px">${Object.entries(catSpend).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([c,amt])=>`<div onclick="quickCatFilter('${jsq(c)}')" style="padding:2px 9px;border-radius:20px;background:${S.expCat===c?'var(--adim)':'var(--bg2)'};border:1px solid ${S.expCat===c?'var(--accent)':'var(--border)'};font-size:0.63rem;color:${S.expCat===c?'var(--accent)':'var(--text2)'};cursor:pointer">${c} · ${maskIf('exp-summary',fmtCur(amt,cur,m,y))}</div>`).join('')}</div>`:''}`;
@@ -4059,7 +4137,7 @@ function renderExpenses(){
           <div class="txi-meta">${fmtDate(tx.date)} · ${esc(tx.bank||'')}${tx.notes?' · '+esc(tx.notes):''}</div>
         </div>
         <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-          <div class="txi-amt txi-exp">${fmtCur(tx.amount,cur,m,y)}</div>
+          <div class="txi-amt txi-exp">${fmtCur(txNGN(tx),cur,m,y)}${txFxNote(tx)}</div>
           <button class="txi-edit" onclick="event.stopPropagation();openEditExp('${tx.id}')">✎</button>
           <button class="txi-del" onclick="event.stopPropagation();delExpense('${tx.id}')">×</button>
         </div>
@@ -4076,14 +4154,14 @@ function renderExpenses(){
       const dates=Object.keys(byDate).sort((a,b)=>a>b?-1:1);
       return dates.map(d=>{
         const dayTxns=byDate[d].sort((a,b)=>(b.amount||0)-(a.amount||0));
-        const dayTotal=dayTxns.reduce((s,t)=>s+(t.amount||0),0);
+        const dayTotal=dayTxns.reduce((s,t)=>s+txNGN(t),0);
         return`<div style="padding:5px 12px 2px;font-size:0.68rem;font-weight:600;color:var(--text3);display:flex;justify-content:space-between;border-top:1px solid var(--border)">
           <span>${fmtDate(d)}</span><span style="font-family:var(--mono);color:var(--text2)">${fmtCur(dayTotal,cur,m,y)}</span></div>
           ${dayTxns.map(tx=>`
           <div onclick="openEditExp('${tx.id}')" style="display:flex;justify-content:space-between;align-items:center;padding:3px 12px;cursor:pointer">
             <span style="font-size:0.75rem;color:var(--text);min-width:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(tx.payee)||'—'}${tx.bank?`<span style="color:var(--text3)"> · ${esc(tx.bank)}</span>`:''}${tx.notes?`<span style="color:var(--text3)"> · ${esc(tx.notes)}</span>`:''}</span>
             <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:8px">
-              <span style="font-family:var(--mono);font-size:0.75rem;color:var(--red)">${fmtCur(tx.amount,cur,m,y)}</span>
+              <span style="font-family:var(--mono);font-size:0.75rem;color:var(--red)">${fmtCur(txNGN(tx),cur,m,y)}${txFxNote(tx)}</span>
               <button class="txi-del" onclick="event.stopPropagation();delExpense('${tx.id}')">×</button>
             </div>
           </div>`).join('')}`;
@@ -4093,7 +4171,7 @@ function renderExpenses(){
       const byExp={};
       items.forEach(tx=>{const key=tx.payee||'—';(byExp[key]=byExp[key]||[]).push(tx);});
       const groups=Object.entries(byExp)
-        .map(([name,grpTxns])=>({name,grpTxns,total:grpTxns.reduce((s,t)=>s+(t.amount||0),0)}))
+        .map(([name,grpTxns])=>({name,grpTxns,total:grpTxns.reduce((s,t)=>s+txNGN(t),0)}))
         .sort((a,b)=>b.total-a.total);
       return groups.map(g=>{
         const gTxns=[...g.grpTxns].sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:txnTs(b.createdAt)-txnTs(a.createdAt));
@@ -4103,7 +4181,7 @@ function renderExpenses(){
           <div onclick="openEditExp('${tx.id}')" style="display:flex;justify-content:space-between;align-items:center;padding:3px 12px;cursor:pointer">
             <span style="font-size:0.75rem;color:var(--text3);min-width:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${fmtDate(tx.date)}${tx.bank?` · ${esc(tx.bank)}`:''}${tx.notes?` · ${esc(tx.notes)}`:''}</span>
             <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:8px">
-              <span style="font-family:var(--mono);font-size:0.75rem;color:var(--red)">${fmtCur(tx.amount,cur,m,y)}</span>
+              <span style="font-family:var(--mono);font-size:0.75rem;color:var(--red)">${fmtCur(txNGN(tx),cur,m,y)}${txFxNote(tx)}</span>
               <button class="txi-del" onclick="event.stopPropagation();delExpense('${tx.id}')">×</button>
             </div>
           </div>`).join('')}`;
@@ -4121,11 +4199,11 @@ function renderExpenses(){
   const groups={};
   filtered.forEach(tx=>{if(!groups[tx.category])groups[tx.category]=[];groups[tx.category].push(tx);});
   const orderedCats=Object.keys(groups).sort((a,b)=>{
-    return groups[b].reduce((s,t)=>s+(t.amount||0),0)-groups[a].reduce((s,t)=>s+(t.amount||0),0);
+    return groups[b].reduce((s,t)=>s+txNGN(t),0)-groups[a].reduce((s,t)=>s+txNGN(t),0);
   });
   listEl.innerHTML=orderedCats.map(cat=>{
     const items=groups[cat];
-    const catTotal=items.reduce((s,t)=>s+(t.amount||0),0);
+    const catTotal=items.reduce((s,t)=>s+txNGN(t),0);
     const gid='grp-'+cat.replace(/[^a-zA-Z0-9]/g,'');
     return`<div style="margin-bottom:6px">
       <div onclick="toggleExpGrp('${gid}')" style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);cursor:pointer;user-select:none">
@@ -4333,6 +4411,7 @@ function setTxnType(type){
   if(saveBtn)saveBtn.textContent=type==='income'?'Record Income':type==='transfer'?'Transfer Funds':'Save Expense';
   const title=document.getElementById('exp-modal-title');
   if(title)title.textContent=type==='income'?'Record Income':type==='transfer'?'Transfer':type==='expense'?'New Expense':'Transaction';
+  updateExpAmtLabel();
 }
 function autoSuggestCat(payee){
   // User-defined rules (appConfig/rules) take precedence over built-in keywords.
@@ -4382,6 +4461,7 @@ function openExpModal(type){
   const qa=document.getElementById('qa-text');if(qa)qa.value='';
   const qs=document.getElementById('qa-status');if(qs){qs.textContent='';qs.className='qa-status';}
   const qn=document.getElementById('e-notes');if(qn)delete qn.dataset.qa;
+  const ecur=document.getElementById('e-cur');if(ecur)ecur.value='NGN';
   const catSel=document.getElementById('e-cat');
   catSel.innerHTML=getAllCats().map(c=>`<option value="${c}">${CAT_ICONS[c]||''} ${c}</option>`).join('');
   const bankOpts=cashOptsWithBal();
@@ -4410,13 +4490,17 @@ function openEditExp(id){
   document.getElementById('e-edit-id').value=id;
   const title=document.getElementById('exp-modal-title');if(title)title.textContent='Edit Expense';
   const saveBtn=document.getElementById('e-save');if(saveBtn)saveBtn.textContent='Update Expense';
-  document.getElementById('e-amt').value=tx.amount;
+  // A price entered in $/£ reopens in that currency so it can be corrected.
+  const _ec=document.getElementById('e-cur');
+  if(tx.fx&&tx.fx.amount&&_ec){_ec.value=tx.fx.currency;document.getElementById('e-amt').value=tx.fx.amount;}
+  else{if(_ec)_ec.value='NGN';document.getElementById('e-amt').value=tx.amount;}
   document.getElementById('e-cat').value=tx.category;
   updateExpenseLines();
   const ps=document.getElementById('e-payee-sel');if(ps)ps.value=tx.payee||'-- Select --';
   document.getElementById('e-notes').value=tx.notes||'';
   document.getElementById('e-date').value=tx.date||todayStr();
   const eb=document.getElementById('e-bank');if(eb&&tx.bank)eb.value=tx.bank;
+  updateExpAmtLabel();
 }
 const openEditExpense=openEditExp; // alias used in category popup
 
@@ -4437,7 +4521,8 @@ function _qaAllItems(){
 function _qaNorm(s){return String(s||'').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu,' ').replace(/\s+/g,' ').trim();}
 function _qaParseLocal(text){
   const raw=String(text||'').trim(),low=raw.toLowerCase();
-  const r={type:'expense',amount:null,category:null,payee:null,bank:null,toBank:null,date:null,notes:''};
+  const r={type:'expense',amount:null,currency:'NGN',category:null,payee:null,bank:null,toBank:null,date:null,notes:''};
+  if(/\$|\busd\b|\bdollars?\b/.test(low))r.currency='USD';else if(/£|\bgbp\b|\bpounds?\b/.test(low))r.currency='GBP';
   // amount: 5k, 5,000, 2.5m, ₦12000, $40
   // First number that isn't part of "3 days ago" / "2 days".
   const am=[...low.matchAll(/(?:₦|\$|usd\s*|ngn\s*|n(?=\d))?\s*(\d[\d,]*(?:\.\d+)?)\s*(k|m|thousand|million|mil)?\b/g)]
@@ -4506,7 +4591,8 @@ Rules:
 - bank is the account the money left (expense, transfer) or went into (income), exactly as listed, or null if not mentioned. toBank is the receiving account for a transfer.
 - date is YYYY-MM-DD. Use today if no day is mentioned.
 - notes: anything useful not captured elsewhere, else "".
-JSON shape: {"type":"","amount":0,"category":null,"payee":null,"bank":null,"toBank":null,"date":"","notes":""}
+- currency is the currency the amount was stated in: "NGN", "USD" or "GBP" (e.g. "$7" or "7 dollars" is USD). Do not convert the amount.
+JSON shape: {"type":"","amount":0,"currency":"NGN","category":null,"payee":null,"bank":null,"toBank":null,"date":"","notes":""}
 Note: ${JSON.stringify(String(text).slice(0,300))}`;
   const res=await Promise.race([
     _aiFetch({contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{temperature:0,responseMimeType:'application/json',maxOutputTokens:400,thinkingConfig:{thinkingBudget:0}}}),
@@ -4518,6 +4604,7 @@ Note: ${JSON.stringify(String(text).slice(0,300))}`;
   const out={...local};
   if(['expense','income','transfer'].includes(j.type))out.type=j.type;
   if(+j.amount>0)out.amount=+j.amount;
+  if(['NGN','USD','GBP'].includes(j.currency))out.currency=j.currency;
   if(/^\d{4}-\d{2}-\d{2}$/.test(j.date||''))out.date=j.date;
   if(j.bank)out.bank=pickAcct(j.bank)||out.bank;
   if(j.toBank)out.toBank=pickAcct(j.toBank)||out.toBank;
@@ -4543,6 +4630,7 @@ function _qaFill(r){
   handlePayeeSel();
   const amt=document.getElementById('e-amt');
   if(r.amount){amt.value=String(r.amount);if(typeof _syncNumDisplay==='function')_syncNumDisplay(amt);}
+  const _ec=document.getElementById('e-cur');if(_ec&&r.type==='expense')_ec.value=r.currency||'NGN';
   if(r.date)document.getElementById('e-date').value=r.date;
   const setSel=(id,v)=>{const el=document.getElementById(id);if(el&&v&&[...el.options].some(o=>o.value===v))el.value=v;};
   if(r.type==='expense'){
@@ -4554,6 +4642,8 @@ function _qaFill(r){
       handlePayeeSel();
     }
     setSel('e-bank',r.bank);updateExpAmtLabel();
+    // A $ price with a dollar account: the account is already in dollars.
+    if(_ec&&isUSDCashAccount(document.getElementById('e-bank').value))_ec.value='NGN';
   }else if(r.type==='income'){
     setSel('i-cat2',r.category);setSel('i-bank2',r.bank);
   }else if(r.type==='transfer'){
@@ -4584,28 +4674,53 @@ async function quickAddParse(){
   if(r.type==='transfer'&&(!r.bank||!r.toBank))missing.push('accounts');
   _qaStatus(missing.length?`Filled in${byAI?' ✦':''}. Please pick the ${missing.join(' and ')}, then save.`:`Filled in${byAI?' ✦':''}. Check it, then save.`,missing.length?'qa-warn':'qa-ok');
 }
-let _qaRec=null;
-function quickAddVoice(){
+// ── VOICE INPUT (shared by Quick add and the AI chat) ──────────────────────
+// Web Speech API. Chrome/Android and Safari have it; some installed-app modes
+// and Firefox don't, so every caller has a typed fallback.
+let _voiceRec=null;
+function voiceSupported(){return !!(window.SpeechRecognition||window.webkitSpeechRecognition);}
+// opts: {btn, onText(text), onDone(finalText), onStatus(msg,cls)}
+function voiceStart(opts){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){_qaStatus("Voice isn't available in this browser. Type it instead, or use your keyboard's mic.",'qa-warn');return;}
-  if(_qaRec){try{_qaRec.stop();}catch{}return;}
-  const rec=new SR();_qaRec=rec;
+  const status=opts.onStatus||(()=>{});
+  if(!SR){status("Voice isn't available in this browser. Type it instead, or use your keyboard's mic.",'qa-warn');return;}
+  if(_voiceRec){try{_voiceRec.stop();}catch{}return;} // second tap = stop
+  const rec=new SR();_voiceRec=rec;
   rec.lang=navigator.language||'en-NG';rec.interimResults=true;rec.maxAlternatives=1;
-  const btn=document.getElementById('qa-mic');if(btn)btn.classList.add('on');
-  _qaStatus('Listening… say something like “5k lunch from GTB”.');
-  let finalText='';
+  if(opts.btn)opts.btn.classList.add('on');
+  let finalText='',lastText='';
   rec.onresult=e=>{
     let t='';for(let i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;
-    document.getElementById('qa-text').value=t;
+    lastText=t;if(opts.onText)opts.onText(t);
     if(e.results[e.results.length-1].isFinal)finalText=t;
   };
-  rec.onerror=e=>{_qaStatus(e.error==='not-allowed'||e.error==='service-not-allowed'?'Microphone access is blocked. Allow it in your browser settings, or type instead.':"Didn't catch that. Try again or type it.",'qa-warn');};
+  rec.onerror=e=>{status(e.error==='not-allowed'||e.error==='service-not-allowed'?'Microphone access is blocked. Allow it in your browser settings, or type instead.':e.error==='no-speech'?"Didn't hear anything. Tap the mic and try again.":"Didn't catch that. Try again or type it.",'qa-warn');};
   rec.onend=()=>{
-    _qaRec=null;if(btn)btn.classList.remove('on');
-    const t=finalText||document.getElementById('qa-text')?.value||'';
-    if(t.trim())quickAddParse();
+    _voiceRec=null;if(opts.btn)opts.btn.classList.remove('on');
+    const t=(finalText||lastText||'').trim();
+    if(t&&opts.onDone)opts.onDone(t);
   };
-  try{rec.start();}catch(e){_qaRec=null;if(btn)btn.classList.remove('on');_qaStatus("Couldn't start the microphone.",'qa-warn');}
+  try{rec.start();}catch(e){_voiceRec=null;if(opts.btn)opts.btn.classList.remove('on');status("Couldn't start the microphone.",'qa-warn');}
+}
+function quickAddVoice(){
+  _qaStatus('Listening… say something like “5k lunch from GTB”.');
+  voiceStart({
+    btn:document.getElementById('qa-mic'),
+    onText:t=>{const q=document.getElementById('qa-text');if(q)q.value=t;},
+    onDone:()=>quickAddParse(),
+    onStatus:_qaStatus,
+  });
+}
+// AI chat: dictate the question into the box; the user reviews it and taps ➤.
+function aiVoice(){
+  const inp=document.getElementById('ai-input');if(!inp||inp.disabled)return;
+  const before=inp.value.trim();
+  voiceStart({
+    btn:document.getElementById('ai-mic'),
+    onText:t=>{inp.value=(before?before+' ':'')+t;if(typeof aiGrowInput==='function')aiGrowInput(inp);},
+    onDone:()=>inp.focus(),
+    onStatus:msg=>toast(msg),
+  });
 }
 
 // ── CASH BALANCE HELPERS ────────────────────────────────────────────────────
@@ -5270,27 +5385,34 @@ async function saveExpense(){
   // The placeholder must never be stored as a real item (it leaked into ~10
   // records before v4.6.1).
   if(!payee||payee==='-- Select --'){toast('Choose what it was spent on, or pick “+ Add new”');document.getElementById('e-payee-sel')?.focus();return;}
+  const expBank=document.getElementById('e-bank').value;
+  const expIsUSD=isUSDCashAccount(expBank);
+  const expDateVal=document.getElementById('e-date').value||todayStr();
+  const _edp=expDateVal.split('-');const expTxM=parseInt(_edp[1]),expTxY=parseInt(_edp[0]);
+  const expFxRates=getFxRates(expTxM,expTxY);
+  // A foreign-currency price paid from a naira account (e.g. a $6.93
+  // subscription on a naira card): convert at that month's rate. The bank is
+  // debited in naira; the original price is kept in `fx` for display.
+  const entryCur=expIsUSD?'USD':(document.getElementById('e-cur')?.value||'NGN');
+  const fxOrig=(!expIsUSD&&entryCur!=='NGN')?{amount:amt,currency:entryCur,rate:expFxRates[entryCur]||0}:null;
+  if(fxOrig&&!fxOrig.rate){toast(`No ${entryCur} rate for that month. Add one in Settings → Data → Advanced → Exchange Rates.`);return;}
+  const amtB=fxOrig?Math.round(amt*fxOrig.rate):amt; // in the bank's own currency
   // Duplicate guard — same payee + amount + date is almost always a double-tap
   if(!document.getElementById('e-edit-id').value){
     const _dupDate=document.getElementById('e-date').value||todayStr();
     const _ddp=_dupDate.split('-');const _ddm=parseInt(_ddp[1]),_ddy=parseInt(_ddp[0]);
     const _pool=(_ddm===S.expMonth&&_ddy===S.expYear)?S.txns:(cGet(CK.txns(_ddm,_ddy))||[]);
     const _dupBank=document.getElementById('e-bank').value;
-    const _dup=_pool.find(t=>t.payee===payee&&t.amount===amt&&t.date===_dupDate);
-    if(_dup&&!confirm(`Possible duplicate: "${payee}" for ${isUSDCashAccount(_dupBank)?'$'+amt:fN(amt)} is already recorded on ${fmtDate(_dupDate)}.\n\nSave anyway?`))return;
+    const _dup=_pool.find(t=>t.payee===payee&&t.amount===amtB&&t.date===_dupDate);
+    if(_dup&&!confirm(`Possible duplicate: "${payee}" for ${isUSDCashAccount(_dupBank)?'$'+amtB:fN(amtB)} is already recorded on ${fmtDate(_dupDate)}.\n\nSave anyway?`))return;
   }
   const editId=document.getElementById('e-edit-id').value;
   const freq=document.getElementById('e-recur')?.value;
-  const expBank=document.getElementById('e-bank').value;
-  const expIsUSD=isUSDCashAccount(expBank);
-  const expDateVal=document.getElementById('e-date').value||todayStr();
-  const _edp=expDateVal.split('-');const expTxM=parseInt(_edp[1]),expTxY=parseInt(_edp[0]);
-  const expFxRates=getFxRates(expTxM,expTxY);
-  const amtNGN=expIsUSD?Math.round(amt*expFxRates.USD):amt;
-  const data={amount:amt,amtNGN,currency:expIsUSD?'USD':'NGN',category:document.getElementById('e-cat').value,bank:expBank,payee,notes:document.getElementById('e-notes').value,date:expDateVal,month:expTxM,year:expTxY,type:'expense'};
+  const amtNGN=expIsUSD?Math.round(amtB*expFxRates.USD):amtB;
+  const data={amount:amtB,amtNGN,fx:fxOrig,currency:expIsUSD?'USD':'NGN',category:document.getElementById('e-cat').value,bank:expBank,payee,notes:document.getElementById('e-notes').value,date:expDateVal,month:expTxM,year:expTxY,type:'expense'};
   if(freq&&!editId){
     const rl=getRecurring();
-    rl.push({payee,amount:amt,category:data.category,bank:data.bank,notes:data.notes,frequency:freq,type:'expense',nextRun:nextRunDate(freq,data.date),lastPosted:data.date});
+    rl.push({payee,amount:amtB,category:data.category,bank:data.bank,notes:data.notes,frequency:freq,type:'expense',nextRun:nextRunDate(freq,data.date),lastPosted:data.date});
     saveRecurring(rl);renderRecurringCard();
   }
   const _editTx=editId?S.txns.find(t=>t.id===editId):null;
@@ -5306,15 +5428,15 @@ async function saveExpense(){
     // the old bank's debit, then debit the new bank — back-to-back, synchronous.
     const _eOldBank=_editTx?.bank||'', _eOldAmt=_editTx?.amount||0;
     if(_eOldBank===data.bank&&_eOldBank){
-      const _net=_eOldAmt-amt; // positive = expense reduced, negative = expense increased
+      const _net=_eOldAmt-amtB; // positive = expense reduced, negative = expense increased
       if(_net!==0) _adjustCash(data.bank, _net, expTxM, expTxY, 'expense-edit');
     }else{
       if(_eOldBank&&_eOldAmt) _adjustCash(_eOldBank, _eOldAmt, _editTx.month||expTxM, _editTx.year||expTxY, 'expense-edit-reverse');
-      if(data.bank) _adjustCash(data.bank, -amt, expTxM, expTxY, 'expense-edit');
+      if(data.bank) _adjustCash(data.bank, -amtB, expTxM, expTxY, 'expense-edit');
     }
   } else {
     S.txns.unshift({...data,id:docRef.id});
-    if(data.bank) _adjustCash(data.bank, -amt, expTxM, expTxY, 'expense');                     // deduct
+    if(data.bank) _adjustCash(data.bank, -amtB, expTxM, expTxY, 'expense');                     // deduct
   }
   cSet(CK.txns(expTxM,expTxY),S.txns);closeMod('exp-modal');const _ep=document.getElementById('e-payee-emoji');if(_ep)_ep.textContent='📦';toast(editId?'Updated':'Saved');haptic([8,40,8]);renderExpenses();renderDashboard();
 
@@ -5365,8 +5487,46 @@ function updateIncAmtLabel(){
 }
 function updateExpAmtLabel(){
   const bank=document.getElementById('e-bank')?.value||'';
+  const usdBank=isUSDCashAccount(bank);
+  const curSel=document.getElementById('e-cur');
+  // The currency picker is for expenses paid from a naira account; a USD
+  // account is always in dollars.
+  const showCur=!usdBank&&(typeof _txnType==='undefined'||_txnType==='expense');
+  if(curSel){curSel.style.display=showCur?'':'none';if(!showCur)curSel.value='NGN';}
+  const cur=usdBank?'USD':(curSel?.value||'NGN');
   const lbl=document.getElementById('e-amt-label');
-  if(lbl) lbl.textContent=isUSDCashAccount(bank)?'Amount ($)':'Amount (₦)';
+  if(lbl) lbl.textContent=`Amount (${{NGN:'₦',USD:'$',GBP:'£'}[cur]})`;
+  updateExpFxHint();
+}
+// "≈ ₦11,088 at ₦1,600/$" under the amount when the price is in $ or £.
+function updateExpFxHint(){
+  const h=document.getElementById('e-fx-hint');if(!h)return;
+  const cur=document.getElementById('e-cur')?.value||'NGN';
+  const bank=document.getElementById('e-bank')?.value||'';
+  if(cur==='NGN'||isUSDCashAccount(bank)||(typeof _txnType!=='undefined'&&_txnType!=='expense')){h.textContent='';return;}
+  const d=(document.getElementById('e-date')?.value||todayStr()).split('-');
+  const rate=getFxRates(+d[1],+d[0])[cur]||0;
+  const v=numVal('e-amt');
+  const sym=cur==='USD'?'$':'£';
+  h.textContent=rate?(v>0?`≈ ${fN(Math.round(v*rate))} at ${fN(rate)}/${sym}, taken from your naira account`:`Converted at ${fN(rate)}/${sym} for that month`):`No ${cur} rate for that month (Settings → Data → Advanced)`;
+}
+// Naira value of an expense record, for totals. USD-account expenses store
+// dollars in `amount` and the naira value in `amtNGN`; everything else is
+// already naira. Balances use `amount` (the account's own currency).
+function txNGN(t){
+  if(!t)return 0;
+  const a=+t.amount||0;
+  if(!t.currency||t.currency==='NGN')return a;
+  if(t.amtNGN!=null&&!isNaN(+t.amtNGN))return +t.amtNGN;
+  const r=getFxRates(t.month||S.expMonth,t.year||S.expYear)[t.currency];
+  return r?Math.round(a*r):a;
+}
+// Small "($6.93)" note beside a naira figure when the price was in $ or £.
+function txFxNote(t){
+  if(!t)return'';
+  if(t.fx&&t.fx.amount)return`<span class="fx-note">(${t.fx.currency==='GBP'?'£':'$'}${(+t.fx.amount).toLocaleString('en-US',{maximumFractionDigits:2})})</span>`;
+  if(t.currency==='USD')return`<span class="fx-note">($${(+t.amount||0).toLocaleString('en-US',{maximumFractionDigits:2})})</span>`;
+  return'';
 }
 function openIncModal(){
   _resetIncModal();
@@ -7006,7 +7166,7 @@ function renderCategoryTrends(){
     const txns=isCurrent?S.txns:(cGet(CK.txns(mk.m,mk.y))||[]);
     txns.forEach(t=>{
       if(!series[t.category])series[t.category]=[0,0,0,0,0,0];
-      series[t.category][i]+=(t.amount||0);
+      series[t.category][i]+=txNGN(t);
     });
   });
   const cats=Object.keys(series).filter(c=>series[c].some(v=>v>0));
@@ -7052,7 +7212,7 @@ function renderCashFlowChart(){
 
   const incTotal=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
   const catSpend={};
-  S.txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+(t.amount||0);});
+  S.txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+txNGN(t);});
 
   // Top 7 categories by spend; everything else grouped into Others
   let cats=Object.entries(catSpend).sort((a,b)=>b[1]-a[1]);
@@ -7538,8 +7698,8 @@ async function _loadHistDetail(d, el){
     if(freshTxns.length) cSet(CK.txns(m,y),freshTxns);
     if(freshInc.length) cSet(CK.inc(m,y),freshInc);
     // Update sw3_history totals to match live data
-    const liveExp=freshTxns.reduce((s,t)=>s+(t.amount||0),0);
-    const liveInc=freshInc.reduce((s,i)=>s+(i.amount||0),0);
+    const liveExp=freshTxns.reduce((s,t)=>s+txNGN(t),0);
+    const liveInc=freshInc.reduce((s,i)=>s+txNGN(i),0);
     if(liveExp||liveInc){
       const hist=cGet('sw3_history')||[];
       const hi=hist.findIndex(h=>h.year===y&&h.month===m);
@@ -7557,9 +7717,9 @@ async function _loadHistDetail(d, el){
 function _renderHistDetail(el,txns,inc,invData,cashData,m,y,sid_){
   const cur=S.dashCurrency==='NATIVE'?'NATIVE':S.dashCurrency||'NGN';
   const USD_PLATS=['Risevest','Trove','Bamboo'];
-  const totalExp=txns.reduce((s,t)=>s+(t.amount||0),0);
+  const totalExp=txns.reduce((s,t)=>s+txNGN(t),0);
   const totalInc=inc.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-  const cats={};txns.forEach(t=>{cats[t.category]=(cats[t.category]||0)+(t.amount||0);});
+  const cats={};txns.forEach(t=>{cats[t.category]=(cats[t.category]||0)+txNGN(t);});
   const incCats={};inc.forEach(i=>{incCats[i.category]=(incCats[i.category]||0)+(i.amtNGN||i.amount||0);});
   const expRows=Object.entries(cats).sort((a,b)=>b[1]-a[1]).map(([c,v])=>`
     <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
@@ -7718,10 +7878,11 @@ function renderSettGuide(){
       <p><b>Privacy.</b> Your data is encrypted on your device before it's saved online. Nobody else can read it, including the person who runs the app. The only exceptions are Quick add and the AI Analyst, which send what you type to Google's Gemini service to understand it.</p>
       <p><b>Deleting your account.</b> Settings → Data → Account → <b>Delete my account</b> permanently erases your account and all your data from every device. Download a backup first (Settings → Export) if you want to keep a copy.</p>`)}
     ${sec('Recording money (the + button)',`
-      <p>The <b>+</b> button at the bottom right works from any page.</p>
+      <p>The round <b>+</b> button is on every page. Tap it for three shortcuts: <b>Quick add</b>, <b>Say it</b> (speak the transaction) and <b>Ask AI</b>. If it's covering something, <b>drag it</b> anywhere on the screen; it stays where you leave it.</p>
       <p><b>Quick add</b> (the box at the top of the form) is the fastest way: type or tap 🎤 and say something like <i>"5k lunch from GTB yesterday"</i>, <i>"received 250k salary into Access"</i> or <i>"moved 20k from Opay to Kuda"</i>. The form fills itself in; check it and tap Save. Nothing is saved until you do.</p>
       <p>Or fill in the form yourself. Choose what you're recording:</p>
       <ul>
+        <li><b>Paid in dollars or pounds from a naira account?</b> (e.g. a $6.93 subscription on your naira card) Switch the currency next to Amount to $ or £. It's converted at that month's rate and your account is charged in naira.</li>
         <li><b>Expense.</b> Pick a <b>category</b> (e.g. Food) and what it was <b>spent on</b> (e.g. Lunch). To add a new item, choose "New item" and give it a name and emoji. It's remembered for next time.</li>
         <li><b>Income.</b> Choose the category and the bank it was received into.</li>
         <li><b>Transfer.</b> Moves money between your own accounts: <b>Cash → Cash</b>, <b>Cash → Invest</b> or <b>Invest → Cash</b>. It isn't counted as spending.</li>
@@ -7756,7 +7917,7 @@ function renderSettGuide(){
         <li><b>Insights</b>: a forecast of how the month will end and which categories are running hot.</li>
         <li><b>Treasury</b>: your <b>runway</b> (how many months your cash would last at your usual spending), savings rate and projections.</li>
         <li><b>History</b>: income and expenses month by month. Tap a column heading to sort.</li>
-        <li><b>AI ✦</b>: ask questions about your money in plain English ("Where did most of my money go last month?"). It can draw charts too. Chats sync across your devices.</li>
+        <li><b>AI ✦</b>: ask questions about your money in plain English ("Where did most of my money go last month?"). It can draw charts too. Tap 🎤 to speak your question instead of typing. Chats sync across your devices.</li>
       </ul>
       <p class="gd-tip">When you use the AI Analyst, your question and the relevant figures are sent to Google's Gemini service to produce the answer. Nothing is sent unless you ask it something.</p>`)}
     ${sec('Settings page',`
@@ -7770,7 +7931,7 @@ function renderSettGuide(){
       <ul>
         <li><b>Install it like an app.</b> On iPhone, open the site in Safari, tap Share → <b>Add to Home Screen</b>. On Android, open it in Chrome, tap ⋮ → <b>Add to Home screen</b> / <b>Install app</b>.</li>
         <li><b>Works offline.</b> Entries made without internet sync when you're back online.</li>
-        <li><b>Pull down</b> on a page to refresh.</li>
+        <li><b>Pull down</b> on the Home page to refresh.</li>
         <li>If a bar says <b>Update available</b>, tap <b>Update now</b> to get the latest version.</li>
         <li><b>Balance looks wrong?</b> Check that the entry used the right bank and date. You can also correct a balance directly in Accounts → Cash → ✎ Edit Balances.</li>
         <li><b>Forgot your password?</b> On the sign-in screen, tap <b>Forgot password? Use your recovery code</b>, then set a new password.</li>
@@ -7789,7 +7950,7 @@ function renderSettBudget(){
   const prevM=S.expMonth===1?12:S.expMonth-1,prevY=S.expMonth===1?S.expYear-1:S.expYear;
   const hasPrevBudget=!!cGet(CK.budgets(prevM,prevY));
   const prevTxnsList=cGet(CK.txns(prevM,prevY))||[];
-  const prevCatSpend={};prevTxnsList.forEach(t=>{prevCatSpend[t.category]=(prevCatSpend[t.category]||0)+(t.amount||0);});
+  const prevCatSpend={};prevTxnsList.forEach(t=>{prevCatSpend[t.category]=(prevCatSpend[t.category]||0)+txNGN(t);});
   document.getElementById('sett-budget').innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <div style="font-size:0.68rem;color:var(--text2)">Budget for ${MONTHS[S.expMonth-1]} ${S.expYear}</div>
@@ -8155,7 +8316,7 @@ function updateBudgetTotal(){
 function copyActualSpend(){
   const prevM=S.expMonth===1?12:S.expMonth-1,prevY=S.expMonth===1?S.expYear-1:S.expYear;
   const prevTxns=cGet(CK.txns(prevM,prevY))||[];
-  const prevSpend={};prevTxns.forEach(t=>{prevSpend[t.category]=(prevSpend[t.category]||0)+(t.amount||0);});
+  const prevSpend={};prevTxns.forEach(t=>{prevSpend[t.category]=(prevSpend[t.category]||0)+txNGN(t);});
   getAllCats().forEach(c=>{const el=document.getElementById('b-'+ck(c));if(el&&prevSpend[c])el.value=Math.round(prevSpend[c]);});
   updateBudgetTotal();
   toast('Copied actual spend from '+MS[prevM-1]);
@@ -8390,14 +8551,14 @@ async function importFullBackup(ev){
 // ── Multi-sheet Excel export ───────────────────────────────────────────────
 function _buildTxnSheet(txns,incomeRecs,label){
   // Combined daily transactions: expenses + income, sorted by date asc
-  const expRows=txns.map(t=>([t.date||'','Expense',t.category||'',t.payee||'',t.bank||'',t.notes||'',-(t.amount||0),0]));
+  const expRows=txns.map(t=>([t.date||'','Expense',t.category||'',t.payee||'',t.bank||'',t.notes||'',-txNGN(t),0]));
   const incRows=(incomeRecs||[]).map(i=>([i.date||'','Income',i.category||'Income','',i.bank||'',i.notes||'',0,i.amtNGN||i.amount||0]));
   const all=[...expRows,...incRows].sort((a,b)=>a[0]>b[0]?1:a[0]<b[0]?-1:0);
   const header=[`${label} — Transactions`];
   const cols=['Date','Type','Category','Spent on','Bank','Notes','Expense (₦)','Income (₦)'];
   const rows=[header,[],cols,...all];
   // Summary
-  const totExp=txns.reduce((s,t)=>s+(t.amount||0),0);
+  const totExp=txns.reduce((s,t)=>s+txNGN(t),0);
   const totInc=(incomeRecs||[]).reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
   rows.push([],[`Total expenses`,'','','','','',totExp,'']);
   rows.push([`Total income`,'','','','','','',totInc]);
@@ -8443,7 +8604,7 @@ function _buildMonthMatrixWS(m,y,txns,incRecs,aux){
     // Undated records land on day 1 so the row total stays correct
     const day=Math.min(days,Math.max(1,parseInt(String(t.date||'').slice(8,10),10)||1));
     (groups[cat]=groups[cat]||{});
-    (groups[cat][name]=groups[cat][name]||Array(days).fill(0))[day-1]+=(t.amount||0);
+    (groups[cat][name]=groups[cat][name]||Array(days).fill(0))[day-1]+=txNGN(t);
   });
   aoa.push([null,'Spent on']);
   aoa.push([null,'Expenses','Category','Total','Budget']);
@@ -8462,7 +8623,7 @@ function _buildMonthMatrixWS(m,y,txns,incRecs,aux){
   const lastItem=aoa.length;
   const hasItems=lastItem>=firstItem;
   const totalRow=aoa.length+1;
-  const spentTotal=txns.reduce((s,t)=>s+(t.amount||0),0);
+  const spentTotal=txns.reduce((s,t)=>s+txNGN(t),0);
   aoa.push([null,'Total',null,hasItems?{t:'n',z:_XL_NUM,f:`SUM(D${firstItem}:D${lastItem})`}:_xlN(0),hasItems?{t:'n',z:_XL_NUM,f:`SUM(E${firstItem}:E${lastItem})`}:_xlN(0)]);
   aoa.push([null,'Cummulative spend',null,{t:'n',z:_XL_NUM,f:`D${totalRow}`}]);
   aoa.push([]);
@@ -8498,7 +8659,7 @@ function _buildMonthMatrixWS(m,y,txns,incRecs,aux){
   txns.forEach(t=>{
     const d=parseInt(String(t.date||'').slice(8,10),10);
     const dt=new Date(y,m-1,d||1);
-    wdTotals[dt.getDay()===0?6:dt.getDay()-1]+=(t.amount||0);
+    wdTotals[dt.getDay()===0?6:dt.getDay()-1]+=txNGN(t);
   });
   aoa.push([null,'Expense summary']);
   aoa.push([null,'Day of the week',null,'Amount']);
@@ -8657,7 +8818,8 @@ function renderSettData(){
         <button class="btn btn-g btn-sm" style="flex:1" onclick="openGuide()">Open the guide</button>
         <button class="btn btn-g btn-sm" style="flex:1" onclick="reportProblem()">Report a problem</button>
       </div>
-      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.6.1</div><div style="color:var(--text3);margin-top:4px">v4.6.1: Bug fixes: amounts like 5k or 10,000 now always save correctly, the Cash Flow chart and full-year view work again, and app lock no longer re-locks after unlocking.</div></div>
+      <div style="font-size:0.68rem;color:var(--text2);margin-top:10px">The round <b>+</b> button can be dragged anywhere on the screen. <span class="sh-link" style="font-size:0.68rem" onclick="fabResetPosition()">Put it back in the corner</span></div>
+      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.6.2</div><div style="color:var(--text3);margin-top:4px">v4.6.2: The + button now opens Quick add, Say it and Ask AI on every tab and can be dragged anywhere. Speak to the AI. Dollar and pound prices convert to naira correctly. Pull down to refresh on Home only.</div></div>
     </div>
     <details class="sett-adv" id="sett-adv"${_settAdvOpen?' open':''} ontoggle="_settAdvOpen=this.open">
       <summary>Advanced<span>AI keys, net worth, exchange rates, balance audit</span></summary>
@@ -8896,7 +9058,7 @@ function drillDown(type){
 
   if(type==='expenses'){
     title=`Expenses — ${MONTHS[m-1]} ${y}`;
-    const cats={};S.txns.forEach(t=>{cats[t.category]=(cats[t.category]||0)+(t.amount||0);});
+    const cats={};S.txns.forEach(t=>{cats[t.category]=(cats[t.category]||0)+txNGN(t);});
     const sorted=Object.entries(cats).sort((a,b)=>b[1]-a[1]);
     const total=sorted.reduce((s,[,v])=>s+v,0);
     body=sorted.map(([cat,val])=>fmtRow(cat,fmtCur(val,cur,m,y),'var(--red)')).join('');
@@ -8905,14 +9067,14 @@ function drillDown(type){
   else if(type==='income'){
     title=`Income — ${MONTHS[m-1]} ${y}`;
     const sorted=[...S.income].sort((a,b)=>(b.amount||0)-(a.amount||0));
-    const total=sorted.reduce((s,i)=>s+(i.amount||0),0);
-    body=sorted.map(i=>fmtRow(i.category||i.payee||'Income',fmtCur(i.amount,cur,m,y),'var(--accent)')).join('');
+    const total=sorted.reduce((s,i)=>s+txNGN(i),0);
+    body=sorted.map(i=>fmtRow(i.category||i.payee||'Income',fmtCur(txNGN(i),cur,m,y),'var(--accent)')).join('');
     body+=`<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700"><span>Total</span><span style="font-family:var(--mono);color:var(--accent)">${fmtCur(total,cur,m,y)}</span></div>`;
   }
   else if(type==='savings'){
     title=`Net Savings — ${MONTHS[m-1]} ${y}`;
     const totalInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-    const totalExp=S.txns.reduce((s,t)=>s+(t.amount||0),0);
+    const totalExp=S.txns.reduce((s,t)=>s+txNGN(t),0);
     const net=totalInc-totalExp;
     body=fmtRow('Total Income',fmtCur(totalInc,cur,m,y),'var(--accent)')+
          fmtRow('Total Expenses',fmtCur(totalExp,cur,m,y),'var(--red)')+
@@ -9012,7 +9174,7 @@ function drillDown(type){
   else if(type==='budget'){
     title=`Budget vs Actual — ${MONTHS[m-1]} ${y}`;
     const cats=Object.keys(S.budgets);
-    const actuals={};S.txns.forEach(t=>{actuals[t.category]=(actuals[t.category]||0)+(t.amount||0);});
+    const actuals={};S.txns.forEach(t=>{actuals[t.category]=(actuals[t.category]||0)+txNGN(t);});
     body=cats.filter(c=>S.budgets[c]>0).map(c=>{
       const bud=S.budgets[c]||0,act=actuals[c]||0,over=act>bud;
       return`<div style="padding:7px 0;border-bottom:1px solid var(--border)">
@@ -9339,7 +9501,7 @@ function openCatPopup(cat, txns, cur, m, y){
 
 function _renderCatPopup(cur, m, y){
   cur=cur||S.dashCurrency; m=m||S.dashMonth; y=y||S.dashYear;
-  const total=_catPopupTxns.reduce((s,t)=>s+(t.amount||0),0);
+  const total=_catPopupTxns.reduce((s,t)=>s+txNGN(t),0);
 
   let listHTML='';
   if(_catPopupSort==='date'){
@@ -9349,7 +9511,7 @@ function _renderCatPopup(cur, m, y){
     const dates=Object.keys(byDate).sort((a,b)=>a>b?-1:1);
     listHTML=dates.map(d=>{
       const dayTxns=byDate[d].sort((a,b)=>(b.amount||0)-(a.amount||0));
-      const dayTotal=dayTxns.reduce((s,t)=>s+(t.amount||0),0);
+      const dayTotal=dayTxns.reduce((s,t)=>s+txNGN(t),0);
       return`<div style="padding:6px 0 2px;font-size:0.68rem;font-weight:600;color:var(--text3);display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:4px">
         <span>${fmtDate(d)}</span><span style="font-family:var(--mono);color:var(--text2)">${fmtCur(dayTotal,cur,m,y)}</span></div>
         ${dayTxns.map(tx=>`
@@ -9358,7 +9520,7 @@ function _renderCatPopup(cur, m, y){
             <div class="txi-cat" style="font-size:0.74rem">${esc(tx.payee)||'—'}</div>
             ${tx.notes?`<div class="txi-meta">${esc(tx.notes)}</div>`:''}
           </div>
-          <div class="txi-amt txi-exp">${fmtCur(tx.amount,cur,m,y)}</div>
+          <div class="txi-amt txi-exp">${fmtCur(txNGN(tx),cur,m,y)}${txFxNote(tx)}</div>
         </div>`).join('')}`;
     }).join('');
   } else {
@@ -9366,7 +9528,7 @@ function _renderCatPopup(cur, m, y){
     const byExpense={};
     _catPopupTxns.forEach(tx=>{const key=tx.payee||'—';(byExpense[key]=byExpense[key]||[]).push(tx);});
     const groups=Object.entries(byExpense)
-      .map(([name,txns])=>({name,txns,total:txns.reduce((s,t)=>s+(t.amount||0),0)}))
+      .map(([name,txns])=>({name,txns,total:txns.reduce((s,t)=>s+txNGN(t),0)}))
       .sort((a,b)=>b.total-a.total);
     listHTML=groups.map(g=>{
       const gTxns=[...g.txns].sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:txnTs(b.createdAt)-txnTs(a.createdAt));
@@ -9378,7 +9540,7 @@ function _renderCatPopup(cur, m, y){
             <div class="txi-meta">${fmtDate(tx.date)}${tx.bank?' · '+esc(tx.bank):''}</div>
             ${tx.notes?`<div class="txi-meta">${esc(tx.notes)}</div>`:''}
           </div>
-          <div class="txi-amt txi-exp">${fmtCur(tx.amount,cur,m,y)}</div>
+          <div class="txi-amt txi-exp">${fmtCur(txNGN(tx),cur,m,y)}${txFxNote(tx)}</div>
         </div>`).join('')}`;
     }).join('');
   }
@@ -9424,7 +9586,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').cat
 
 
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.6.1';
+const APP_VERSION='v4.6.2';
 async function checkForUpdate(){
   try{
     const res=await fetch(location.origin+location.pathname+'?_='+Date.now(),{cache:'no-store'});
@@ -9769,10 +9931,9 @@ async function execMergeCat(){
   let startY=0, pulling=false, triggered=false;
 
   appBody.addEventListener('touchstart', e=>{
-    // Disabled on the Analytics page: its inner scroll areas (the AI chat log,
-    // long history lists) sit at appBody.scrollTop===0, so scrolling up to read
-    // would otherwise inadvertently trigger a refresh.
-    if(S.page==='forecast') return;
+    // Home only (owner's choice, v4.6.2). Elsewhere, scrolling up inside lists,
+    // forms and the AI chat kept triggering accidental refreshes.
+    if(S.page!=='dashboard') return;
     // Only begin if scrolled to the very top
     if(appBody.scrollTop===0) {startY=e.touches[0].clientY; pulling=true; triggered=false;}
   },{passive:true});
@@ -10259,6 +10420,7 @@ function renderProjAI(){
     ${chips}
     <div class="ai-inrow">
       <textarea class="ifield" id="ai-input" rows="1" placeholder="Ask about your finances…" style="flex:1;font-size:0.76rem" ${_aiBusy?'disabled':''} onkeydown="aiInputKey(event)" oninput="aiGrowInput(this)"></textarea>
+      ${voiceSupported()?`<button class="ai-mic" id="ai-mic" onclick="aiVoice()" title="Speak your question" aria-label="Speak your question" ${_aiBusy?'disabled':''}>🎤</button>`:''}
       <button class="btn btn-p" onclick="aiSend()" ${_aiBusy?'disabled':''} style="padding:9px 16px">➤</button>
     </div>
   </div>`;

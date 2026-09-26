@@ -44,6 +44,14 @@ Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB l
 - The one-time Fife→Kids / USD Cash / Energy→Fuel repairs no longer run at boot.
 - Tested 2026-09-26 on localhost with two test accounts: sign-up + upload of local data, ciphertext-only storage, restore on sign-in, recovery, password change, concurrent increments from two tabs, live listeners, offline-then-reload, cross-user isolation. Known gap (pre-existing): if the boot sync throws, realtime listeners stay off until a reload.
 
+## v4.6.2 (2026-09-26)
+
+- **Money in other currencies:** expense totals must use `txNGN(t)` (USD-account expenses store dollars in `amount`, naira in `amtNGN`). About 40 sums used `t.amount` and counted $6.93 as ₦6.93. Balance maths (`_adjustCash`, per-account audit, per-account export sheet) deliberately stays on `amount` (the account's own currency). `txFxNote(t)` shows "($6.93)" beside naira figures.
+- **Foreign price on a naira account:** the expense form has a ₦/$/£ picker (`#e-cur`, hidden for USD accounts, income and transfers). It converts at that month's rate and stores the naira `amount` plus `fx:{amount,currency,rate}`; editing reopens in the original currency. Quick add and the AI parser fill `currency`.
+- **Floating button:** on every tab; a tap opens Quick add / Say it / Ask AI (`fabMenuToggle`, `fabAction`). It is draggable with the position saved as viewport fractions in `sw3_fab_pos` (kept on sign-out); Settings → Help → "Put it back in the corner". Pointer events: a move over 8 px is a drag, otherwise a tap.
+- **Voice:** a shared `voiceStart()` (Web Speech API) is used by Quick add and the AI chat mic (`aiVoice`, which fills the box without sending).
+- **Pull-to-refresh is Home-only.**
+
 ## v4.6.1 (2026-09-26) — bug check
 
 - **Reading amounts:** always use `numVal(idOrEl)` (or `_evalExpr`) for money fields. It accepts commas, `₦/$/£`, `5k` / `2.5m` and simple sums, even if the field never lost focus. A bare `parseFloat(el.value)` turned "5k" into 5 and "10,000" into 10 on fields the number formatter hadn't wrapped (debtor payments, special budgets, onboarding balances).
