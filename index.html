@@ -255,7 +255,7 @@
     <div style="display:flex;gap:8px;margin-bottom:10px">
       <div class="search-bar" style="flex:1">
         <span class="search-icon">🔍</span>
-        <input type="text" id="exp-search" placeholder="Search actual expense or notes…" oninput="renderExpenses()">
+        <input type="text" id="exp-search" placeholder="Search items or notes…" oninput="renderExpenses()">
       </div>
       <button class="btn btn-g btn-sm" onclick="openGlobalSearch()" style="flex-shrink:0;padding:8px 12px" title="Search every month, not just this one">All months</button>
       <button class="btn btn-g btn-sm" onclick="openFilterDrawer()" style="flex-shrink:0;padding:8px 12px">Filter ↑</button>
@@ -458,14 +458,14 @@
         </div>
       </div>
       <div class="ig">
-        <label class="ilabel">Actual Expense <span id="e-autocat-hint" style="color:var(--accent);font-size:0.58rem;font-weight:600;margin-left:6px"></span></label>
+        <label class="ilabel">Spent on <span id="e-autocat-hint" style="color:var(--accent);font-size:0.58rem;font-weight:600;margin-left:6px"></span></label>
         <select class="sfield" id="e-payee-sel" onchange="handlePayeeSel()"></select>
       </div>
       <div class="ig" id="e-payee-new-wrap" style="display:none">
-        <label class="ilabel">New Expense Name</label>
+        <label class="ilabel">New item</label>
         <div style="display:flex;gap:6px;align-items:center">
           <button class="emoji-trigger" id="e-payee-emoji" onclick="openEmojiPicker(this,e=>document.getElementById('e-payee-emoji').textContent=e)" title="Pick emoji">📦</button>
-          <input class="ifield" type="text" id="e-payee-new" placeholder="Enter new expense name" oninput="autoSuggestCat(this.value)" style="flex:1">
+          <input class="ifield" type="text" id="e-payee-new" placeholder="Lunch, Spar, Netflix, Mum…" oninput="autoSuggestCat(this.value)" style="flex:1">
         </div>
       </div>
     </div>
@@ -533,7 +533,7 @@
     </div>
     <div class="search-bar" style="margin-bottom:10px">
       <span class="search-icon">🔍</span>
-      <input type="text" id="global-search-input" placeholder="Payee, category or notes…" oninput="_debounceGlobalSearch()">
+      <input type="text" id="global-search-input" placeholder="Item, category or notes…" oninput="_debounceGlobalSearch()">
     </div>
     <div id="global-search-body"><div class="csub">Type to search every transaction across every month.</div></div>
   </div>

@@ -7606,8 +7606,8 @@ function renderSettBudget(){
       <button class="btn btn-p" style="flex:1" onclick="saveBudget()">Save Budget</button>
     </div>
     <div style="border-top:1px solid var(--border);padding-top:14px">
-      <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Manage Categories &amp; Actual Expenses</div>
-      <div style="font-size:0.66rem;color:var(--text3);margin-bottom:10px">Tap a category to expand its actual expense lines. Built-in categories cannot be deleted (but can be merged). Custom categories with transactions must be merged before removal.</div>
+      <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Manage Categories &amp; Items</div>
+      <div style="font-size:0.66rem;color:var(--text3);margin-bottom:10px">Tap a category to see its items: what you spend on, like Lunch, Spar or Netflix. Built-in categories cannot be deleted (but can be merged). Custom categories with transactions must be merged before removal.</div>
       <div id="cat-payee-accordion">
         ${getAllCats().map((c)=>{
           const isCustom=!_BASE_CATS.includes(c);
@@ -7615,7 +7615,7 @@ function renderSettBudget(){
           return`<div class="cat-acc-item" id="cat-acc-${c.replace(/[^a-z0-9]/gi,'_')}">
             <div class="cat-acc-hdr" onclick="toggleCatAcc('${c.replace(/'/g,"\\'")}')">
               <span style="font-size:0.76rem;flex:1">${CAT_ICONS[c]||'📦'} ${c}</span>
-              <span style="font-size:0.62rem;color:var(--text3);margin-right:8px">${allPayees.length} expense${allPayees.length!==1?'s':''}</span>
+              <span style="font-size:0.62rem;color:var(--text3);margin-right:8px">${allPayees.length} item${allPayees.length!==1?'s':''}</span>
               ${isCustom?`<button class="cat-remove-btn" onclick="event.stopPropagation();removeCustomCat('${c.replace(/'/g,"\\'")}')">×</button>`:''}
               <span class="cat-acc-chevron">›</span>
             </div>
@@ -7628,10 +7628,10 @@ function renderSettBudget(){
                       <button class="btn btn-g btn-sm" style="padding:2px 7px;font-size:0.66rem" onclick="startEditPayee('${c.replace(/'/g,"\\'")}','${p.replace(/'/g,"\\'")}')">Edit</button>
                       <button class="txi-del" onclick="removePayeeLine('${c.replace(/'/g,"\\'")}','${p.replace(/'/g,"\\'")}','${(CAT_LINES[c]||[]).includes(p)?'builtin':'custom'}')">×</button>
                     </div>
-                  </div>`).join(''):'<div style="font-size:0.7rem;color:var(--text3);padding:6px 0">No actual expenses yet.</div>'}
+                  </div>`).join(''):'<div style="font-size:0.7rem;color:var(--text3);padding:6px 0">No items yet.</div>'}
               </div>
               <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
-                <input class="ifield" id="new-payee-${c.replace(/[^a-z0-9]/gi,'_')}" placeholder="Add actual expense…" style="flex:1;font-size:0.74rem;padding:5px 8px">
+                <input class="ifield" id="new-payee-${c.replace(/[^a-z0-9]/gi,'_')}" placeholder="Add item…" style="flex:1;font-size:0.74rem;padding:5px 8px">
                 <button class="btn btn-p btn-sm" style="font-size:0.72rem" onclick="addPayeeToCategory('${c.replace(/'/g,"\\'")}')">+ Add</button>
               </div>
             </div>
@@ -7658,8 +7658,8 @@ function renderSettBudget(){
       <button class="btn btn-d btn-full" onclick="openMergeCatModal()" style="font-size:0.76rem">Merge & Reassign</button>
     </div>
     <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:14px">
-      <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Merge Expense Lines</div>
-      <div class="csub" style="margin-bottom:10px">Combine two actual-expense lines within a category into one. Past transactions are updated too, across every month and device.</div>
+      <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Merge Items</div>
+      <div class="csub" style="margin-bottom:10px">Combine two items within a category into one. Past transactions are updated too, across every month and device.</div>
       ${(()=>{const c0=getAllCats()[0]||'';const lines=_payeeLinesForCat(c0);const lopts=lines.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('');return`
       <div style="margin-bottom:8px"><label class="ilabel">Category</label><select class="sfield" id="pmerge-cat" style="font-size:0.75rem" onchange="_pmergeFillLines()">${getAllCats().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></div>
       <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:6px;align-items:center;margin-bottom:8px">
@@ -7749,9 +7749,9 @@ function addPayeeToCategory(cat){
   const inp=document.getElementById('new-payee-'+key);
   if(!inp) return;
   const name=inp.value.trim();
-  if(!name){toast('Enter a payee name');return;}
+  if(!name){toast('Enter a name');return;}
   const existing=[...(CAT_LINES[cat]||[]),...(S.customExpLines[cat]||[])];
-  if(existing.map(p=>p.toLowerCase()).includes(name.toLowerCase())){toast('Actual expense already exists in this category');return;}
+  if(existing.map(p=>p.toLowerCase()).includes(name.toLowerCase())){toast('That item already exists in this category');return;}
   if(!S.customExpLines[cat]) S.customExpLines[cat]=[];
   S.customExpLines[cat].push(name);
   saveCustomLines();
@@ -7811,7 +7811,7 @@ function _rewritePayeeHistory(cat, oldPayee, newPayee){
   return n;
 }
 function commitEditPayee(cat,oldPayee,newPayee,src){
-  if(!newPayee){toast('Payee name cannot be empty');return;}
+  if(!newPayee){toast('Name cannot be empty');return;}
   if(newPayee===oldPayee){renderSettBudget();return;}
   // Count how many past transactions this touches so the confirm is informed.
   let hist=0;
@@ -8195,7 +8195,7 @@ function _buildTxnSheet(txns,incomeRecs,label){
   const incRows=(incomeRecs||[]).map(i=>([i.date||'','Income',i.category||'Income','',i.bank||'',i.notes||'',0,i.amtNGN||i.amount||0]));
   const all=[...expRows,...incRows].sort((a,b)=>a[0]>b[0]?1:a[0]<b[0]?-1:0);
   const header=[`${label} — Transactions`];
-  const cols=['Date','Type','Category','Actual Expense','Bank','Notes','Expense (₦)','Income (₦)'];
+  const cols=['Date','Type','Category','Spent on','Bank','Notes','Expense (₦)','Income (₦)'];
   const rows=[header,[],cols,...all];
   // Summary
   const totExp=txns.reduce((s,t)=>s+(t.amount||0),0);
@@ -8246,7 +8246,7 @@ function _buildMonthMatrixWS(m,y,txns,incRecs,aux){
     (groups[cat]=groups[cat]||{});
     (groups[cat][name]=groups[cat][name]||Array(days).fill(0))[day-1]+=(t.amount||0);
   });
-  aoa.push([null,'Actual expenses']);
+  aoa.push([null,'Spent on']);
   aoa.push([null,'Expenses','Category','Total','Budget']);
   const firstItem=aoa.length+1;                     // 1-based Excel row of first item
   const budgetCats=(aux.budBy[sid(m,y)]||{}).categories||{};

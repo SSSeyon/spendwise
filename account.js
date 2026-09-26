@@ -61,6 +61,13 @@ async function _acctBusy(btnId,label,fn){
 }
 function _acctOnEnter(ev,fn){if(ev.key==='Enter'){ev.preventDefault();fn();}}
 
+// "Continue with Google" needs the Google provider enabled in Firebase
+// Authentication. Off by default: Google users still need a separate data
+// password, so it adds little over username + password.
+const GOOGLE_SIGNIN=false;
+function _acctGoogleBtn(){return GOOGLE_SIGNIN?`<div class="acct-or">or</div>
+    <button class="btn btn-g btn-full" onclick="acctGoogle()">Continue with Google</button>`:'';}
+
 // ── 1. Why sign in ────────────────────────────────────────────────────────
 function acctShowWhy(legacy){
   _acctShow(`
@@ -75,8 +82,7 @@ function acctShowWhy(legacy){
     <div class="acct-spacer"></div>
     <button class="btn btn-p btn-full" onclick="acctShowCreate()">Create account</button>
     <button class="btn btn-g btn-full" onclick="acctShowSignIn()">I already have an account</button>
-    <div class="acct-or">or</div>
-    <button class="btn btn-g btn-full" onclick="acctGoogle()">Continue with Google</button>
+    ${_acctGoogleBtn()}
   `);
 }
 
@@ -145,8 +151,7 @@ function acctShowSignIn(prefill){
     <div class="acct-err" id="acct-err"></div>
     <button class="btn btn-p btn-full" id="acct-go" onclick="acctDoSignIn()">Sign in</button>
     <div class="acct-link" onclick="acctShowRecover()">Forgot password? Use your recovery code</div>
-    <div class="acct-or">or</div>
-    <button class="btn btn-g btn-full" onclick="acctGoogle()">Continue with Google</button>
+    ${_acctGoogleBtn()}
   `);
 }
 function acctDoSignIn(){
