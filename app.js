@@ -111,7 +111,7 @@ function getCustomCats(){try{const v=localStorage.getItem('sw3_custom_cats');ret
 function saveCustomCats(arr){
   try{localStorage.setItem('sw3_custom_cats',JSON.stringify(arr));}catch{}
   if(db)db.collection('appConfig').doc('customCats')
-    .set({cats:arr,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .set({cats:arr,updatedAt:FV.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('customCats sync failed',e));
 }
 // The user-added "actual expense" lines (payees per category, kept in
@@ -131,7 +131,7 @@ function saveCustomLines(){
   const {__removed__:removed, ...lines}=all;
   try{
     db.collection('appConfig').doc('customLines')
-      .set({lines,removed:removed||{},updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+      .set({lines,removed:removed||{},updatedAt:FV.serverTimestamp()},{merge:true})
       .catch(e=>console.warn('customLines sync failed',e));
   }catch(e){console.warn('customLines sync failed',e);}
 }
@@ -215,7 +215,7 @@ function setCashLogo(acctName,filename){
   // Mirror to Firestore — use {merge:true} so concurrent per-account writes don't
   // erase each other (each call only changes the one field that changed).
   if(db){
-    const payload=filename?{[acctName]:filename.trim()}:{[acctName]:firebase.firestore.FieldValue.delete()};
+    const payload=filename?{[acctName]:filename.trim()}:{[acctName]:FV.delete()};
     db.collection('appConfig').doc('cashLogos').set(payload,{merge:true}).catch(e=>console.warn("cashLogos write failed",e));
   }
   // Update the thumbnail in the settings list immediately without re-rendering the page.
@@ -321,7 +321,7 @@ function getNWConfig(){
 function saveNWConfig(cfg){
   cSet(NW_CFG_KEY,cfg);
   if(db)db.collection('appConfig').doc('nwConfig')
-    .set({cfg,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .set({cfg,updatedAt:FV.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('nwConfig sync failed',e));
 }
 async function loadNWConfig(){
@@ -441,7 +441,7 @@ function _syncInvConfig(){
       platforms:getPlatforms(),
       invMeta:getInvMeta(),
       invSubs:getInvSubs(),
-      updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+      updatedAt:FV.serverTimestamp()
     };
     db.collection('appConfig').doc('investments').set(payload,{merge:true}).catch(e=>console.warn('invConfig sync failed',e));
   },800);
@@ -657,7 +657,7 @@ function getRecurring(){return cGet(CK_RECUR)||[];}
 function saveRecurring(list){
   cSet(CK_RECUR,list);
   if(db)db.collection('appConfig').doc('recurring')
-    .set({list,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .set({list,updatedAt:FV.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('recurring sync failed',e));
 }
 async function loadRecurring(){
@@ -699,7 +699,7 @@ async function postRecurring(idx){
     const isUSD=isUSDCashAccount(bank);
     const fxRates=getFxRates(pM,pY);
     const amtNGN=isUSD?Math.round(r.amount*fxRates.USD):r.amount;
-    const data={amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.incCat||'Other',bank,notes:r.notes||'',date:postDate,month:pM,year:pY,type:'income',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+    const data={amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.incCat||'Other',bank,notes:r.notes||'',date:postDate,month:pM,year:pY,type:'income',createdAt:FV.serverTimestamp()};
     try{
       const ref=await db.collection('income').add(data);
       if(pM===S.expMonth&&pY===S.expYear) S.income.unshift({...data,id:ref.id});
@@ -714,7 +714,7 @@ async function postRecurring(idx){
     const isUSD=isUSDCashAccount(bank);
     const fxRates=getFxRates(pM,pY);
     const amtNGN=isUSD?Math.round(r.amount*fxRates.USD):r.amount;
-    const data={amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.category,bank,payee:r.payee,notes:r.notes||'',date:postDate,month:pM,year:pY,type:'expense',createdAt:firebase.firestore.FieldValue.serverTimestamp()};
+    const data={amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.category,bank,payee:r.payee,notes:r.notes||'',date:postDate,month:pM,year:pY,type:'expense',createdAt:FV.serverTimestamp()};
     try{
       const ref=await db.collection('transactions').add(data);
       if(pM===S.expMonth&&pY===S.expYear) S.txns.unshift({...data,id:ref.id});
@@ -767,7 +767,7 @@ function getRules(){return cGet(CK_RULES)||[];}
 function saveRules(list){
   cSet(CK_RULES,list);
   if(db)db.collection('appConfig').doc('rules')
-    .set({list,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .set({list,updatedAt:FV.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('rules sync failed',e));
 }
 async function loadRules(){
@@ -802,7 +802,7 @@ function getGoals(){return cGet(CK_GOALS)||[];}
 function saveGoals(list){
   cSet(CK_GOALS,list);
   if(db)db.collection('appConfig').doc('goals')
-    .set({list,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .set({list,updatedAt:FV.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('goals sync failed',e));
 }
 async function loadGoals(){
@@ -1029,7 +1029,7 @@ function getFxOverrides(){return cGet(FX_OVR_KEY)||{};}
 function _syncFxOverrides(ovr){
   if(!db) return;
   db.collection('appConfig').doc('fxOverrides')
-    .set({overrides:ovr,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:false})
+    .set({overrides:ovr,updatedAt:FV.serverTimestamp()},{merge:false})
     .catch(e=>console.warn('fxOverrides sync failed',e));
 }
 function getFxRates(m,y){const k=fxKey(m,y);const ovr=getFxOverrides();return ovr[k]||FX_RATES[k]||{USD:1600,GBP:2050};}
@@ -1200,7 +1200,8 @@ function setSyncStatus(st){
   const dot=document.getElementById('sync-dot'),lbl=document.getElementById('sync-lbl');
   if(!dot||!lbl) return;
   dot.className='sync-dot';
-  const map={syncing:{cls:'yellow',text:'Syncing'},synced:{cls:'green',text:'Synced'},offline:{cls:'red',text:'Offline'},error:{cls:'red',text:'Error'}};
+  if(DATA_MODE==='local'&&st!=='error') st='local';
+  const map={syncing:{cls:'yellow',text:'Syncing'},synced:{cls:'green',text:'Synced'},offline:{cls:'red',text:'Offline'},error:{cls:'red',text:'Error'},local:{cls:'yellow',text:'This device'},legacy:{cls:'yellow',text:'Not syncing'},locked:{cls:'yellow',text:'Locked'}};
   const s=map[st]||map.offline;
   dot.classList.add(s.cls);lbl.textContent=s.text;
   _updateOqBadge();
@@ -1222,17 +1223,59 @@ function hideStaleBar(){document.getElementById('stale-bar').style.display='none
 // ══════════════════════════════════════════════════════════════════════════
 // FIREBASE
 // ══════════════════════════════════════════════════════════════════════════
+// ── Data modes (v4.5) ──
+// 'cloud'  signed in + key unlocked on this device: db = VAULT.udb, every doc
+//          encrypted under users/{uid}/…
+// 'local'  not signed in: db = VAULT's IndexedDB-backed local db, nothing
+//          leaves the device. Same API, so the rest of the app doesn't care.
+// 'locked' signed in but this device has no key yet (e.g. returning from a
+//          Google redirect): db = null until the user unlocks.
+// 'legacy' a device that ran a pre-accounts version: caches hold the owner's
+//          data from the old shared collections. db = null (render from cache,
+//          never overwrite it) until the user creates an account and imports.
+let DATA_MODE='local';
+const LOCAL_MODE_LS='sw3_local_mode';
+function _hasLegacyCache(){
+  try{if(localStorage.getItem(LOCAL_MODE_LS))return false;
+    for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(/^sw3_txns_/.test(k))return true;}}catch{}
+  return false;
+}
 function initFirebase(){
   try{loadFromCache();}catch(e){console.error('loadFromCache threw',e);}
   try{renderAll();}catch(e){console.error('renderAll threw',e);}
   if(S.isStale) showStaleBar();
   (async()=>{
-    await new Promise(resolve=>{function check(){if(typeof firebase!=='undefined')resolve();else setTimeout(check,50);}check();});
+    await new Promise(resolve=>{function check(){if(typeof firebase!=='undefined'&&firebase.auth)resolve();else setTimeout(check,50);}check();});
     firebase.initializeApp({apiKey:"AIzaSyCIe7f02DrbrwZLIBmNlvslXWmNLVMiluw",authDomain:"spendwise-d6393.firebaseapp.com",projectId:"spendwise-d6393",storageBucket:"spendwise-d6393.firebasestorage.app",messagingSenderId:"460779232494",appId:"1:460779232494:web:cd3c178b88d0f22044a7ff"});
-    db=firebase.firestore();
-    db.enablePersistence().catch(()=>{});
-    if(!navigator.onLine){_invMigrateGate=true;setSyncStatus('offline');return;}
-    setSyncStatus('syncing');
+    const fs=firebase.firestore();
+    fs.enablePersistence().catch(()=>{});
+    VAULT.attach(fs);
+    try{await firebase.auth().getRedirectResult();}catch(e){console.warn('google redirect result',e);}
+    const user=await new Promise(res=>{const u=firebase.auth().onAuthStateChanged(x=>{u();res(x);});});
+    if(user&&await VAULT.restoreDevice(user.uid)){await _enterMode('cloud');}
+    else if(user){await _enterMode('locked');}
+    else if(_hasLegacyCache()){await _enterMode('legacy');}
+    else{await _enterMode('local');}
+  })();
+}
+
+// Switch the data source and (re)load everything from it.
+async function _enterMode(mode){
+  stopRealtimeListeners();
+  DATA_MODE=mode;
+  if(mode==='cloud') db=VAULT.udb;
+  else if(mode==='local'){db=await VAULT.openLocal();try{localStorage.setItem(LOCAL_MODE_LS,'1');}catch{}}
+  else db=null;
+  _renderModeBar();
+  if(mode==='locked'){setSyncStatus('locked');if(typeof acctShowUnlock==='function')acctShowUnlock();return;}
+  if(mode==='legacy'){_invMigrateGate=false;setSyncStatus('legacy');return;}
+  if(mode==='local'){setSyncStatus('local');}
+  await _bootSync();
+}
+
+async function _bootSync(){
+    if(DATA_MODE==='cloud'&&!navigator.onLine){_invMigrateGate=true;setSyncStatus('offline');return;}
+    if(DATA_MODE==='cloud')setSyncStatus('syncing');
     try{
       const m=S.expMonth,y=S.expYear;
       await syncAll();
@@ -1244,12 +1287,36 @@ function initFirebase(){
       S.investments=cGet(CK.inv(m,y))||S.investments;
       S.cash=cGet(CK.cash(m,y))||S.cash;
       S.debtors=cGet(CK.debtors)||S.debtors;
-      cSet(CK.lastSync,Date.now());setSyncStatus('synced');hideStaleBar();renderAll();startRealtimeListeners();
+      cSet(CK.lastSync,Date.now());setSyncStatus(DATA_MODE==='local'?'local':'synced');hideStaleBar();renderAll();startRealtimeListeners();
       _checkMonthEndClose(); // fire-and-forget: freezes any months that closed since the app was last opened
       _prefetchHistoryMonths(); // fire-and-forget: pulls prior months so smart insights have history on this device
       _healCashLedgers(); // fire-and-forget: pushes any ledger entries stranded locally on this device up to Firestore
     }catch(e){console.error(e);setSyncStatus('error');}
-  })();
+}
+
+// Wipe every per-account data cache on this device (sign-out, or replacing
+// this device's local data with an account's). UI prefs survive.
+const _KEEP_ON_WIPE=new Set(['sw3_theme','sw3_design_mode','sw3_dash_order','sw3_hidden_cards','sw3_last_page','sw3_dash_currency',LOCAL_MODE_LS]);
+function _wipeDataCaches(){
+  try{
+    const ks=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith('sw3_')&&!_KEEP_ON_WIPE.has(k))ks.push(k);}
+    ks.forEach(k=>localStorage.removeItem(k));
+  }catch(e){console.warn('cache wipe failed',e);}
+  S.txns=[];S.income=[];S.investments={};S.cash={};S.debtors=[];
+}
+
+// Header strip telling the user where their data lives.
+function _renderModeBar(){
+  let el=document.getElementById('mode-bar');
+  if(!el){el=document.createElement('div');el.id='mode-bar';const app=document.querySelector('.app');if(app)app.prepend(el);else return;}
+  const msg={
+    local:['📱 Saved on this device only.','Sign in to sync','acctShowWhy()'],
+    legacy:['SpendWise now has private accounts.','Create yours to keep syncing','acctShowWhy(true)'],
+    locked:['🔒 Enter your password to unlock your data on this device.','Unlock','acctShowUnlock()'],
+  }[DATA_MODE];
+  if(!msg){el.style.display='none';el.innerHTML='';return;}
+  el.style.display='';
+  el.innerHTML=`<span>${msg[0]}</span> <a onclick="${msg[2]}">${msg[1]} ›</a>`;
 }
 
 async function syncAll(){
@@ -1612,7 +1679,7 @@ async function loadTxns(m,y){
 // engine has history to learn from on any device, not just ones where the
 // user has browsed back through old months. Skips months already cached.
 async function _prefetchHistoryMonths(){
-  if(!db||!navigator.onLine) return;
+  if(!_dbReady()) return;
   let fetched=0;
   for(const {m:mm,y:yy} of _prevMonthsList(S.expMonth,S.expYear,6)){
     if(Array.isArray(cGet(CK.txns(mm,yy)))) continue;
@@ -1879,7 +1946,7 @@ async function _checkMonthEndClose(){
           await db.collection('historicalSummary').doc(docId).set({
             year:y,month:m,label:MS2[m-1]+" '"+String(y).slice(2),
             income,expenses,closingCash,closed:true,
-            closedAt:firebase.firestore.FieldValue.serverTimestamp()
+            closedAt:FV.serverTimestamp()
           },{merge:true});
           closedAny++;
         }
@@ -1948,7 +2015,7 @@ function reloadMonth(m,y){
   S.budgets=cGet(CK.budgets(m,y))||{...DEF_BUDGETS};
   renderExpenses();renderDashboard();
   if(document.getElementById('inc-pane')?.style.display!=='none') renderIncome();
-  if(db&&navigator.onLine){
+  if(_dbReady()){
     setSyncStatus('syncing');
     Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadBudgets(m,y)])
       .then(()=>{
@@ -2047,7 +2114,7 @@ function dashPeriodChange(){
     S.budgets=cGet(CK.budgets(S.dashMonth,S.dashYear))||{...DEF_BUDGETS};
   }
   renderDashboard();renderExpenses();renderForecast();renderInvestments();renderCashPage();
-  if(db&&navigator.onLine&&S.dashMonth>0){
+  if(_dbReady()&&S.dashMonth>0){
     const m=S.dashMonth,y=S.dashYear;
     setSyncStatus('syncing');
     Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y)])
@@ -4417,7 +4484,7 @@ function _logCashLedger(bank, delta, m, y, source, ref, dateStr){
     if(db){
       db.collection('cashLedger').doc(sid(m,y)).set({
         month:m, year:y,
-        entries: firebase.firestore.FieldValue.arrayUnion(entry)
+        entries: FV.arrayUnion(entry)
       },{merge:true}).catch(e=>console.warn("cashLedger write failed",e));
     }
   }catch(e){console.warn("cash ledger entry not recorded",e);}
@@ -4433,7 +4500,7 @@ function _logCashLedger(bank, delta, m, y, source, ref, dateStr){
 // dedupes on exact match, so entries that already synced are no-ops.
 // Returns the number of entries pushed.
 async function _syncCashLedgerUp(m,y){
-  if(!db||!navigator.onLine) return 0;
+  if(!_dbReady()) return 0;
   const local=cGet(`sw3_cash_ledger_${y}_${m}`)||[];
   if(!local.length) return 0;
   let remote=[];
@@ -4444,7 +4511,7 @@ async function _syncCashLedgerUp(m,y){
   try{
     await db.collection('cashLedger').doc(sid(m,y)).set({
       month:m, year:y,
-      entries: firebase.firestore.FieldValue.arrayUnion(...missing)
+      entries: FV.arrayUnion(...missing)
     },{merge:true});
     return missing.length;
   }catch(e){return 0;}
@@ -4454,7 +4521,7 @@ async function _syncCashLedgerUp(m,y){
 // so a device that stranded entries heals automatically without the user
 // having to open the audit.
 async function _healCashLedgers(){
-  if(!db||!navigator.onLine) return;
+  if(!_dbReady()) return;
   const seen=new Set();
   for(const {m,y} of _prevMonthsList(S.expMonth+1,S.expYear,7)){ // current month + 6 prior
     const k=`${y}-${m}`; if(seen.has(k))continue; seen.add(k);
@@ -4518,13 +4585,13 @@ function _rippleQueueAdd(bank,delta,m,y){
   cSet('sw3_ripple_queue',q.slice(-200));
 }
 async function _rippleQueueFlush(){
-  if(!db||!navigator.onLine) return;
+  if(!_dbReady()) return;
   const q=cGet('sw3_ripple_queue')||[];
   if(!q.length) return;
   cSet('sw3_ripple_queue',[]);
   for(const it of q){
     try{await db.collection('cashBalances').doc(sid(it.m,it.y))
-      .set({[it.bank]:firebase.firestore.FieldValue.increment(it.delta)},{merge:true});}
+      .set({[it.bank]:FV.increment(it.delta)},{merge:true});}
     catch(e){_rippleQueueAdd(it.bank,it.delta,it.m,it.y);}
   }
 }
@@ -4543,7 +4610,7 @@ async function _rippleCashForward(bank,delta,m,y){
       const parts=d.id.split('-'),ry=+parts[0],rm=+parts[1];
       _markCashDirty(rm,ry,bank);
       writes.push(
-        d.ref.set({[bank]:firebase.firestore.FieldValue.increment(delta)},{merge:true})
+        d.ref.set({[bank]:FV.increment(delta)},{merge:true})
           .then(()=>_clearCashDirty(rm,ry,bank))
           .catch(()=>{_clearCashDirty(rm,ry,bank);_rippleQueueAdd(bank,delta,rm,ry);})
       );
@@ -4580,7 +4647,7 @@ function _adjustCash(bank, delta, m, y, source, ref, dateStr){
       try{
         await _ensureCashDoc(m,y);
         await db.collection('cashBalances').doc(sid(m,y)).set({
-          [bank]: firebase.firestore.FieldValue.increment(delta),
+          [bank]: FV.increment(delta),
           month:m, year:y
         },{merge:true});
         _clearCashDirty(m,y,bank);
@@ -4743,7 +4810,7 @@ function getInterestPosts(){return cGet(INT_POSTS_KEY)||{};}
 function saveInterestPosts(obj){
   cSet(INT_POSTS_KEY,obj);
   if(db)db.collection('appConfig').doc('interestPosts')
-    .set({posts:obj,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .set({posts:obj,updatedAt:FV.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('interestPosts sync failed',e));
 }
 async function loadInterestPosts(){
@@ -4833,7 +4900,7 @@ function postInterest(acctKey){
   const isView=(S.expMonth===cm&&S.expYear===cy);
   const arr=isView?S.income:(cGet(CK.inc(cm,cy))||[]);
   arr.unshift(entry);cSet(CK.inc(cm,cy),arr);if(isView)S.income=arr;
-  if(db)db.collection('income').doc(id).set({...entry,createdAt:firebase.firestore.FieldValue.serverTimestamp()}).catch(e=>console.warn('interest income sync failed',e));
+  if(db)db.collection('income').doc(id).set({...entry,createdAt:FV.serverTimestamp()}).catch(e=>console.warn('interest income sync failed',e));
   // Keep the month's history income total current
   const hist=cGet('sw3_history')||[];const hi=hist.findIndex(h=>h.year===cy&&h.month===cm);
   const totalInc=arr.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
@@ -5022,7 +5089,7 @@ async function saveExpense(){
     // carries the write through automatically. The offline queue below is a
     // fallback for genuine failures (not just a slow write).
     setSyncStatus('syncing');
-    ref.set({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()})
+    ref.set({...data,createdAt:FV.serverTimestamp()})
       .then(()=>setSyncStatus('synced'))
       .catch(e=>{
         console.warn('[income] background save failed — queued for retry',e);
@@ -5102,7 +5169,7 @@ async function saveExpense(){
   // carries the write through automatically. The offline queue below is a
   // fallback for genuine failures (not just a slow write).
   setSyncStatus('syncing');
-  const _write=editId?docRef.update(data):docRef.set({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+  const _write=editId?docRef.update(data):docRef.set({...data,createdAt:FV.serverTimestamp()});
   _write.then(()=>setSyncStatus('synced')).catch(e=>{
     console.warn('[expense] background save failed — queued for retry',e);
     oqAdd('transactions',docRef.id,data,true);
@@ -5208,7 +5275,7 @@ function saveIncome(){
   // carries the write through automatically. The offline queue below is a
   // fallback for genuine failures (not just a slow write).
   setSyncStatus('syncing');
-  const _write=editId?docRef.update(data):docRef.set({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+  const _write=editId?docRef.update(data):docRef.set({...data,createdAt:FV.serverTimestamp()});
   _write.then(()=>setSyncStatus('synced')).catch(e=>{
     console.warn('[income] background save failed — queued for retry',e);
     oqAdd('income',docRef.id,data,true);
@@ -5687,7 +5754,7 @@ function openLiqModal(pKey, subId){
 async function _recordInvestmentInterestIncome(label,bank,amtNGN,date,m,y){
   const data={amount:amtNGN,amtNGN,currency:'NGN',category:'Interest Income',bank,notes:`${label} — fixed income payout`,date,month:m,year:y};
   try{
-    const ref=await db.collection('income').add({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+    const ref=await db.collection('income').add({...data,createdAt:FV.serverTimestamp()});
     S.income.unshift({...data,id:ref.id});
   }catch(e){
     const offId='offline_inc_'+Date.now();
@@ -5999,7 +6066,7 @@ async function changeCashMonth(m){
   // paint instantly from cache (or the previous month's cache as a
   // placeholder — see _getInvData), then refresh live like Cash does.
   renderInvestments();
-  if(db&&navigator.onLine){
+  if(_dbReady()){
     loadCashData(m,S.cashYear).then(()=>{if(S.cashMonth===m)renderCashPage();}).catch(e=>_warnLoad("loadCashData (month switch)",e));
     loadInvData(m,S.cashYear).then(()=>{if(S.cashMonth===m)renderInvestments();}).catch(e=>_warnLoad("loadInvData (month switch)",e));
   }
@@ -6297,7 +6364,7 @@ async function saveDebtor(){
         }
       }
     } else {
-      data.createdAt=firebase.firestore.FieldValue.serverTimestamp();
+      data.createdAt=FV.serverTimestamp();
       // Generate the ID client-side so the same doc can be queued for retry
       // if the write fails while offline.
       const newId=db.collection('debtors').doc().id;
@@ -6371,7 +6438,7 @@ async function _doAddDebt(id){
     expectRepayment:true,disbursedFrom:bank||''};
   try{
     const newId=db.collection('debtors').doc().id;
-    await db.collection('debtors').doc(newId).set({...data,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+    await db.collection('debtors').doc(newId).set({...data,createdAt:FV.serverTimestamp()});
     S.debtors=[{...data,id:newId},...(S.debtors||[])];
     cSet(CK.debtors,S.debtors);
     if(bank){
@@ -6580,7 +6647,7 @@ async function saveLoan(){
       }
       toast('Loan updated');
     } else {
-      data.createdAt=firebase.firestore.FieldValue.serverTimestamp();
+      data.createdAt=FV.serverTimestamp();
       // Generate the ID client-side so the doc can be queued for retry if
       // the write fails while offline; the cash credit below still lands
       // immediately via _adjustCash's own offline queue either way.
@@ -7331,7 +7398,7 @@ async function _loadHistDetail(d, el){
   _renderHistDetail(el,txns,inc,invData,cashData,m,y,sid_);
 
   // Then try to refresh from Firestore in the background
-  if(!db||!navigator.onLine) return;
+  if(!_dbReady()) return;
   try{
     const [txSnap,incSnap,invDoc,cashDoc]=await Promise.all([
       db.collection('transactions').where('year','==',y).where('month','==',m).get(),
@@ -8347,6 +8414,7 @@ function renderSettData(){
   const _mon=getDesignMode()==='monarch';
   document.getElementById('sett-data').innerHTML=`
     <div class="exp-card" style="margin-top:10px"><div class="exp-card-title" style="margin-bottom:8px">App Info</div><div style="font-size:0.72rem;color:var(--text2);line-height:1.9"><div>Version: v4.4.22</div><div>Firebase: spendwise-d6393</div><div>History: Nov 2023 – May 2026</div><div style="color:var(--text3);margin-top:4px">v4.4.22: The AI Analyst now runs on the newest Gemini Flash automatically, and can draw a chart in its replies when the numbers read better as a picture. The badge shows which model actually answered.</div></div></div>
+    ${renderAccountCard()}
     ${renderApiKeysCard()}
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Design Mode</div>
@@ -8588,7 +8656,7 @@ async function forceHardRefresh(){
   window.location.reload();
 }
 async function forceSyncNow(){
-  if(!db||!navigator.onLine){toast('Not connected');return;}
+  if(!_dbReady()){toast('Not connected');return;}
   setSyncStatus('syncing');toast('Pulling from Firebase…');
   // Force-sync: clear local cache first so loadX functions fetch from Firebase
   const m=S.expMonth,y=S.expYear;
@@ -9220,9 +9288,12 @@ async function confirmSeedImport(){
 // ══════════════════════════════════════════════════════════════════════════
 // ONLINE/OFFLINE
 // ══════════════════════════════════════════════════════════════════════════
+// Local mode reads IndexedDB, so connectivity only matters when signed in.
+function _dbReady(){return !!db&&(db.isLocal||navigator.onLine);}
 window.addEventListener('online',()=>{
-  document.getElementById('offl').style.display='none';setSyncStatus('syncing');
-  if(db){
+  document.getElementById('offl').style.display='none';
+  if(DATA_MODE==='cloud'&&db){
+    setSyncStatus('syncing');
     const m=S.expMonth,y=S.expYear;
     syncAll().then(()=>{
       if(S.expMonth===m&&S.expYear===y){
@@ -9235,8 +9306,8 @@ window.addEventListener('online',()=>{
     }).catch(()=>setSyncStatus('error'));
   }
 });
-window.addEventListener('offline',()=>{document.getElementById('offl').style.display='block';setSyncStatus('offline');});
-if(!navigator.onLine) document.getElementById('offl').style.display='block';
+window.addEventListener('offline',()=>{if(DATA_MODE!=='cloud')return;document.getElementById('offl').style.display='block';setSyncStatus('offline');});
+if(!navigator.onLine&&!localStorage.getItem(LOCAL_MODE_LS)) document.getElementById('offl').style.display='block';
 ['exp-modal','deb-modal','inc-modal','move-modal','merge-cat-modal'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('click',function(e){if(e.target===this)closeMod(id);});});
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 
@@ -9908,7 +9979,7 @@ function _aiKeys(){
 function _aiSyncKeys(){
   cSet(AI_KEYS_LS,_aiKeys());
   if(db) db.collection('appConfig').doc('aiKeys')
-    .set({list:_aiKeys(),activeId:cGet(AI_ACTIVE_KEY_LS)||'',updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true})
+    .set({list:_aiKeys(),activeId:cGet(AI_ACTIVE_KEY_LS)||'',updatedAt:FV.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('aiKeys sync failed',e));
 }
 async function loadAiKeys(){

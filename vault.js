@@ -135,8 +135,25 @@ const VAULT=(()=>{
     const o={};for(const k in v){const x=v[k];if(x===undefined)continue;o[k]=toPlain(x);}return o;
   }
   const aadFor=path=>uid+'/'+path;
-  async function encJson(path,obj,suffix){return seal(dek,te.encode(JSON.stringify(obj)),aadFor(path)+(suffix||''));}
-  async function decJson(path,s,suffix){return JSON.parse(td.decode(await open(dek,s,aadFor(path)+(suffix||''))));}
+  // Document bodies are gzipped before encryption ("2:" prefix) — encryption
+  // plus base64 inflates ~33%, and a long AI chat doc would otherwise cross
+  // Firestore's 1 MiB limit. Small values/array entries stay "1:" (plain).
+  const canZip=typeof CompressionStream==='function';
+  async function zip(bytes,dir){
+    const s=new Blob([bytes]).stream().pipeThrough(dir==='c'?new CompressionStream('gzip'):new DecompressionStream('gzip'));
+    return new Uint8Array(await new Response(s).arrayBuffer());
+  }
+  async function encJson(path,obj,suffix){
+    const bytes=te.encode(JSON.stringify(obj));
+    const aad=aadFor(path)+(suffix||'');
+    if(canZip&&!suffix&&bytes.length>512) return '2:'+await seal(dek,await zip(bytes,'c'),aad);
+    return '1:'+await seal(dek,bytes,aad);
+  }
+  async function decJson(path,s,suffix){
+    const aad=aadFor(path)+(suffix||'');
+    if(s.startsWith('2:')) return JSON.parse(td.decode(await zip(await open(dek,s.slice(2),aad),'d')));
+    return JSON.parse(td.decode(await open(dek,s.startsWith('1:')?s.slice(2):s,aad)));
+  }
 
   // raw Firestore doc → plaintext object
   async function decodeDoc(path,rd){
@@ -366,6 +383,122 @@ const VAULT=(()=>{
     },
   };
 
+  // ── local database (signed-out mode) ────────────────────────────────────
+  // Same API as udb, backed by IndexedDB on this device only. Nothing leaves
+  // the device. On sign-in every doc is copied into the account (copyAll).
+  // Own writes notify listeners with hasPendingWrites:true — exactly what
+  // Firestore does — so the app's existing listener guards skip them.
+  const LDB_NAME='spendwise-local';
+  let ldbConn=null;const lstore=new Map();const llisteners=new Set();
+  function ldbOpen(){return new Promise((res,rej)=>{const r=indexedDB.open(LDB_NAME,1);r.onupgradeneeded=()=>r.result.createObjectStore('docs');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
+  function ldbPersist(path,val){
+    if(!ldbConn) return;
+    try{const t=ldbConn.transaction('docs','readwrite');const s=t.objectStore('docs');if(val===undefined)s.delete(path);else s.put(val,path);t.onerror=()=>console.warn('local db write failed',t.error);}
+    catch(e){console.warn('local db write failed',e);}
+  }
+  function lwrite(path,val){
+    if(val===undefined)lstore.delete(path);else lstore.set(path,val);
+    ldbPersist(path,val);
+    const col=path.slice(0,path.indexOf('/'));
+    llisteners.forEach(l=>{if(l.col===col&&(l.id==null||l.id===path.slice(col.length+1)))setTimeout(()=>l.fire(true),0);});
+  }
+  const lmeta=pending=>({hasPendingWrites:!!pending,fromCache:true});
+  class LDocRef{
+    constructor(col,id){this._col=col;this.id=id;this.path=col+'/'+id;}
+    _snap(p){const d=lstore.get(this.path);return new DocSnap(this,d!==undefined,d===undefined?undefined:d,lmeta(p));}
+    async get(){return this._snap(false);}
+    async set(data,opts){
+      const sp=splitPayload(data||{});
+      const merge=!!(opts&&opts.merge)||Object.keys(sp.incs).length>0;
+      const obj=applyMerge(merge?(lstore.get(this.path)||{}):{},sp);
+      for(const k in sp.unions){const cur=Array.isArray(obj[k])?obj[k]:[];const seen=new Set(cur.map(x=>JSON.stringify(x)));sp.unions[k].forEach(x=>{const j=JSON.stringify(x);if(!seen.has(j)){seen.add(j);cur.push(x);}});obj[k]=cur;}
+      lwrite(this.path,obj);
+    }
+    update(data){return this.set(data,{merge:true});}
+    async delete(){lwrite(this.path,undefined);}
+    onSnapshot(cb){
+      const l={col:this._col,id:this.id,fire:p=>{if(l.live)cb(this._snap(p));},live:true};
+      llisteners.add(l);setTimeout(()=>l.fire(false),0);
+      return ()=>{l.live=false;llisteners.delete(l);};
+    }
+  }
+  class LQuery{
+    constructor(col,st){this._col=col;this._st=st||{filters:[],sorts:[],limit:null};}
+    _next(p){return new LQuery(this._col,{...this._st,...p});}
+    where(f,op,v){return this._next({filters:[...this._st.filters,{f,op,v}]});}
+    orderBy(f,dir){return this._next({sorts:[...this._st.sorts,{f,dir:dir==='desc'?-1:1}]});}
+    limit(n){return this._next({limit:n});}
+    _snap(p){
+      const pre=this._col+'/';
+      let docs=[];
+      lstore.forEach((d,path)=>{if(path.startsWith(pre)&&path.indexOf('/',pre.length)<0){const ref=new LDocRef(this._col,path.slice(pre.length));docs.push(new DocSnap(ref,true,d,lmeta(p)));}});
+      docs=docs.filter(ds=>this._st.filters.every(({f,op,v})=>cmpOp(isDocIdPath(f)?ds.id:ds._d[f],op,v)));
+      const s=this._st.sorts;
+      if(s.length) docs.sort((a,b)=>{for(const {f,dir} of s){const x=a._d[f],y=b._d[f];if(x<y)return -dir;if(x>y)return dir;}return 0;});
+      if(this._st.limit!=null) docs=docs.slice(0,this._st.limit);
+      return new QuerySnap(docs,lmeta(p));
+    }
+    async get(){return this._snap(false);}
+    onSnapshot(cb){
+      const l={col:this._col,id:null,fire:p=>{if(l.live)cb(this._snap(p));},live:true};
+      llisteners.add(l);setTimeout(()=>l.fire(false),0);
+      return ()=>{l.live=false;llisteners.delete(l);};
+    }
+  }
+  class LColRef extends LQuery{
+    constructor(name){super(name);}
+    doc(id){return new LDocRef(this._col,id==null?('l'+Date.now().toString(36)+hex(rand(6))):String(id));}
+    async add(data){const r=this.doc();await r.set(data);return r;}
+  }
+  const localdb={
+    collection:name=>new LColRef(name),
+    batch(){const ops=[];const b={set:(r,d,o)=>{ops.push(()=>r.set(d,o));return b;},update:(r,d)=>{ops.push(()=>r.update(d));return b;},delete:r=>{ops.push(()=>r.delete());return b;},commit:async()=>{for(const f of ops)await f();}};return b;},
+    enablePersistence:()=>Promise.resolve(),
+    async runTransaction(fn){
+      const ops=[];
+      const t={get:r=>r.get(),set:(r,d,o)=>{ops.push(()=>r.set(d,o));return t;},update:(r,d)=>{ops.push(()=>r.update(d));return t;},delete:r=>{ops.push(()=>r.delete());return t;}};
+      const res=await fn(t);for(const f of ops)await f();return res;
+    },
+    isLocal:true,
+  };
+  async function openLocal(){
+    if(!ldbConn){
+      ldbConn=await ldbOpen();
+      await new Promise((res,rej)=>{
+        const t=ldbConn.transaction('docs','readonly');const s=t.objectStore('docs');
+        const rq=s.openCursor();
+        rq.onsuccess=()=>{const c=rq.result;if(c){lstore.set(c.key,c.value);c.continue();}else res();};
+        rq.onerror=()=>rej(rq.error);
+      });
+    }
+    return localdb;
+  }
+  function localDocCount(){return lstore.size;}
+  async function clearLocal(){
+    lstore.clear();
+    if(!ldbConn) ldbConn=await ldbOpen();
+    await new Promise((res,rej)=>{const t=ldbConn.transaction('docs','readwrite');t.objectStore('docs').clear();t.oncomplete=()=>res();t.onerror=()=>rej(t.error);});
+  }
+  // Copy every local doc into the signed-in account (encrypted).
+  async function uploadLocal(onProgress){
+    const paths=[...lstore.keys()];let n=0;
+    for(let i=0;i<paths.length;i+=200){
+      const b=udb.batch();
+      paths.slice(i,i+200).forEach(p=>{const k=p.indexOf('/');b.set(udb.collection(p.slice(0,k)).doc(p.slice(k+1)),lstore.get(p));});
+      await b.commit();n+=Math.min(200,paths.length-i);
+      if(onProgress)onProgress(n,paths.length);
+    }
+    return n;
+  }
+  async function accountHasData(){
+    // Any doc at all in the common collections means "existing account".
+    for(const c of ['transactions','income','cashBalances','appConfig']){
+      const s=await raw.collection('users').doc(uid).collection(c).limit(1).get({source:'server'});
+      if(!s.empty) return true;
+    }
+    return false;
+  }
+
   // ── account flows ───────────────────────────────────────────────────────
   function _auth(){return firebase.auth();}
   const metaRef=()=>raw.collection('users').doc(uid).collection('meta').doc('keys');
@@ -544,6 +677,7 @@ const VAULT=(()=>{
     VaultError,normUser,validUser,
     // data
     udb,FV,
+    openLocal,clearLocal,uploadLocal,localDocCount,accountHasData,
     // test hooks
     _t:{seal,open,passwordKeys,recoveryKeys,newRecoveryCode,codeBytes,encodeDoc,decodeDoc,splitPayload,applyMerge,cmpOp,
         _setKey:async(u,rawDek)=>{uid=u;dek=await aesKey(rawDek);}},
