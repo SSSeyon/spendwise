@@ -18,7 +18,8 @@
 #acct-ov .acct-li b{display:block;font-size:0.84rem}
 #acct-ov .acct-li span.i{font-size:1.2rem;line-height:1.2;flex-shrink:0;width:26px;text-align:center}
 #acct-ov .acct-code{font-family:var(--mono);font-size:1.05rem;letter-spacing:0.06em;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:14px;text-align:center;line-height:1.8;user-select:all}
-#acct-ov .acct-err{font-size:0.74rem;color:var(--red);min-height:1em}
+#acct-ov .acct-err{font-size:0.8rem;font-weight:600;color:var(--red);line-height:1.45}
+#acct-ov .acct-err:not(:empty){background:var(--rdim);border:1px solid var(--red);border-radius:var(--rsm);padding:9px 12px}
 #acct-ov .acct-link{font-size:0.74rem;color:var(--accent);cursor:pointer;text-align:center;font-weight:600}
 #acct-ov .acct-muted{font-size:0.7rem;color:var(--text3);text-align:center;line-height:1.5}
 #acct-ov .acct-back{font-size:0.74rem;color:var(--text2);cursor:pointer;align-self:flex-start}
@@ -49,7 +50,15 @@ function _acctShow(html){
 function acctClose(){const ov=document.getElementById('acct-ov');if(ov){ov.style.display='none';ov.innerHTML='';}}
 const _acctEsc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function _acctVal(id){const el=document.getElementById(id);return el?el.value:'';}
-function _acctErr(msg){const el=document.getElementById('acct-err');if(el)el.textContent=msg||'';}
+// Errors must be impossible to miss: on a phone the keyboard can cover the
+// message, so highlight it, scroll it into view and also show a toast.
+function _acctErr(msg){
+  const el=document.getElementById('acct-err');if(el)el.textContent=msg||'';
+  if(!msg) return;
+  if(el)setTimeout(()=>el.scrollIntoView({block:'center',behavior:'smooth'}),50);
+  if(typeof toast==='function')toast(msg);
+  if(typeof haptic==='function')try{haptic();}catch{}
+}
 // Run an async step with the primary button in a busy state.
 async function _acctBusy(btnId,label,fn){
   const b=document.getElementById(btnId);const old=b?b.textContent:'';
