@@ -379,26 +379,20 @@ function nwLoansOutstanding(cfg){
 const PLATFORMS_DEFAULT = [];
 const PLATFORMS_KEY='sw3_platforms';
 function getPlatforms(){return cGet(PLATFORMS_KEY)||PLATFORMS_DEFAULT;}
-// Historical month docs can hold platforms that have since been removed from
-// the config (e.g. USDHoldings, which held ₦799,945 in 2026-07). Reducing a
-// month over the CURRENT platform list silently under-reports those months, so
-// read-only historical surfaces reduce over this union instead. Editing
-// surfaces keep using PLATFORMS, so a closed platform never becomes editable
-// again or reappears in a picker.
+// Month docs can still hold platforms that have since been removed (e.g.
+// USDHoldings, which was moved to Cash). v4.7.1: those are no longer shown or
+// counted on any Investments screen. netWorthFor() still counts their value
+// in past months (see _retiredInvValue) so old net worth doesn't drop.
 const INV_META_FIELDS=new Set(['month','year','id','createdAt','updatedAt']);
-function _retiredLabel(k){
-  return String(k)
-    .replace(/([a-z0-9])([A-Z])/g,'$1 $2')      // camelCase boundary
-    .replace(/([A-Z]+)([A-Z][a-z])/g,'$1 $2')   // acronym boundary: USDHoldings -> USD Holdings
-    .trim()+' (closed)';
-}
-function platformsFor(monthData){
-  const base=getPlatforms();
-  const known=new Set(base.map(p=>p.key));
-  const extra=Object.keys(monthData||{})
-    .filter(k=>!INV_META_FIELDS.has(k)&&!known.has(k)&&Number(monthData[k])>0)
-    .map(k=>({key:k,label:_retiredLabel(k),color:'#8a8f98',currency:'NGN',retired:true}));
-  return extra.length?base.concat(extra):base;
+function platformsFor(monthData){return getPlatforms();}
+// Value held in removed platforms in a month doc.
+function _retiredInvValue(monthData){
+  const known=new Set(getPlatforms().map(p=>p.key));
+  return Object.keys(monthData||{}).reduce((s,k)=>{
+    if(INV_META_FIELDS.has(k)||known.has(k))return s;
+    const v=Number(monthData[k]);
+    return s+(v>0?v:0);
+  },0);
 }
 function savePlatforms(arr){cSet(PLATFORMS_KEY,arr);_syncInvConfig();}
 // PLATFORMS is populated lazily at first render via getPlatforms() — never call at module scope
@@ -2298,11 +2292,15 @@ function updateMonthOptions(){
   monthSel.value=S.dashMonth;
 }
 
-// One currency setting for the whole app (v4.7; there used to be four
-// separate pickers). Set from Home or Settings.
+// One currency setting for the whole app. Every page header has a picker
+// (class cur-sync) and Settings → Preferences has another; changing any of
+// them changes them all.
+function _syncCurrencyPickers(v){
+  document.querySelectorAll('select.cur-sync,select[data-cur-pref]').forEach(s=>{if(s.value!==v)s.value=v;});
+}
 function setDisplayCurrency(v){
   S.dashCurrency=v;cSet(CK.currency,v);
-  const cs=document.getElementById('dash-currency');if(cs&&cs.value!==v)cs.value=v;
+  _syncCurrencyPickers(v);
   renderDashboard();renderExpenses();renderIncome();renderForecast();renderInvestments();renderCashPage();renderDebtors();renderLoans();
 }
 function dashPeriodChange(){
@@ -2469,7 +2467,7 @@ function renderDashboard(){
   const m=S.dashMonth,y=S.dashYear,cur=S.dashCurrency;
   renderGetStarted();
   try{renderMonthReview();}catch(e){console.warn('month review failed',e);}
-  const _cs=document.getElementById('dash-currency');if(_cs&&_cs.value!==cur)_cs.value=cur;
+  _syncCurrencyPickers(cur);
   // Keep all tab currency selects in sync
   ['exp-currency','acct-currency','forecast-currency'].forEach(id=>{const el=document.getElementById(id);if(el&&el.value!==cur)el.value=cur;});
   const isFullYear=m===0;
@@ -2510,7 +2508,9 @@ function renderDashboard(){
   const _fxR=getFxRates(m,y);
   const _nwCfg=_NW.cfg;
   const _nwAccts=_NW.accts;
-  const cashTotal=_NW.cash;
+  // The Cash card lists every account, so its total does too; only the Net
+  // Worth figure leaves out accounts unticked in Settings → Net Worth.
+  const cashTotal=_NW.cashAll;
   const inv=_NW.invDoc;
   // Full portfolio total — ALL platforms, regardless of the Net Worth include
   // toggles. The Investments stat card always shows the complete figure (the
@@ -2584,6 +2584,8 @@ function renderDashboard(){
 
   // Expense chart
   renderCatChart(catSpend,cur,m,y);
+  // Cash Flow is the first chart tab, so draw it whenever it's the one showing.
+  if(document.getElementById('dash-tab-cashflow')?.style.display!=='none')renderCashFlowChart();
 
   // Spend vs budget
   const allCats=[...new Set([...getAllCats(),...Object.keys(catSpend)])];
@@ -3590,7 +3592,10 @@ function netWorthFor(m,y){
   const cfg=getNWConfig();
   const inv=_invDocFor(m,y),cash=_cashDocFor(m,y),fx=getFxRates(m,y);
   const accts=cfg.cashAccounts||getCashAccounts();
-  const cashT=accts.reduce((s,b)=>{const v=+cash[b]||0;return s+(isUSDCashAccount(b)?v*(fx.USD||1600):v);},0);
+  const _cv=b=>{const v=+cash[b]||0;return isUSDCashAccount(b)?v*(fx.USD||1600):v;};
+  const cashT=accts.reduce((s,b)=>s+_cv(b),0);
+  // Every account, whatever the Net Worth toggles say: the Cash card total.
+  const cashAll=getCashAccounts().reduce((s,b)=>s+_cv(b),0);
   const plats=cfg.includeInvestments===false?[]:platformsFor(inv).filter(p=>{
     const fi=getInvPlatformMeta(p.key).assetClass==='fixed_income';
     return !(fi&&cfg.includeFixedIncome===false)&&!(!fi&&cfg.includeEquities===false);
@@ -3598,8 +3603,13 @@ function netWorthFor(m,y){
   const invT=plats.reduce((s,p)=>s+invBalanceFor(p.key,m,y,inv),0);
   const debt=cfg.includeDebtors!==false?nwDebtorsExpected():0;
   const loans=nwLoansOutstanding(cfg);
+  // Removed platforms (e.g. USD Holdings, moved to Cash) still count in past
+  // months' net worth, as cash. Not in the live month, and not in a month whose
+  // cash already has a dollar balance, where it would be counted twice.
+  let retired=0;
+  if(!_invIsLiveMonth(m,y)&&!getCashAccounts().some(b=>isUSDCashAccount(b)&&+cash[b]>0))retired=_retiredInvValue(inv);
   const hasData=Object.keys(cash).some(k=>k!=='month'&&k!=='year'&&+cash[k])||plats.some(p=>invBalanceFor(p.key,m,y,inv));
-  return {total:invT+cashT+debt-loans,inv:invT,cash:cashT,debt,loans,cfg,accts,plats,invDoc:inv,cashDoc:cash,hasData};
+  return {total:invT+cashT+retired+debt-loans,inv:invT,cash:cashT+retired,cashAll,retired,debt,loans,cfg,accts,plats,invDoc:inv,cashDoc:cash,hasData};
 }
 // Fetch every month's saved balances once per session (a few dozen small
 // docs), so the trend chart and badges work on a device that has only ever
@@ -5855,7 +5865,7 @@ function _renderInvInto(suffix){
   const elEditFields=document.getElementById('inv-edit-fields'+s);
 
   // Split platforms into equities and fixed income
-  const _invPlats=live?PLATFORMS:platformsFor(inv);   // past months include closed platforms
+  const _invPlats=PLATFORMS;
   const eqPlats=_invPlats.filter(p=>{const meta=getInvPlatformMeta(p.key);return meta.assetClass!=="fixed_income";});
   const fiPlats=_invPlats.filter(p=>{const meta=getInvPlatformMeta(p.key);return meta.assetClass==="fixed_income";});
   const eqTotal=eqPlats.reduce((acc,p)=>acc+invBalanceFor(p.key,m,y,inv),0);
@@ -7312,6 +7322,7 @@ function dashChartTab(tab, btn){
   // Charts drawn while their tab was hidden have no size, so draw on open.
   if(tab==='networth') renderNWTrendChart();
   if(tab==='trend'&&S.trendChart) S.trendChart.resize();
+  if(tab==='breakdown'&&S.catChart) S.catChart.resize();
 }
 
 // ── CATEGORY TRENDS (6-month sparklines) ──────────────────────────────────
@@ -7409,6 +7420,19 @@ function renderCashFlowChart(){
   if(savings>0)       data.push({from:'Income',to:'Savings',flow:savings});
   else if(savings<0)  data.push({from:'Income',to:'Deficit',flow:Math.abs(savings)});
 
+  // Tapping a flow (or a category below the chart) lists that category's
+  // expenses, as the Breakdown chart does. "Others" lists the smaller ones.
+  const _top=new Set(cats.map(([c])=>c).filter(c=>c!=='Others'));
+  const _cfOpen=to=>{
+    if(to==='Income'){drillDown('income');return;}
+    if(to==='Expenses'){drillDown('expenses');return;}
+    if(to==='Savings'||to==='Deficit')return;
+    const list=to==='Others'?S.txns.filter(t=>!_top.has(t.category)):S.txns.filter(t=>t.category===to);
+    if(!list.length)return;
+    haptic([10]);
+    openCatPopup(to,list,cur,m,y);
+  };
+  S._cfOpen=_cfOpen;
   const ctx=canvas.getContext('2d');
   S._sankeyChart=new Chart(ctx,{
     type:'sankey',
@@ -7427,6 +7451,8 @@ function renderCashFlowChart(){
     options:{
       responsive:true,
       maintainAspectRatio:false,
+      onClick:(_e,els)=>{if(els.length){const d=data[els[0].index];if(d)_cfOpen(d.to);}},
+      onHover:(e,els)=>{if(e.native?.target)e.native.target.style.cursor=els.length?'pointer':'default';},
       plugins:{
         legend:{display:false},
         tooltip:{
@@ -7454,13 +7480,16 @@ function renderCashFlowChart(){
   const legEl=document.getElementById('cashflow-legend');
   if(legEl){
     const items=[
-      {color:colorMap['Income'],label:`Income ${fmtCur(incTotal,cur,m,y)}`},
-      {color:'#f87171',label:`Expenses ${fmtCur(totalExp,cur,m,y)}`},
+      {color:colorMap['Income'],label:`Income ${fmtCur(incTotal,cur,m,y)} ›`,to:'Income'},
+      {color:'#f87171',label:`Expenses ${fmtCur(totalExp,cur,m,y)} ›`,to:'Expenses'},
       savings>=0
         ?{color:colorMap['Savings'],label:`Savings ${fmtCur(savings,cur,m,y)}`}
         :{color:colorMap['Deficit'],label:`Deficit ${fmtCur(Math.abs(savings),cur,m,y)}`},
     ];
-    legEl.innerHTML=items.map(it=>`<span style="display:flex;align-items:center;gap:3px;font-size:0.58rem;color:var(--text3)"><span style="display:inline-block;width:7px;height:7px;border-radius:1px;background:${it.color}"></span>${it.label}</span>`).join('');
+    const _chip=(color,label,to)=>`<span class="cf-chip"${to?` onclick="S._cfOpen('${jsq(to)}')"`:''}><span style="display:inline-block;width:7px;height:7px;border-radius:1px;background:${color}"></span>${label}</span>`;
+    legEl.innerHTML=items.map(it=>_chip(it.color,it.label,it.to)).join('')
+      +`<div style="flex-basis:100%;height:0"></div>`
+      +cats.map(([c,v])=>_chip(colorMap[c],`${esc(c)} ${fmtCur(v,cur,m,y)} ›`,c)).join('');
   }
 }
 
@@ -8815,7 +8844,7 @@ function renderSettData(){
       <div class="exp-card-title" style="margin-bottom:8px">Preferences</div>
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
         <label class="ilabel" style="margin:0">Show amounts in</label>
-        <select class="sfield" style="width:auto;font-size:0.74rem;padding:5px 8px" onchange="setDisplayCurrency(this.value)">
+        <select class="sfield" data-cur-pref="1" style="width:auto;font-size:0.74rem;padding:5px 8px" onchange="setDisplayCurrency(this.value)">
           ${[['NGN','₦ Naira'],['USD','$ US dollars'],['GBP','£ Pounds'],['NATIVE','Each account\'s own currency']].map(([v,l])=>`<option value="${v}"${S.dashCurrency===v?' selected':''}>${l}</option>`).join('')}
         </select>
       </div>
@@ -8828,7 +8857,7 @@ function renderSettData(){
         <button class="btn btn-g btn-sm" style="flex:1" onclick="openGuide()">Open the guide</button>
         <button class="btn btn-g btn-sm" style="flex:1" onclick="reportProblem()">Report a problem</button>
       </div>
-      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.0</div><div style="color:var(--text3);margin-top:4px">v4.7.0: Search from Home, one budget for every month, bills that post themselves, paste bank alerts into Quick add, automatic exchange rates, a month-in-review card, a working Net Worth chart, and many fixes (partial cash-outs, entries dated in another month, investment edits).</div></div>
+      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.1</div><div style="color:var(--text3);margin-top:4px">v4.7.1: Cash total counts every account again, USD Holdings is gone from Investments, Cash Flow is the first chart and its categories open their expenses, and every page has the linked currency picker.</div></div>
     </div>
     <details class="sett-adv" id="sett-adv"${_settAdvOpen?' open':''} ontoggle="_settAdvOpen=this.open">
       <summary>Advanced<span>AI keys, net worth, exchange rates, balance audit</span></summary>
@@ -9119,6 +9148,7 @@ function drillDown(type){
         }
         return fmtRow(b,disp,'var(--blue)');
       }).join('');
+      if(NW.retired)body+=fmtRow('Removed platforms (now cash)',fmtCur(NW.retired,cur,m,y),'var(--blue)');
     }
     if(debtOwed){
       body+=`<div style="font-size:0.65rem;font-weight:700;color:var(--text3);text-transform:uppercase;padding:10px 0 4px">Debtors (expected)</div>`;
@@ -9583,7 +9613,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').cat
 
 
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.7.0';
+const APP_VERSION='v4.7.1';
 async function checkForUpdate(){
   try{
     const res=await fetch(location.origin+location.pathname+'?_='+Date.now(),{cache:'no-store'});

@@ -528,3 +528,5 @@ datalist option{background:var(--bg2);color:var(--text)}
 .mr-row{display:flex;justify-content:space-between;gap:10px;font-size:0.68rem;padding:5px 0;border-top:1px solid var(--border)}
 .mr-row span:first-child{color:var(--text3);flex-shrink:0}
 .mr-row span:last-child{text-align:right;color:var(--text2)}
+.cf-chip{display:flex;align-items:center;gap:3px;font-size:0.6rem;color:var(--text3);cursor:pointer;padding:2px 6px;border-radius:10px;border:1px solid var(--border)}
+.cf-chip:active{background:var(--bg3)}

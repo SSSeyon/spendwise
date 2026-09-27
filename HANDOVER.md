@@ -1,4 +1,4 @@
-# SpendWise — Handover Note (v4.7.0)
+# SpendWise — Handover Note (v4.7.1)
 
 Personal-finance PWA, shared with the owner's friends since v4.5 (2026-09-26). Works signed out (data stays on the device); optional username/password accounts sync across devices with every document **encrypted on the device** — the project owner cannot read other users' data.
 Live: https://ssseyon.github.io/spendwise/
@@ -43,6 +43,13 @@ Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB l
 - **Logos:** served from the app's own `Logos/`; `LOGO_CATALOG` in setup.js resolves a logo by account/platform name at render time (20 added from official Play Store icons); users can upload their own (a 64px data URL stored in their settings).
 - The one-time Fife→Kids / USD Cash / Energy→Fuel repairs no longer run at boot.
 - Tested 2026-09-26 on localhost with two test accounts: sign-up + upload of local data, ciphertext-only storage, restore on sign-in, recovery, password change, concurrent increments from two tabs, live listeners, offline-then-reload, cross-user isolation. Known gap (pre-existing): if the boot sync throws, realtime listeners stay off until a reload.
+
+## v4.7.1 (2026-09-27)
+
+- **Cash card total = every account.** `netWorthFor` returns `cashAll` (all accounts) beside `cash` (only the accounts ticked in Settings → Net Worth). Home's Cash card and badge use `cashAll`; only the Net Worth figure honours the ticks.
+- **Removed platforms are gone from Investments.** `platformsFor()` now returns just the configured platforms (no more "USD Holdings (closed)" rows). The value of a removed platform still left in a past month's doc is counted by `netWorthFor` as cash (`retired`, shown as "Removed platforms (now cash)" in the breakdown), except in the live month and in a month whose cash already has a dollar balance, so old net worth neither drops nor double-counts.
+- **Cash Flow is the first (default) chart tab**; `renderDashboard` draws it when visible. Tapping a flow or a category chip opens that category's expenses (`openCatPopup`); "Others" lists the smaller categories; Income/Expenses chips open those drill-downs.
+- **A currency picker on every page header** (class `cur-sync`) plus Settings → Preferences (`data-cur-pref`). All call `setDisplayCurrency`, which syncs every picker via `_syncCurrencyPickers`.
 
 ## v4.7.0 (2026-09-27) — full review: fixes, clean-up, new features
 
@@ -179,7 +186,7 @@ All three now call **`_doTransfer({kind,from,to,amt,date,notes})`**:
 
 The Investments page is also the **editing** surface for those subs, so past months render **read-only** (no edit panels, no row click handlers, save button hidden, explanatory banner with a jump back to the current month). Five global entry points — `toggleInvEdit`, `addInvSub`, `removeInvSub`, `openInvAdjModal`, `openLiqModal` — carry a `_invIsLiveMonth` guard because they stay reachable from a stale DOM.
 
-`platformsFor(monthData)` returns the configured platforms **plus** any positive non-meta key found in that month's doc, labelled e.g. "USD Holdings (closed)". Use it on read-only month-scoped surfaces only; editing surfaces and pickers keep plain `PLATFORMS`, so a closed platform never becomes editable or selectable again.
+`platformsFor(monthData)` returns the configured platforms only (v4.7.1). Removed platforms left in old month docs are not shown on any Investments screen; `_retiredInvValue(doc)` sums them and `netWorthFor` counts that as cash for past months (see v4.7.1).
 
 ---
 
