@@ -48,7 +48,7 @@ const VAULT=(()=>{
   function validUser(u){return /^[a-z0-9][a-z0-9._-]{2,23}$/.test(u);}
   function userEmail(u){return normUser(u)+'@'+SYNTH_DOMAIN;}
   function userSalt(u){return 'sw1|u:'+normUser(u);}
-  function googleSalt(uid){return 'sw1|g:'+uid;}
+
 
   function newRecoveryCode(){
     const r=rand(25);let s='';
@@ -589,7 +589,7 @@ const VAULT=(()=>{
     if(c==='auth/invalid-credential'||c==='auth/wrong-password'||c==='auth/user-not-found'||c==='auth/invalid-login-credentials') return 'Wrong username or password.';
     if(c==='auth/too-many-requests') return 'Too many attempts. Wait a few minutes and try again.';
     if(c==='auth/network-request-failed') return "You're offline. Connect to the internet to sign in.";
-    if(c==='auth/popup-closed-by-user'||c==='auth/cancelled-popup-request') return 'Sign-in was cancelled.';
+
     return (e&&e.message)||'Something went wrong. Try again.';
   }
   class VaultError extends Error{}
@@ -774,44 +774,6 @@ const VAULT=(()=>{
     return n;
   }
 
-  // Google: sign in, then the user sets/enters a separate data password
-  // (Google gives the app no secret it could encrypt with).
-  async function googleSignIn(){
-    const p=new firebase.auth.GoogleAuthProvider();
-    let cred;
-    try{cred=await _auth().signInWithPopup(p);}
-    catch(e){
-      if(e&&(e.code==='auth/popup-blocked'||e.code==='auth/operation-not-supported-in-this-environment')){await _auth().signInWithRedirect(p);return {redirecting:true};}
-      fail(_authErr(e));
-    }
-    uid=cred.user.uid;
-    const ms=await metaRef().get({source:'server'});
-    return {hasKeys:ms.exists};
-  }
-  async function googleSetPassword(password){
-    if(String(password).length<MIN_PASSWORD) fail(`Use at least ${MIN_PASSWORD} characters for your data password.`);
-    const salt=googleSalt(uid);
-    return _createKeys(uid,salt,await passwordKeys(password,salt),null);
-  }
-  async function googleUnlock(password){
-    const ms=await metaRef().get({source:'server'});
-    const pk=await passwordKeys(password,ms.data().salt);
-    let dekRaw;
-    try{dekRaw=await open(pk.kek,ms.data().wrapPass,'dek|'+uid);}catch{fail('Wrong data password.');}
-    await _installDek(dekRaw,uid);
-  }
-  async function googleRecover(code,newPassword){
-    if(String(newPassword).length<MIN_PASSWORD) fail(`Use at least ${MIN_PASSWORD} characters for your new password.`);
-    const meta=(await metaRef().get({source:'server'})).data();
-    const rk=await recoveryKeys(code,meta.salt);
-    if(!rk) fail("That recovery code isn't valid.");
-    let dekRaw;
-    try{dekRaw=await open(rk.kek,meta.wrapRec,'dek-rec|'+uid);}catch{fail("That recovery code doesn't match this account.");}
-    const pk=await passwordKeys(newPassword,meta.salt);
-    await metaRef().update({wrapPass:await seal(pk.kek,dekRaw,'dek|'+uid)});
-    await _installDek(dekRaw,uid);
-  }
-
   async function signOut(){
     plainCache.clear();dek=null;uid=null;
     try{await idbClear();}catch(e){console.warn('vault: key clear failed',e);}
@@ -829,7 +791,7 @@ const VAULT=(()=>{
     // accounts
     signUp,signIn,recover,changePassword,signOut,
     recoveryInfo,setRecoveryEmail,newRecoveryCodeFor,deleteAccount,verifyPassword,primeVerifier,
-    googleSignIn,googleSetPassword,googleUnlock,googleRecover,
+
     VaultError,normUser,validUser,MIN_PASSWORD,
     // data
     udb,FV,

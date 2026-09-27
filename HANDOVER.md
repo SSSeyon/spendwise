@@ -1,4 +1,4 @@
-# SpendWise — Handover Note (v4.6.0)
+# SpendWise — Handover Note (v4.7.0)
 
 Personal-finance PWA, shared with the owner's friends since v4.5 (2026-09-26). Works signed out (data stays on the device); optional username/password accounts sync across devices with every document **encrypted on the device** — the project owner cannot read other users' data.
 Live: https://ssseyon.github.io/spendwise/
@@ -43,6 +43,49 @@ Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB l
 - **Logos:** served from the app's own `Logos/`; `LOGO_CATALOG` in setup.js resolves a logo by account/platform name at render time (20 added from official Play Store icons); users can upload their own (a 64px data URL stored in their settings).
 - The one-time Fife→Kids / USD Cash / Energy→Fuel repairs no longer run at boot.
 - Tested 2026-09-26 on localhost with two test accounts: sign-up + upload of local data, ciphertext-only storage, restore on sign-in, recovery, password change, concurrent increments from two tabs, live listeners, offline-then-reload, cross-user isolation. Known gap (pre-existing): if the boot sync throws, realtime listeners stay off until a reload.
+
+## v4.7.0 (2026-09-27) — full review: fixes, clean-up, new features
+
+Read this before changing storage, budgets, recurring, history or net worth; each works differently from before.
+
+**This device's data copy (`cGet`/`cSet`) now lives in IndexedDB** (`spendwise-cache` / `kv`), not localStorage. The whole store is read into memory by `cacheInit()` before `initFirebase()` runs (boot is `cacheInit().then(initFirebase)`), so reads stay synchronous; writes reach IndexedDB about 250 ms later and are flushed on `visibilitychange`/`pagehide`. Values are JSON strings, so each `cGet` returns a fresh copy. On first run the old localStorage copy is moved across and removed (`sw3_cache_moved`). Rules:
+- Use `cKeys(prefix)` to list cached keys and `cDel(k)` to delete. **Never scan `localStorage` for data keys** (`Object.keys(localStorage)`), because they aren't there any more.
+- Keys that stay in localStorage: `_CACHE_LS` (retry queues, dashboard order, hidden cards, currency) and anything matching `_LS_ONLY` (theme, lock, button position, flags). If you add a small preference read directly with `localStorage`, add it to `_LS_ONLY`.
+- If IndexedDB fails, `_cMode` falls back to `'ls'` (the old behaviour).
+
+**Monthly history** (`sw3_history`, `historicalSummary`): opening the app reads only the summary docs. A full scan of `transactions` + `income` runs at most once a day per device (`sw3_hist_scan_at`; always in local mode). It also refreshes the cached copy of every month, which search, insights and the review card rely on. Summary docs are written only when totals change, via `_histTouch(m,y)`, which runs after every save and delete. Before this release every launch read about 1,300 docs and wrote about 35. `_checkMonthEndClose` was removed because its data was never read.
+
+**Records land in their own month:** `_placeRecord('txn'|'inc', rec, oldRec)` files a new or edited record under its date's month. `S.txns`/`S.income` only ever hold the month on screen. A month never loaded on the device is left alone. Use it for any new write path.
+
+**Budgets:** one **standard budget** (`profile.defBudgets` → `DEF_BUDGETS`) applies to every month. A `budgets/{YYYY-MM}` doc is an **override** for that month. Cache key `sw3_bud_<y>_<m>` holds `{categories}` or `{none:true}`. Use `budgetFor(m,y)` and `budgetOverride(m,y)`. Settings → Budget saves with "Save for every month" (which also drops this month's override) or "Only <month>"; `resetMonthBudget()` removes an override. `_migrateStandardBudget()` runs once per account: the latest saved month becomes the standard, and identical overrides for this month onward are deleted. There is a profile listener, so a standard changed elsewhere applies live.
+
+**Recurring** replaces Fixed Bills (`_migrateFixedBills()` runs once and converts `profile.fixedObl` + `sw3_custom_obl` into monthly items with no bank and auto off; Treasury's "fixed obligations" is `_recurMonthly` summed over recurring expenses).
+- Items have `id`, `day` (the anchor day, so the 31st becomes the last day of short months) and `auto`.
+- `runAutoRecurring()` runs after boot and after pull-to-refresh. It posts every due occurrence of auto items (up to 12 per item). Each occurrence is claimed with `_recurClaim` inside a transaction on `appConfig/recurring`, so two devices can't both post it.
+- `postRecurring(id)` (manual, asks first) and `skipRecurring(id)` use the same claim.
+
+**Net worth:** `netWorthFor(m,y)` is the only calculation. Home, the breakdown, the trend chart, the full-year view and the ▲/▼ badge all use it. `ensureBalanceHistory()` fetches every month's `cashBalances` + `investments` once per 10 minutes when the chart or the full-year view needs past months; the empty Net Worth chart was that data missing on the device.
+
+**Exchange rates:** `getFxRates` checks your own rate (`fxOverrides`), then the automatic rate (`sw3_fx_auto` / `appConfig/fxAuto`, fetched daily for the current month from open.er-api.com by `fxAutoUpdate()`; that host is network-only in `sw.js`), then the built-in `FX_RATES`, then the nearest earlier month (`_nearestFx`). Stored `amtNGN` values never change; only live conversions do.
+
+**Other changes:**
+- **Search:** one search for every month, opened from Home (`openGlobalSearch`). It shows cached months first, then the database (once per 10 min). It matches amounts too. The Expenses box only filters the month on screen.
+- **Quick add:** reads pasted bank alerts (`_qaParseAlert`, `quickAddOnPaste`, 📋 `quickAddPaste`), before the typed-phrase parser and the AI.
+- **Month in review** card on Home, days 1–7 (`renderMonthReview`).
+- **Income is edited in the + form** (`openEditInc`); the separate income window is gone. The type buttons, Repeats and Quick add hide while editing (`_setEditMode`).
+- Removing a debtor or loan can reverse its bank movements (sources `debt-remove-reverse` / `loan-remove-reverse`).
+- A partial cash-out of an investment now keeps the remainder invested.
+- The Balance Audit now counts debtor repayments and skips the interest income record of a cash-out (the ledger already holds the whole payout).
+- Cash interest rates (`appConfig/cashInterest`), investment movements (in `appConfig/investments.invMoves`), the savings target (profile) and custom-category emoji (`customCats.icons`) now sync.
+- One interest formula: `interestFor()`.
+- Pull-to-refresh re-syncs data (`forceSyncNow`) instead of wiping the service worker.
+- One currency setting (`setDisplayCurrency`: Home picker and Settings → Preferences).
+- Year pickers are built from the data (`_dataYears`). Month strips can cross years (`_monthStrip`).
+- Chart.js is pinned to 4.5.1 (index.html and sw.js, CACHE `spendwise-v21`).
+
+**Removed:** the Pie chart, Fixed Bills and School Fees screens, the Cash-page quick transfer and the Move window (the + form's Transfer covers them; `_doTransfer` is still the only engine), the separate income window, swipe-to-delete (never wired up), the dashboard scroll rail, the withdrawal/realised-gain code, `doExport`, the month-end close, Google sign-in (never switched on), old one-off migrations, the owner's leftovers ("Union", hard-coded USD platforms, "Semasa"), the logo-filename boxes (replaced by an upload button, `pickLogo`), and the pinch-zoom lock.
+
+**Not done (deliberately):** deriving balances from transactions instead of storing running monthly balances. That would remove the ripple/ledger/audit machinery, but it changes how every stored balance, including three years of hand-entered ones, is interpreted, so it needs its own release with a migration checked against real data.
 
 ## v4.6.2 (2026-09-26)
 
@@ -121,7 +164,7 @@ There used to be **three** transfer implementations (expense modal, Move modal, 
 All three now call **`_doTransfer({kind,from,to,amt,date,notes})`**:
 - month/year from the transaction **date** (`_ymOf`), never the viewed month;
 - cash legs via **`_adjustCash(bank,delta,m,y,source,ref,dateStr)`** — atomic `FieldValue.increment`, ledger entry carrying the real date and a readable reason, ripple-forward into later months, offline queue;
-- investment legs via `_invDeposit`/`_invWithdraw`, plus `addInvMovement`/`addInvWithdrawal`;
+- investment legs via `_invDeposit`/`_invWithdraw`, plus `addInvMovement`;
 - `_cashBalFor` resolves the guard balance the *same way* `_adjustCash` resolves the write target, so the guard and the write can't disagree about which month they mean.
 
 **Investment legs dated outside the live calendar month are refused.** Sub principals are a single current-month snapshot, so a back-dated investment leg would write today's principals into a past month *and* corrupt today's figures. Cash-to-cash back-dating is fully supported.
@@ -150,7 +193,7 @@ Deliberately still silent (~18 sites — do **not** "fix" these; the noise would
 
 ## Realtime listener coverage
 
-Live: `transactions`, `income`, `cashBalances`, `debtors`, `loans`, `aiChats`, `specialBudgets`, `transfers`, `budgets`, and the `appConfig` docs `aiKeys`, `cashAccounts`, `cashLogos`, `customCats`, `customLines`, `fxOverrides`, `goals`, `investments`, `interestPosts`, `nwConfig`, `recurring`, `rules`.
+Live: `transactions`, `income`, `cashBalances`, `debtors`, `loans`, `aiChats`, `specialBudgets`, `transfers`, `budgets`, and the `appConfig` docs `aiKeys`, `cashAccounts`, `cashInterest`, `cashLogos`, `customCats`, `customLines`, `fxOverrides`, `goals`, `investments`, `interestPosts`, `nwConfig`, `profile`, `recurring`, `rules`.
 
 **`cashLedger` has no listener, by decision** — it is append-only via `arrayUnion` and capped at 500 entries/month, so a listener would re-download the whole array on every transaction from any device. Its only consumer (the balance audit) does a fresh `.get()` when opened. The reasoning is recorded in a comment in `startRealtimeListeners()` so it doesn't read as an oversight.
 
@@ -224,7 +267,7 @@ Tap the version label in the header (`forceHardRefresh()`) to force a client pas
 
 ## Boot sequence / data-integrity hazard (read before touching anything that writes on render)
 
-`initFirebase()` calls `renderAll()` **synchronously from local cache before `syncAll()` (async, 15 parallel Firestore reads) completes**, then renders again after sync. Any function that is called from a render path and both reads-and-writes based on "is this empty" is unsafe — it can't distinguish "genuinely empty" from "not loaded yet," and on a fresh/empty local cache (any new preview browser profile) it will fire during the pre-sync window and persist wrong data. `migrateToSubs`'s `_invMigrateGate` (v4.3.2, see above) is the pattern to copy if another auto-migrate-on-empty function is ever added: gate the **write**, not the **read**, on a flag that only flips true after a real sync.
+`initFirebase()` (after `cacheInit()`, v4.7) calls `renderAll()` **synchronously from local cache before `syncAll()` (async, ~26 parallel Firestore reads) completes**, then renders again after sync. The v4.7 one-time migrations (`_migrateFixedBills`, `_migrateStandardBudget`) run only after a real sync for this reason. Any function that is called from a render path and both reads-and-writes based on "is this empty" is unsafe — it can't distinguish "genuinely empty" from "not loaded yet," and on a fresh/empty local cache (any new preview browser profile) it will fire during the pre-sync window and persist wrong data. `migrateToSubs`'s `_invMigrateGate` (v4.3.2, see above) is the pattern to copy if another auto-migrate-on-empty function is ever added: gate the **write**, not the **read**, on a flag that only flips true after a real sync.
 
 ---
 
@@ -232,7 +275,7 @@ Tap the version label in the header (`forceHardRefresh()`) to force a client pas
 
 Preview dev-server config lives in this repo's own `.claude/launch.json`, config name `"spendwise"`, port **8972**, serving this repo via a PowerShell static-file script (`serve-spendwise.ps1`). (Earlier note about it living in a sibling project's launch.json is outdated — it's in-repo now.)
 
-**v4.5:** a fresh preview profile boots in **local** mode (IndexedDB only, no Firestore writes), so exploratory clicking is safe there. For cloud mode, use the test accounts in `.claude/test-accounts.local.md` — the page can `fetch('.claude/test-accounts.local.md')`, so passwords never appear in commands — which write only under their own `users/{uid}`. The service worker caches `?v=` assets cache-first: after an edit, unregister it and `fetch(file,{cache:'reload'})` each changed file before reloading.
+**v4.5:** a fresh preview profile boots in **local** mode (IndexedDB only, no Firestore writes), so exploratory clicking is safe there. For cloud mode, use the test accounts in `.claude/test-accounts.local.md` — the page can `fetch('.claude/test-accounts.local.md')`, so passwords never appear in commands — which write only under their own `users/{uid}`. The service worker caches `?v=` assets cache-first: after an edit, unregister it, **delete the Cache Storage caches** (`caches.keys()` → `caches.delete`) and `fetch(file,{cache:'reload'})` each changed file before reloading; otherwise the re-registered worker serves the old file again.
 
 **Reminder**: this preview connects to live production Firestore (no staging exists). Prefer read-only inspection (`.get({source:'server'})`) when diagnosing data issues, and get explicit user confirmation before writing agent-inferred values to production docs — Claude Code's own permission system will generally block such writes until confirmed anyway.
 

@@ -1,7 +1,7 @@
 // SpendWise Service Worker
 // Stale-while-revalidate for the HTML shell (instant boot, refreshed in the
 // background); cache-first for version-queried assets, fonts and CDN libs.
-const CACHE = 'spendwise-v20';
+const CACHE = 'spendwise-v21';
 
 // Only truly-static, rarely-changing assets are pre-cached. index.html,
 // app.js and styles.css are intentionally NOT pre-cached here: index.html is
@@ -13,7 +13,10 @@ const STATIC = [
   './manifest.json',
   'https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;500;600;700;800&display=swap',
   'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap',
-  'https://cdn.jsdelivr.net/npm/chart.js',
+  // Pinned (v4.7): an unversioned URL would pick up a new major version the
+  // next time the offline copy is rebuilt, which could break every chart.
+  'https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js',
+  'https://cdn.jsdelivr.net/npm/chartjs-chart-sankey@0.12.0/dist/chartjs-chart-sankey.min.js',
   'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
   'https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js',
   'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js',
@@ -28,6 +31,7 @@ const NETWORK_ONLY = [
   'securetoken.googleapis.com',
   'firebaseinstallations.googleapis.com',
   'generativelanguage.googleapis.com',
+  'open.er-api.com',            // daily exchange rates: never serve a cached copy
 ];
 // NOTE: fonts.gstatic.com is deliberately NOT network-only. Google serves font
 // binaries from immutable, hash-named URLs, so they are safe to cache forever —

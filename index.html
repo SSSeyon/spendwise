@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>SpendWise</title>
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -16,13 +16,13 @@
 <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-sankey@0.12.0/dist/chartjs-chart-sankey.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
-<link rel="stylesheet" href="styles.css?v=4.6.2">
+<link rel="stylesheet" href="styles.css?v=4.7.0">
 </head>
 <body>
 <div id="ptr-indicator"><span class="ptr-arrow" id="ptr-arrow">↓</span><span class="ptr-label" id="ptr-label">Pull to refresh</span></div>
@@ -38,7 +38,7 @@
       <div class="sync-dot" id="sync-dot"></div>
       <span class="sync-lbl" id="sync-lbl">—</span>
       <span id="oq-badge" style="display:none;margin-left:4px;font-size:0.58rem;color:var(--gold);font-family:var(--mono)"></span>
-      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v4.6.2</span>
+      <span class="ver-lbl" style="margin-left:3px;cursor:pointer" onclick="forceHardRefresh()" title="Tap to hard refresh">v4.7.0</span>
     </div>
     <button class="notif-btn" id="notif-btn" onclick="toggleNotifPanel()" aria-label="Alerts">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -57,14 +57,6 @@
   <div id="notif-list"><div class="notif-empty">No alerts right now</div></div>
 </div>
 <div id="notif-scrim" style="display:none;position:fixed;inset:0;z-index:199" onclick="closeNotifPanel()"></div>
-<div id="dash-scroll-rail">
-  <div id="dash-scroll-up" onclick="_railScroll(-120)">⌃</div>
-  <div style="position:relative;flex:1;width:22px">
-    <div id="dash-scroll-track"></div>
-    <div id="dash-scroll-thumb"></div>
-  </div>
-  <div id="dash-scroll-dn" onclick="_railScroll(120)">⌄</div>
-</div>
 
 <div class="app"><div class="app-body" id="app-body">
 
@@ -73,11 +65,16 @@
   <div class="pg-sub" id="dash-period-label"></div>
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0">
     <div class="pg-title" style="margin-bottom:0">Dashboard</div>
-    <button class="dash-edit-btn" id="dash-edit-btn" onclick="toggleDashEdit()">Edit</button>
+    <div style="display:flex;gap:6px;align-items:center">
+      <button class="dash-edit-btn dash-search-btn" onclick="openGlobalSearch()" aria-label="Search every month" title="Search every month"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Search</button>
+      <button class="dash-edit-btn" id="dash-edit-btn" onclick="toggleDashEdit()">Edit</button>
+    </div>
   </div>
   <div class="stale-bar" id="stale-bar" style="display:none">◷ Cached data from <span id="stale-time"></span> — syncing…</div>
   <!-- Getting started checklist (new users only; dismissible) -->
   <div id="dash-getstarted"></div>
+  <!-- Month in review (first days of a month; dismissible) -->
+  <div id="dash-review"></div>
   <!-- Smart alerts (predictive spend + recurring) -->
   <div id="dash-alerts"></div>
   <!-- Upcoming recurring bills (shown only when something is due) -->
@@ -100,7 +97,7 @@
   <div class="period-bar">
     <select class="period-sel" id="dash-year" onchange="dashPeriodChange()"></select>
     <select class="period-sel" id="dash-month-sel" onchange="dashPeriodChange()"></select>
-    <select class="period-sel" id="dash-currency" onchange="dashPeriodChange()">
+    <select class="period-sel" id="dash-currency" onchange="setDisplayCurrency(this.value)" title="Show amounts in">
       <option value="NGN">₦ NGN</option>
       <option value="USD">$ USD</option>
       <option value="GBP">£ GBP</option>
@@ -168,7 +165,7 @@
         <div id="dash-tab-breakdown">
           <div class="chart-btns" id="chart-btns">
             <button class="chart-btn active" onclick="setChartType('doughnut',this)">Donut</button>
-            <button class="chart-btn" onclick="setChartType('pie',this)">Pie</button>
+
             <button class="chart-btn" onclick="setChartType('bar',this)">Bar</button>
             <button class="chart-btn" onclick="setChartType('hbar',this)">H-Bar</button>
           </div>
@@ -184,6 +181,7 @@
         </div>
         <div id="dash-tab-networth" style="display:none">
           <canvas id="nw-trend-chart" style="max-height:160px"></canvas>
+          <div class="csub" id="nw-trend-note" style="margin-top:6px"></div>
         </div>
         <div id="dash-tab-cashflow" style="display:none">
           <div style="position:relative;width:100%;height:260px">
@@ -240,9 +238,6 @@
   <div class="pg-sticky">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
     <div class="pg-title" style="margin-bottom:0" id="exp-page-title">Expenses</div>
-    <select class="period-sel" id="exp-currency" onchange="S.dashCurrency=this.value;cSet('sw3_currency',this.value);renderExpenses();renderIncome();renderDashboard()" style="font-size:0.68rem;padding:4px 8px">
-      <option value="NGN">₦ NGN</option><option value="USD">$ USD</option><option value="GBP">£ GBP</option><option value="NATIVE">◈ Effective</option>
-    </select>
   </div>
   <div class="tabs" style="margin-bottom:8px">
     <button class="tab active" id="exp-tab-btn" onclick="switchExpTab('expenses',this)">Expenses</button>
@@ -256,9 +251,8 @@
     <div style="display:flex;gap:8px;margin-bottom:10px">
       <div class="search-bar" style="flex:1">
         <span class="search-icon">🔍</span>
-        <input type="text" id="exp-search" placeholder="Search items or notes…" oninput="renderExpenses()">
+        <input type="text" id="exp-search" placeholder="Filter this month…" oninput="renderExpenses()">
       </div>
-      <button class="btn btn-g btn-sm" onclick="openGlobalSearch()" style="flex-shrink:0;padding:8px 12px" title="Search every month, not just this one">All months</button>
       <button class="btn btn-g btn-sm" onclick="openFilterDrawer()" style="flex-shrink:0;padding:8px 12px">Filter ↑</button>
     </div>
     <div style="display:flex;gap:6px;margin-bottom:10px">
@@ -292,9 +286,6 @@
 <div class="pg" id="pg-accounts">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
     <div class="pg-title" style="margin-bottom:0">Accounts</div>
-    <select class="period-sel" id="acct-currency" onchange="S.dashCurrency=this.value;cSet('sw3_currency',this.value);renderInvestments();renderCashPage();renderDashboard()" style="font-size:0.68rem;padding:4px 8px">
-      <option value="NGN">₦ NGN</option><option value="USD">$ USD</option><option value="GBP">£ GBP</option><option value="NATIVE">◈ Effective</option>
-    </select>
   </div>
   <div class="pg-sticky">
   <div class="tabs">
@@ -311,24 +302,18 @@
     <div class="card" id="cash-summary"></div>
     <div class="card"><div class="clabel" style="margin-bottom:12px">Balance by Account</div><div id="cash-breakdown"></div></div>
     <!-- Edit mode toggle -->
-    <button class="btn btn-g btn-full" style="margin-bottom:10px" onclick="toggleCashEdit()">✎ Edit Balances</button>
-    <button class="btn btn-g btn-full" style="margin-bottom:10px" onclick="openXfrHistory()">⇄ Transfer History</button>
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <button class="btn btn-g" style="flex:1" onclick="openExpModal('transfer')">⇄ Transfer</button>
+      <button class="btn btn-g" style="flex:1" onclick="openXfrHistory()">Transfer history</button>
+    </div>
+    <button class="btn btn-g btn-full" style="margin-bottom:10px" onclick="toggleCashEdit()">✎ Edit balances &amp; accounts</button>
     <div id="cash-edit-section" style="display:none">
       <div class="card">
         <div class="clabel" style="margin-bottom:10px">Update — <span id="cash-month-label"></span></div>
         <div id="cash-inputs"></div>
         <button class="btn btn-p btn-full" onclick="saveCash()">Save Cash Balances</button>
       </div>
-      <div class="card">
-        <div class="clabel" style="margin-bottom:10px">Transfer Between Accounts</div>
-        <div class="gform">
-          <div class="ig"><label class="ilabel">From</label><select class="sfield" id="xfr-from"></select></div>
-          <div class="ig"><label class="ilabel">To</label><select class="sfield" id="xfr-to"></select></div>
-        </div>
-        <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" type="text" id="xfr-amt" placeholder="0"></div>
-        <button class="btn btn-g btn-full" onclick="transferFunds()">Transfer Between Accounts</button>
-        <button class="btn btn-p btn-full" style="margin-top:8px" onclick="openMoveFunds()">Move: Cash ↔ Investment</button>
-      </div>
+
       <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div class="clabel" style="margin:0">Your Accounts</div><button class="btn btn-p btn-sm" onclick="suOpenPicker('bank')">+ Add accounts</button></div>
         <div id="custom-accts-list" style="margin-top:8px"></div>
@@ -384,9 +369,6 @@
   <div class="pg-sticky">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
     <div class="pg-title" style="margin-bottom:0">Analytics</div>
-    <select class="period-sel" id="forecast-currency" onchange="S.dashCurrency=this.value;cSet('sw3_currency',this.value);renderForecast();renderDashboard()" style="font-size:0.68rem;padding:4px 8px">
-      <option value="NGN">₦ NGN</option><option value="USD">$ USD</option><option value="GBP">£ GBP</option><option value="NATIVE">◈ Effective</option>
-    </select>
   </div>
   <div class="tabs" style="margin-bottom:6px">
     <button class="tab active" onclick="projTab('insights',this)">Insights</button>
@@ -398,7 +380,7 @@
   <div id="proj-insights"></div>
   <div id="proj-treasury" style="display:none"></div>
   <div id="proj-history" style="display:none"></div>
-  <div id="proj-obligations" style="display:none"></div>
+
   <div id="proj-ai" style="display:none"></div>
 </div>
 
@@ -447,14 +429,15 @@
     <div class="mhdr"><div class="mtitle" id="exp-modal-title">New Expense</div><button class="mclose" onclick="closeMod('exp-modal')">×</button></div>
     <!-- Quick add: type or say it, the form fills itself in (review, then save) -->
     <div class="qa-box">
-      <input type="search" class="qa-input" id="qa-text" placeholder="Quick add: “5k lunch from GTB yesterday”" enterkeyhint="go" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();quickAddParse();}">
+      <input type="search" class="qa-input" id="qa-text" placeholder="Quick add: “5k lunch from GTB” or paste a bank alert" enterkeyhint="go" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();quickAddParse();}" onpaste="quickAddOnPaste(event)">
+      <button class="qa-btn" id="qa-paste" onclick="quickAddPaste()" title="Paste a bank alert" aria-label="Paste a bank alert">📋</button>
       <button class="qa-btn" id="qa-mic" onclick="quickAddVoice()" title="Say it" aria-label="Say it">🎤</button>
       <button class="qa-btn qa-go" id="qa-go" onclick="quickAddParse()" title="Fill in the form" aria-label="Fill in the form">✦</button>
     </div>
     <div class="qa-status" id="qa-status"></div>
 
     <!-- Transaction type pills -->
-    <div style="display:flex;gap:6px;margin-bottom:14px">
+    <div id="e-type-row" style="display:flex;gap:6px;margin-bottom:14px">
       <button class="btn btn-d btn-sm active-type" id="type-expense" onclick="setTxnType('expense')" style="flex:1;border-width:2px">Expense</button>
       <button class="btn btn-inc btn-sm" id="type-income" onclick="setTxnType('income')" style="flex:1">Income</button>
       <button class="btn btn-exp btn-sm" id="type-transfer" onclick="setTxnType('transfer')" style="flex:1">Transfer</button>
@@ -491,7 +474,7 @@
         <div class="ig"><label class="ilabel">Category</label>
           <select class="sfield" id="i-cat2"></select>
         </div>
-        <div class="ig"><label class="ilabel">Bank Received Into</label><select class="sfield" id="i-bank2"></select></div>
+        <div class="ig"><label class="ilabel">Bank Received Into</label><select class="sfield" id="i-bank2" onchange="updateExpAmtLabel()"></select></div>
       </div>
     </div>
     <!-- Transfer fields -->
@@ -511,18 +494,19 @@
       <div class="ig"><label class="ilabel">Date</label><input class="ifield" type="date" id="e-date" onchange="updateExpFxHint()"></div>
       <div class="ig"><label class="ilabel">Notes</label><textarea class="ifield ta-notes" id="e-notes" rows="1" placeholder="Optional" oninput="_autoGrowTA(this)"></textarea></div>
     </div>
-    <!-- Recurring toggle -->
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);margin-bottom:12px">
-      <div><div style="font-size:0.76rem;font-weight:600">Recurring transaction</div><div style="font-size:0.62rem;color:var(--text2)" id="recur-desc">One-time</div></div>
-      <div style="display:flex;align-items:center;gap:8px">
+    <!-- Repeats (hidden while editing) -->
+    <div id="e-recur-row" style="display:flex;flex-direction:column;gap:8px;padding:10px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);margin-bottom:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div><div style="font-size:0.76rem;font-weight:600">Repeats</div><div style="font-size:0.62rem;color:var(--text2)" id="recur-desc">One-time</div></div>
         <select class="sfield" id="e-recur" onchange="updateRecurDesc()" style="font-size:0.7rem;padding:4px 8px;width:auto">
-          <option value="">None</option>
+          <option value="">No</option>
           <option value="weekly">Weekly</option>
           <option value="monthly">Monthly</option>
           <option value="quarterly">Quarterly</option>
-          <option value="annually">Annually</option>
+          <option value="annually">Yearly</option>
         </select>
       </div>
+      <label id="e-recur-auto-row" style="display:none;align-items:center;gap:6px;font-size:0.68rem;color:var(--text2);cursor:pointer"><input type="checkbox" id="e-recur-auto"> Post it automatically each time (otherwise it waits on Home for a tap)</label>
     </div>
     <input type="hidden" id="e-type" value="expense">
     <input type="hidden" id="e-edit-id" value="">
@@ -555,45 +539,12 @@
   </div>
 </div>
 
-<div class="mbackdrop" id="move-modal">
-  <div class="modal">
-    <div class="mhdr">
-      <div class="mtitle" id="move-modal-title">Move Funds</div>
-      <button class="mclose" onclick="closeMod('move-modal')">×</button>
-    </div>
-    <!-- Direction toggle -->
-    <div style="display:flex;gap:8px;margin-bottom:16px">
-      <button class="btn btn-p btn-sm active-type" id="move-dir-ci" onclick="setMoveDir('cash-inv')" style="flex:1">Cash → Investment</button>
-      <button class="btn btn-g btn-sm" id="move-dir-ic" onclick="setMoveDir('inv-cash')" style="flex:1">Investment → Cash</button>
-    </div>
-    <div class="ig">
-      <label class="ilabel" id="move-from-label">From Account (Cash)</label>
-      <select class="sfield" id="move-from"></select>
-    </div>
-    <div class="ig">
-      <label class="ilabel" id="move-to-label">To Platform (Investment)</label>
-      <select class="sfield" id="move-to"></select>
-    </div>
-    <div class="ig">
-      <label class="ilabel">Amount (₦)</label>
-      <input class="ifield" type="text" id="move-amt" placeholder="0" style="font-size:1.1rem">
-    </div>
-    <div class="ig">
-      <label class="ilabel">Date</label>
-      <input class="ifield" type="date" id="move-date">
-    </div>
-    <div class="ig">
-      <label class="ilabel">Notes (optional)</label>
-      <textarea class="ifield ta-notes" id="move-notes" rows="1" placeholder="e.g. Monthly savings deposit" oninput="_autoGrowTA(this)"></textarea>
-    </div>
-    <button class="btn btn-p btn-full" onclick="saveMoveFunds()">Move Funds</button>
-  </div>
-</div>
+
 <div class="mbackdrop" id="recur-modal">
   <div class="modal" onclick="event.stopPropagation()" style="max-height:85vh">
     <div class="mhdr"><div class="mtitle">Recurring Transactions</div><button class="mclose" onclick="closeMod('recur-modal')">×</button></div>
     <div id="recur-list"></div>
-    <div style="margin-top:8px;font-size:0.7rem;color:var(--text2)">Tap any recurring transaction to post it for this month.</div>
+    <div style="margin-top:8px;font-size:0.7rem;color:var(--text2);line-height:1.5">Items marked "Post automatically" are recorded by themselves when the app opens on or after their date. The rest show on Home when due; tap to post, or skip one. To add one, choose "Repeats" when you add an expense or income.</div>
   </div>
 </div>
 
@@ -617,30 +568,6 @@
   </div>
 </div>
 
-<!-- INCOME MODAL -->
-<div class="mbackdrop" id="inc-modal">
-  <div class="modal" onclick="event.stopPropagation()">
-    <div class="mhdr"><div class="mtitle" id="inc-modal-title">Record Income</div><button class="mclose" onclick="closeMod('inc-modal')">×</button></div>
-    <div class="ig"><label class="ilabel" id="i-amt-label">Amount (₦)</label><input class="ifield" type="text" id="i-amt" placeholder="0" style="font-size:1.2rem"></div>
-    <div class="gform">
-      <div class="ig"><label class="ilabel">Category</label>
-        <select class="sfield" id="i-cat">
-          <option>Salary</option><option>Allowance</option><option>Bonus / Dividend</option>
-          <option>Interest Income</option><option>Other</option>
-        </select>
-      </div>
-      <div class="ig"><label class="ilabel">Bank Received Into</label>
-        <select class="sfield" id="i-bank" onchange="updateIncAmtLabel()"></select>
-      </div>
-    </div>
-    <div class="gform">
-      <div class="ig"><label class="ilabel">Date</label><input class="ifield" type="date" id="i-date"></div>
-      <div class="ig"><label class="ilabel">Notes</label><textarea class="ifield ta-notes" id="i-notes" rows="1" placeholder="Optional" oninput="_autoGrowTA(this)"></textarea></div>
-    </div>
-    <input type="hidden" id="i-edit-id" value="">
-    <button class="btn btn-inc btn-full" id="i-save" onclick="saveIncome()">Record Income</button>
-  </div>
-</div>
 
 <!-- MERGE CATEGORY MODAL -->
 <!-- ── Liquidate Investment Modal ── -->
@@ -723,7 +650,7 @@
 <div class="mbackdrop" id="deb-modal">
   <div class="modal" onclick="event.stopPropagation()">
     <div class="mhdr"><div class="mtitle" id="deb-mod-title">Add Debtor</div><button class="mclose" onclick="closeMod('deb-modal')">×</button></div>
-    <div class="ig"><label class="ilabel">Name</label><input class="ifield" type="text" id="d-name" placeholder="e.g. Semasa"></div>
+    <div class="ig"><label class="ilabel">Name</label><input class="ifield" type="text" id="d-name" placeholder="Who owes you"></div>
     <div class="gform">
       <div class="ig"><label class="ilabel">Currency</label><select class="sfield" id="d-cur"><option>NGN</option><option>USD</option><option>GBP</option></select></div>
       <div class="ig"><label class="ilabel">Type</label><select class="sfield" id="d-type"><option>Loan</option><option>Gift</option><option>Other</option></select></div>
@@ -789,9 +716,9 @@
   </div>
 </div>
 
-<script src="vault.js?v=4.6.2"></script>
-<script src="account.js?v=4.6.2"></script>
-<script src="setup.js?v=4.6.2"></script>
-<script src="app.js?v=4.6.2"></script>
+<script src="vault.js?v=4.7.0"></script>
+<script src="account.js?v=4.7.0"></script>
+<script src="setup.js?v=4.7.0"></script>
+<script src="app.js?v=4.7.0"></script>
 </body>
 </html>

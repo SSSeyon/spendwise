@@ -92,12 +92,17 @@ const CAT_LINES = {
   'Education': ['Tuition','Books'],
 };
 const _BASE_CATS = Object.keys(CAT_LINES);
-// getCustomCats is safe to call any time — reads localStorage directly, no dependency on cGet/S
-function getCustomCats(){try{const v=localStorage.getItem('sw3_custom_cats');return v?JSON.parse(v):[];}catch{return[];}}
-function saveCustomCats(arr){
-  try{localStorage.setItem('sw3_custom_cats',JSON.stringify(arr));}catch{}
+// Custom categories and their emoji (the emoji used to live only in memory,
+// so a new category lost its icon on reload).
+function getCustomCats(){return cGet('sw3_custom_cats')||[];}
+function getCustomIcons(){return cGet('sw3_custom_icons')||{};}
+function _applyCustomIcons(){Object.assign(CAT_ICONS,getCustomIcons());}
+function saveCustomCats(arr,icons){
+  cSet('sw3_custom_cats',arr);
+  if(icons)cSet('sw3_custom_icons',icons);
+  _applyCustomIcons();
   if(db)db.collection('appConfig').doc('customCats')
-    .set({cats:arr,updatedAt:FV.serverTimestamp()},{merge:true})
+    .set({cats:arr,icons:getCustomIcons(),updatedAt:FV.serverTimestamp()},{merge:true})
     .catch(e=>console.warn('customCats sync failed',e));
 }
 // The user-added "actual expense" lines (payees per category, kept in
@@ -108,7 +113,7 @@ function saveCustomCats(arr){
 // fine for a low-frequency config edited one line at a time.
 function saveCustomLines(){
   const all=S.customExpLines||{};
-  try{localStorage.setItem('sw3_custom_lines',JSON.stringify(all));}catch{}
+  cSet(CK.customLines,all);
   if(!db)return;
   // Firestore rejects field names that both start and end with "__", so the
   // __removed__ map (deleted built-in lines) can't ride inside `lines` — it
@@ -137,7 +142,9 @@ async function loadCustomCats(){
   try{
     const doc=await db.collection('appConfig').doc('customCats').get();
     const arr=doc.exists?doc.data()?.cats:null;
-    if(Array.isArray(arr)){try{localStorage.setItem('sw3_custom_cats',JSON.stringify(arr));}catch{}}
+    if(Array.isArray(arr))cSet('sw3_custom_cats',arr);
+    if(doc.exists&&doc.data()?.icons)cSet('sw3_custom_icons',doc.data().icons);
+    _applyCustomIcons();
   }catch(e){_warnLoad('loadCustomCats',e);}
 }
 async function loadCustomLines(){
@@ -150,7 +157,7 @@ async function loadCustomLines(){
       // Recombine the separately-stored __removed__ map (see saveCustomLines)
       if(data.removed&&typeof data.removed==='object')obj.__removed__=data.removed;
       S.customExpLines=obj;
-      try{localStorage.setItem('sw3_custom_lines',JSON.stringify(obj));}catch{}
+      cSet(CK.customLines,obj);
     }else if(S.customExpLines&&Object.keys(S.customExpLines).length){
       // First run after the fix: nothing in Firestore yet, but this device has
       // lines from the old localStorage-only era — back them up now.
@@ -159,8 +166,7 @@ async function loadCustomLines(){
   }catch(e){_warnLoad('loadCustomLines',e);}
 }
 function getAllCats(){return[..._BASE_CATS,...getCustomCats().filter(c=>!_BASE_CATS.includes(c))];}
-// CATS: evaluated lazily after full script init via getter so cGet is always available
-const CATS = _BASE_CATS; // static fallback — always use getAllCats() in render functions
+
 
 // ── ICONS ──────────────────────────────────────────────────────────────────
 const CAT_ICONS = {
@@ -230,10 +236,7 @@ function platformLogoEl(key,color,size=20){
   return `<img src="${url}" width="${size}" height="${size}" style="border-radius:50%;object-fit:contain;background:#fff;flex-shrink:0" onerror="_logoFallbackPlatform(this,'${color}',${size})">`;
 }
 
-// v4.5: no built-in accounts. Each user's full list lives in
-// appConfig/cashAccounts (the owner's old GTB/Access/Renmoney/USD Cash
-// defaults were written into their account by the legacy import).
-const DEFAULT_CASH_ACCOUNTS = [];
+
 // USD-denominated cash accounts: the legacy 'USD Cash' name plus any account
 // the user marked as USD (appConfig/cashAccounts.usd).
 function getUsdAccounts(){return cGet('sw3_usd_accounts')||[];}
@@ -287,10 +290,39 @@ function invOptsWithBal(){
   }).join('');
 }
 
-// Budget rollover: when on, a month with no saved budget yet is pre-filled
-// from the previous month's categories on load (see loadBudgets).
-function getBudgetRollover(){try{return localStorage.getItem('sw3_budget_rollover')==='1';}catch{return false;}}
-function setBudgetRollover(on){try{localStorage.setItem('sw3_budget_rollover',on?'1':'0');}catch{}}
+// ── Budgets (v4.7): one standard budget + optional month overrides ──
+// The standard budget (profile.defBudgets → DEF_BUDGETS) applies to every
+// month. A month with its own doc in `budgets` uses that instead; months
+// budgeted before v4.7 each have their own doc, so their history is unchanged.
+// Cache per month: {categories} for an override, {none:true} when the month
+// is known to have none.
+function budgetOverride(m,y){const o=cGet(CK.budgets(m,y));return o&&o.categories&&typeof o.categories==='object'?o.categories:null;}
+function budgetFor(m,y){const o=budgetOverride(m,y);return o?{...DEF_BUDGETS,...o}:{...DEF_BUDGETS};}
+// Once per account: the most recently saved month becomes the standard
+// budget, and copies of it saved for this month onwards are dropped (they'd
+// only hide later changes to the standard).
+async function _migrateStandardBudget(){
+  const p=getProfile()||{};
+  if(p.budgetStdMigrated||!db)return;
+  try{
+    const snap=await db.collection('budgets').get();
+    const docs=snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>d.year&&d.month&&d.categories)
+      .sort((a,b)=>(b.year*100+b.month)-(a.year*100+a.month));
+    const n=new Date(),nowKey=n.getFullYear()*100+n.getMonth()+1;
+    const latest=docs.find(d=>Object.values(d.categories).some(v=>+v>0));
+    const std=latest?{...latest.categories}:{...DEF_BUDGETS};
+    const same=c=>{const k=new Set([...Object.keys(c),...Object.keys(std)]);return [...k].every(x=>(+c[x]||0)===(+std[x]||0));};
+    for(const d of docs){
+      if(d.year*100+d.month>=nowKey&&same(d.categories)){
+        await db.collection('budgets').doc(d.id).delete();
+        cSet(CK.budgets(d.month,d.year),{none:true});
+      }
+    }
+    saveProfile({defBudgets:std,budgetStdMigrated:true});
+    S.budgets=budgetFor(S.expMonth,S.expYear);
+    try{renderDashboard();renderExpenses();renderSettBudget();}catch(e){console.warn('budget re-render failed',e);}
+  }catch(e){console.warn('standard budget migration postponed',e);}
+}
 
 const NW_CFG_KEY='sw3_nw_config';
 function getNWConfig(){
@@ -375,7 +407,6 @@ let PLATFORMS=PLATFORMS_DEFAULT;
 const DEF_RATES={NGN:1,USD:1600,GBP:2050};
 
 // New feature keys
-const INV_WD_KEY='sw3_inv_withdrawals';
 const INV_MOVE_KEY='sw3_inv_movements'; // [{platformKey, delta(+dep/-wd), date, notes}] for withdrawal-aware accrual
 const SAVINGS_TARGET_KEY='sw3_savings_target_pct';
 
@@ -421,6 +452,7 @@ function _syncInvConfig(){
       platforms:getPlatforms(),
       invMeta:getInvMeta(),
       invSubs:getInvSubs(),
+      invMoves:getInvMovements(),
       updatedAt:FV.serverTimestamp()
     };
     db.collection('appConfig').doc('investments').set(payload,{merge:true}).catch(e=>console.warn('invConfig sync failed',e));
@@ -448,6 +480,7 @@ async function loadInvConfig(){
     if(d.platforms&&d.platforms.length){cSet(PLATFORMS_KEY,d.platforms);}
     if(d.invMeta&&Object.keys(d.invMeta).length){cSet(INV_META_KEY,d.invMeta);}
     if(d.invSubs&&Object.keys(d.invSubs).length){cSet(INV_SUBS_KEY,d.invSubs);}
+    if(Array.isArray(d.invMoves))cSet(INV_MOVE_KEY,d.invMoves);
   }catch(e){console.warn('loadInvConfig failed',e);}
 }
 
@@ -504,22 +537,33 @@ function removePlatform(key){
 // Keys: accountName → {interestRate, compoundType: 'daily_compound'}
 const CASH_INT_KEY='sw3_cash_interest';
 function getCashInterestMeta(){return cGet(CASH_INT_KEY)||{};}
-function saveCashInterestMeta(meta){cSet(CASH_INT_KEY,meta);}
+// Synced via appConfig/cashInterest (until v4.7 it stayed on one device and
+// was wiped on sign-out, and interest posting depends on it).
+function saveCashInterestMeta(meta){
+  cSet(CASH_INT_KEY,meta);
+  if(db)db.collection('appConfig').doc('cashInterest').set({meta,updatedAt:FV.serverTimestamp()}).catch(e=>console.warn('cashInterest sync failed',e));
+}
+async function loadCashInterest(){
+  if(!db)return;
+  try{const d=await db.collection('appConfig').doc('cashInterest').get();
+    if(d.exists&&d.data()?.meta)cSet(CASH_INT_KEY,d.data().meta);
+    else if(Object.keys(getCashInterestMeta()).length)saveCashInterestMeta(getCashInterestMeta()); // first run: upload this device's rates
+  }catch(e){_warnLoad('loadCashInterest',e);}
+}
 
 // ── Interest accrual helpers ───────────────────────────────────────────
 // Computes simple daily or compound interest for a single segment.
 // Returns interest in NGN (number).
-function _calcSegmentInterest(principal, annualRatePct, compoundType, fromDate, toDate){
-  if(!principal||!annualRatePct||!fromDate) return 0;
-  const r=annualRatePct/100;
-  const from=new Date(fromDate);from.setHours(0,0,0,0);
-  const to=new Date(toDate);to.setHours(0,0,0,0);
-  const days=Math.max(0,Math.round((to-from)/(1000*60*60*24)));
-  if(!days) return 0;
-  if(compoundType==='daily_compound') return principal*(Math.pow(1+r/365,days)-1);
-  return principal*(r/365)*days; // daily_accrual: simple
-}
 
+// The one interest formula (v4.7; there were three): interest earned by
+// `bal` over `days` at `ratePct` a year, simple daily accrual or daily
+// compounding. Unrounded.
+function interestFor(bal,ratePct,ct,days){
+  bal=+bal||0;ratePct=+ratePct||0;days=Math.max(0,days|0);
+  if(bal<=0||ratePct<=0||days<=0)return 0;
+  const r=ratePct/100;
+  return ct==='daily_compound'?bal*(Math.pow(1+r/365,days)-1):bal*(r/365)*days;
+}
 // Withdrawal/deposit-aware interest calculation.
 // Walks the timeline from startDate to today (capped at maturity), splitting at each
 // movement date. `movements` is an array of {date:'YYYY-MM-DD', delta:Number} where
@@ -541,7 +585,6 @@ function calcInterestAccrual(principal, annualRatePct, compoundType, startDate, 
   const totalDays=Math.max(0,Math.round((effectiveTo-start)/86400000));
   if(totalDays<=0) return {interest:0,projectedBalance:Math.round(principal),daysAccrued:0,isMatured};
 
-  const r=annualRatePct/100;
   const compound=compoundType==='daily_compound';
 
   // Build movement list within (startDate, effectiveTo], sorted ascending by date.
@@ -566,13 +609,9 @@ function calcInterestAccrual(principal, annualRatePct, compoundType, startDate, 
     const segTo=new Date(boundaries[i+1]);segTo.setHours(0,0,0,0);
     const segDays=Math.max(0,Math.round((segTo-segFrom)/86400000));
     if(segDays>0&&segPrincipal>0){
-      if(compound){
-        const grown=segPrincipal*Math.pow(1+r/365,segDays);
-        totalInterest+=grown-segPrincipal;
-        segPrincipal=grown; // roll grown balance forward (compounding)
-      } else {
-        totalInterest+=segPrincipal*(r/365)*segDays;
-      }
+      const earned=interestFor(segPrincipal,annualRatePct,compoundType,segDays);
+      totalInterest+=earned;
+      if(compound) segPrincipal+=earned; // roll grown balance forward (compounding)
     }
     // Apply the movement that occurs at boundaries[i+1] (deposit + / withdrawal −)
     if(i+1<boundaries.length-1){
@@ -610,8 +649,6 @@ const FX_RATES = {
 // old hard-coded values live in their profile doc now).
 let DEF_BUDGETS={};
 let FIXED_OBL=[];
-// School fees loaded from localStorage via seed JSON.
-const SCHOOL_FEES_DEFAULT=[];
 
 // ── SMART CATEGORISATION — payee keyword → category ──
 const PAYEE_CAT_MAP=(()=>{const m={};Object.entries(CAT_LINES).forEach(([cat,lines])=>{lines.forEach(l=>{m[l.toLowerCase()]=cat;});});return m;})();
@@ -660,6 +697,13 @@ async function loadProfile(){
 }
 
 // ── RECURRING ENGINE ──
+// An item: {id, payee, amount, type:'expense'|'income', category | incCat,
+// bank, notes, frequency, day, nextRun, lastPosted, auto}.
+// `day` anchors monthly/quarterly/yearly items to their day of the month, so
+// an item on the 31st lands on the last day of short months instead of
+// drifting (31 Jan → 28 Feb → 31 Mar, not → 3 Mar → 3 Apr).
+// `auto` items post themselves when the app opens on or after their date;
+// the rest wait on Home for a tap. Since v4.7 this also replaces Fixed Bills.
 const CK_RECUR='sw3_recurring';
 function getRecurring(){return cGet(CK_RECUR)||[];}
 function saveRecurring(list){
@@ -676,94 +720,188 @@ async function loadRecurring(){
     if(Array.isArray(arr))cSet(CK_RECUR,arr);
   }catch(e){_warnLoad('loadRecurring',e);}
 }
-function nextRunDate(freq,from){
-  const d=new Date(from||Date.now());
-  if(freq==='weekly'){d.setDate(d.getDate()+7);}
-  else if(freq==='monthly'){d.setMonth(d.getMonth()+1);}
-  else if(freq==='quarterly'){d.setMonth(d.getMonth()+3);}
-  else if(freq==='annually'){d.setFullYear(d.getFullYear()+1);}
-  return toLocalISO(d);
+function _recurId(){return 'r'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
+function _parseYmd(s){const p=String(s||todayStr()).slice(0,10).split('-').map(Number);return {y:p[0],m:p[1],d:p[2]};}
+function nextRunDate(freq,from,day){
+  let {y,m,d}=_parseYmd(from);
+  if(freq==='weekly') return toLocalISO(new Date(y,m-1,d+7));
+  m+=freq==='quarterly'?3:freq==='annually'?12:1;
+  while(m>12){m-=12;y++;}
+  const dd=Math.min(day||d,new Date(y,m,0).getDate());
+  return `${y}-${String(m).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;
 }
+// Due in the current month or overdue.
 function isDueThisMonth(nextRun){
   if(!nextRun)return false;
-  const n=new Date(nextRun),now=new Date();
-  return n.getFullYear()===now.getFullYear()&&n.getMonth()===now.getMonth()||n<now;
+  return nextRun.slice(0,7)<=todayStr().slice(0,7);
+}
+// Monthly equivalent of a recurring item (Treasury's "fixed obligations").
+function _recurMonthly(r){const a=+r.amount||0;return r.frequency==='weekly'?a*52/12:r.frequency==='quarterly'?a/3:r.frequency==='annually'?a/12:a;}
+function _addRecurring(o){
+  const auto=!!document.getElementById('e-recur-auto')?.checked;
+  const day=_parseYmd(o.date).d;
+  const item={id:_recurId(),payee:o.payee,amount:o.amount,type:o.type,bank:o.bank||'',notes:o.notes||'',
+    frequency:o.frequency,day,nextRun:nextRunDate(o.frequency,o.date,day),lastPosted:o.date,auto};
+  if(o.type==='income')item.incCat=o.incCat||'Other';else item.category=o.category||'Others';
+  const rl=getRecurring();rl.push(item);saveRecurring(rl);renderRecurringCard();
+}
+// Old items were saved without ids; give every item one so posts and edits
+// can find it again after another device reorders the list.
+function _ensureRecurIds(){
+  const l=getRecurring();let ch=false;
+  l.forEach(r=>{if(!r.id){r.id=_recurId()+Math.random().toString(36).slice(2,4);ch=true;}});
+  if(ch)saveRecurring(l);
+  return l;
 }
 function _logRecurPost(payee,amount,type){
   const log=cGet('sw3_recur_posted_log')||[];
   log.unshift({date:todayStr(),payee,amount,type});
   cSet('sw3_recur_posted_log',log.slice(0,20));
 }
-async function postRecurring(idx){
-  const list=getRecurring();const r=list[idx];if(!r)return;
-  if(!confirm(`Post "${r.payee}" — ${fN(r.amount)} as ${r.type==='income'?'income':'expense'}?`))return;
-  // Stamp with the due date (nextRun) when present so the entry lands in the
-  // correct month; derive the month/year bucket from that same date.
-  const postDate=(r.nextRun||todayStr()).slice(0,10);
-  const _pdp=postDate.split('-');const pM=parseInt(_pdp[1]),pY=parseInt(_pdp[0]);
-  let _posted=false;
-  if(r.type==='income'){
-    const bank=r.bank||getCashAccounts()[0];
-    const isUSD=isUSDCashAccount(bank);
-    const fxRates=getFxRates(pM,pY);
-    const amtNGN=isUSD?Math.round(r.amount*fxRates.USD):r.amount;
-    const data={amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.incCat||'Other',bank,notes:r.notes||'',date:postDate,month:pM,year:pY,type:'income',createdAt:FV.serverTimestamp()};
-    try{
-      const ref=await db.collection('income').add(data);
-      if(pM===S.expMonth&&pY===S.expYear) S.income.unshift({...data,id:ref.id});
-      const incCache=cGet(CK.inc(pM,pY))||[];incCache.unshift({...data,id:ref.id});cSet(CK.inc(pM,pY),incCache);
-      _adjustCash(bank, r.amount, pM, pY);
-      _logRecurPost(r.payee,r.amount,'income');
-      toast(`${r.payee} posted as income · ${bank} updated`);
-      _posted=true;
-    }catch(e){toast('Error posting');}
-  }else{
-    const bank=r.bank||getCashAccounts()[0];
-    const isUSD=isUSDCashAccount(bank);
-    const fxRates=getFxRates(pM,pY);
-    const amtNGN=isUSD?Math.round(r.amount*fxRates.USD):r.amount;
-    const data={amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.category,bank,payee:r.payee,notes:r.notes||'',date:postDate,month:pM,year:pY,type:'expense',createdAt:FV.serverTimestamp()};
-    try{
-      const ref=await db.collection('transactions').add(data);
-      if(pM===S.expMonth&&pY===S.expYear) S.txns.unshift({...data,id:ref.id});
-      const txCache=cGet(CK.txns(pM,pY))||[];txCache.unshift({...data,id:ref.id});cSet(CK.txns(pM,pY),txCache);
-      _adjustCash(bank, -r.amount, pM, pY);
-      _logRecurPost(r.payee,r.amount,'expense');
-      toast(`${r.payee} posted · ${bank} updated`);
-      _posted=true;
-    }catch(e){toast('Error posting');}
-  }
-  if(_posted){
-    list[idx].lastPosted=postDate;list[idx].nextRun=nextRunDate(r.frequency,postDate);
-    saveRecurring(list);renderDashboard();renderExpenses();renderRecurringCard();renderCashPage();
-  }
+// Write one occurrence of `r` dated `postDate` (income or expense record +
+// the bank balance). Returns true when written.
+async function _recurWrite(r,postDate){
+  const {y:pY,m:pM}=_parseYmd(postDate);
+  const bank=r.bank||getCashAccounts()[0];
+  if(!bank){toast(`Add a bank account to post "${r.payee}"`);return false;}
+  const isUSD=isUSDCashAccount(bank);
+  const amtNGN=isUSD?Math.round(r.amount*(getFxRates(pM,pY).USD||1600)):r.amount;
+  const isInc=r.type==='income';
+  const data=isInc
+    ?{amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.incCat||'Other',bank,notes:r.notes||'',date:postDate,month:pM,year:pY,type:'income',recurId:r.id||''}
+    :{amount:r.amount,amtNGN,currency:isUSD?'USD':'NGN',category:r.category||'Others',bank,payee:r.payee,notes:r.notes||'',date:postDate,month:pM,year:pY,type:'expense',recurId:r.id||''};
+  const ref=db.collection(isInc?'income':'transactions').doc();
+  _placeRecord(isInc?'inc':'txn',{...data,id:ref.id},null);
+  _adjustCash(bank,isInc?r.amount:-r.amount,pM,pY,isInc?'income':'expense','',postDate);
+  ref.set({...data,createdAt:FV.serverTimestamp()}).catch(e=>{console.warn('recurring post write failed — queued',e);oqAdd(isInc?'income':'transactions',ref.id,data,true);});
+  _logRecurPost(r.payee,r.amount,r.type);
+  return true;
+}
+// Claim the next occurrence of item `id` so two devices opening at once can't
+// both post it: the recurring list is re-read inside a transaction and the
+// date only advances if nobody else has moved it. Returns the claimed date.
+async function _recurClaim(id,expectNext){
+  let claimed=null;
+  const ref=db.collection('appConfig').doc('recurring');
+  await db.runTransaction(async t=>{
+    claimed=null;
+    const s=await t.get(ref);
+    const list=(s.exists&&Array.isArray(s.data().list))?s.data().list:getRecurring();
+    const r=list.find(x=>x.id===id);
+    if(!r||r.nextRun!==expectNext) return;
+    claimed=r.nextRun;
+    r.lastPosted=r.nextRun;r.nextRun=nextRunDate(r.frequency,r.nextRun,r.day);
+    t.set(ref,{list,updatedAt:FV.serverTimestamp()},{merge:true});
+    cSet(CK_RECUR,list);
+  });
+  return claimed;
+}
+// Tap "Post" on a due item (asks first).
+async function postRecurring(id){
+  const r=_ensureRecurIds().find(x=>x.id===id);if(!r)return;
+  if(!confirm(`Post "${r.payee}" (${fN(r.amount)}) as ${r.type==='income'?'income':'an expense'}, dated ${fmtDate(r.nextRun)}?`))return;
+  let date=null;
+  try{date=await _recurClaim(id,r.nextRun);}
+  catch(e){console.warn('recurring claim failed',e);toast('Posting needs a connection. Try again when you\'re online.');return;}
+  if(!date){toast('Already posted on another device');renderRecurringCard();return;}
+  if(await _recurWrite(r,date))toast(`${r.payee} posted · ${r.bank||getCashAccounts()[0]} updated`);
+  renderDashboard();renderExpenses();renderIncome();renderRecurringCard();renderCashPage();
+  if(document.getElementById('recur-modal')?.classList.contains('open'))openRecurModal();
+}
+// Move to the next date without posting (e.g. a bill that was waived).
+function skipRecurring(id){
+  const l=getRecurring();const r=l.find(x=>x.id===id);if(!r)return;
+  if(!confirm(`Skip "${r.payee}" on ${fmtDate(r.nextRun)}? Nothing is recorded; the next one is ${fmtDate(nextRunDate(r.frequency,r.nextRun,r.day))}.`))return;
+  r.nextRun=nextRunDate(r.frequency,r.nextRun,r.day);
+  saveRecurring(l);renderRecurringCard();renderDashAlerts();
+  if(document.getElementById('recur-modal')?.classList.contains('open'))openRecurModal();
+}
+// Items marked "post automatically": post every occurrence that has come due
+// (catching up at most a year), once per app open, after the data has synced.
+let _autoRecurBusy=false;
+async function runAutoRecurring(){
+  if(!db||_autoRecurBusy)return;
+  _autoRecurBusy=true;
+  const today=todayStr();let n=0;
+  try{
+    for(const r of _ensureRecurIds()){
+      if(!r.auto)continue;
+      for(let guard=0;guard<12;guard++){
+        const cur=getRecurring().find(x=>x.id===r.id);
+        if(!cur||!cur.nextRun||cur.nextRun>today)break;
+        let date=null;
+        try{date=await _recurClaim(cur.id,cur.nextRun);}catch(e){console.warn('auto recurring claim failed',e);break;}
+        if(!date)break;
+        if(await _recurWrite(cur,date))n++;else break;
+      }
+    }
+  }finally{_autoRecurBusy=false;}
+  if(n){toast(`${n} recurring ${n===1?'entry':'entries'} posted automatically`);renderAll();}
+}
+function toggleRecurAuto(id,on){
+  const l=getRecurring();const r=l.find(x=>x.id===id);if(!r)return;
+  r.auto=!!on;saveRecurring(l);openRecurModal();renderRecurringCard();
+  toast(on?'Will post automatically when due':'Will wait for you to post it');
+  if(on)runAutoRecurring();
+}
+function editRecurringAmount(id){
+  const l=getRecurring();const r=l.find(x=>x.id===id);if(!r)return;
+  const v=prompt(`New amount for "${r.payee}"`,String(r.amount));if(v===null)return;
+  const a=parseFloat(_evalExpr(v));if(!(a>0)){toast('Enter a valid amount');return;}
+  r.amount=a;saveRecurring(l);openRecurModal();renderRecurringCard();
 }
 function renderRecurringCard(){
-  const due=getRecurring().filter(r=>isDueThisMonth(r.nextRun));
+  const due=_ensureRecurIds().filter(r=>isDueThisMonth(r.nextRun));
   const card=document.getElementById('dash-recurring-card');
   const list=document.getElementById('dash-recurring-list');
   if(!card||!list)return;
   if(!due.length){card.style.display='none';return;}
   card.style.display='block';
-  const all=getRecurring();
-  list.innerHTML=due.map(r=>{const idx=all.indexOf(r);return`<div class="txi" style="cursor:pointer" onclick="postRecurring(${idx})"><div><div class="txi-cat">${esc(r.payee)}</div><div class="txi-meta">${r.type==='income'?'Income':'Expense'} · ${r.frequency} · Due ${fmtDate(r.nextRun)||'now'}</div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge ${r.type==='income'?'bg':'br'}">${r.type==='income'?'+':'-'}${fN(r.amount)}</span><span style="font-size:0.7rem;color:var(--accent)">Post →</span></div></div>`;}).join('');
+  list.innerHTML=due.map(r=>{
+    const act=r.auto
+      ?`<span style="font-size:0.62rem;color:var(--text3)">Posts itself</span>`
+      :`<span style="font-size:0.7rem;color:var(--accent)">Post →</span>`;
+    return`<div class="txi" style="cursor:pointer" onclick="${r.auto?'openRecurModal()':`postRecurring('${r.id}')`}"><div><div class="txi-cat">${esc(r.payee)}</div><div class="txi-meta">${r.type==='income'?'Income':'Expense'} · ${r.frequency} · Due ${fmtDate(r.nextRun)}</div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge ${r.type==='income'?'bg':'br'}">${r.type==='income'?'+':'-'}${fN(r.amount)}</span>${act}</div></div>`;
+  }).join('');
 }
 function openRecurModal(){
-  const list=getRecurring();
-  document.getElementById('recur-list').innerHTML=list.length?list.map((r,i)=>`
+  const list=_ensureRecurIds();
+  document.getElementById('recur-list').innerHTML=list.length?list.map(r=>`
     <div class="dc" style="margin-bottom:8px">
-      <div class="dc-top"><div><div class="dc-name">${esc(r.payee)}</div><div class="dc-sub">${r.frequency} · ${esc(r.category||r.incCat||'')} · Next: ${fmtDate(r.nextRun)||'—'}</div></div>
-        <button class="txi-del" onclick="deleteRecurring(${i})">×</button>
+      <div class="dc-top"><div><div class="dc-name">${esc(r.payee)}</div><div class="dc-sub">${r.frequency} · ${esc(r.category||r.incCat||'')}${r.bank?' · '+esc(r.bank):''} · Next: ${fmtDate(r.nextRun)||'—'}</div></div>
+        <button class="txi-del" onclick="deleteRecurring('${r.id}')">×</button>
       </div>
-      <div style="display:flex;gap:8px;margin-top:6px">
+      <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
         <span class="badge ${r.type==='income'?'bg':'br'}">${r.type}</span>
-        <span style="font-family:var(--mono);font-size:0.78rem">${fN(r.amount)}</span>
+        <span style="font-family:var(--mono);font-size:0.78rem;cursor:pointer" onclick="editRecurringAmount('${r.id}')" title="Change the amount">${fN(r.amount)} ✎</span>
+        <label style="margin-left:auto;display:flex;align-items:center;gap:5px;font-size:0.66rem;color:var(--text2);cursor:pointer"><input type="checkbox" ${r.auto?'checked':''} onchange="toggleRecurAuto('${r.id}',this.checked)"> Post automatically</label>
       </div>
-      ${isDueThisMonth(r.nextRun)?`<button class="btn btn-p btn-sm" style="margin-top:8px;width:100%" onclick="postRecurring(${i});closeMod('recur-modal')">Post Now</button>`:''}
-    </div>`).join(''):'<div class="empty"><div class="empty-i">◷</div>No recurring transactions set up.<br>Add one via the expense form.</div>';
+      ${isDueThisMonth(r.nextRun)?`<div style="display:flex;gap:8px;margin-top:8px">${r.auto?'':`<button class="btn btn-p btn-sm" style="flex:1" onclick="postRecurring('${r.id}')">Post now</button>`}<button class="btn btn-g btn-sm" style="flex:1" onclick="skipRecurring('${r.id}')">Skip this one</button></div>`:''}
+    </div>`).join(''):'<div class="empty"><div class="empty-i">◷</div>No recurring transactions yet.<br>Choose "Repeats" when you add an expense or income.</div>';
   openMod('recur-modal');
 }
-function deleteRecurring(i){const list=getRecurring();list.splice(i,1);saveRecurring(list);openRecurModal();renderRecurringCard();}
+function deleteRecurring(id){
+  const l=getRecurring();const r=l.find(x=>x.id===id);if(!r)return;
+  if(!confirm(`Stop repeating "${r.payee}"? Entries already posted stay.`))return;
+  saveRecurring(l.filter(x=>x.id!==id));openRecurModal();renderRecurringCard();
+}
+// v4.7: Fixed Bills became recurring items (not posted automatically, no
+// bank yet). Runs once per account.
+function _migrateFixedBills(){
+  const p=getProfile()||{};
+  if(p.fixedBillsMigrated)return;
+  const bills=[...(Array.isArray(p.fixedObl)?p.fixedObl:[]),...(cGet('sw3_fixed_obl')||[]),...(cGet('sw3_custom_obl')||[])]
+    .filter((b,i,a)=>b&&b.label&&+b.amount>0&&a.findIndex(x=>x.label===b.label)===i);
+  if(bills.length){
+    const n=new Date();const first=toLocalISO(new Date(n.getFullYear(),n.getMonth()+1,1));
+    const l=getRecurring();
+    bills.forEach(b=>{if(l.some(r=>r.payee===b.label))return;
+      l.push({id:_recurId()+Math.random().toString(36).slice(2,4),payee:b.label,amount:+b.amount,type:'expense',category:smartCat(b.label)||'Others',bank:'',notes:'From Fixed Bills',frequency:'monthly',day:1,nextRun:first,lastPosted:'',auto:false});});
+    saveRecurring(l);
+  }
+  cDel('sw3_fixed_obl');cDel('sw3_custom_obl');
+  saveProfile({fixedBillsMigrated:true,fixedObl:[]});
+}
 
 // ── TRANSACTION RULES (auto-categorization) ──
 // Stored like recurring: localStorage cache + appConfig/rules doc in Firestore.
@@ -913,40 +1051,89 @@ const CK={
   xfr:(m,y)=>`sw3_xfr_${y}_${m}`,
   debtors:'sw3_debtors',
   loans:'sw3_loans',
-  budgets:(m,y)=>`sw3_budgets_${y}_${m}`,
+  budgets:(m,y)=>`sw3_bud_${y}_${m}`, // v4.7 format: {categories} | {none:true}
   lastSync:'sw3_last_sync',
   fbSyncVer:'sw3_fb_sync_ver',
   customLines:'sw3_custom_lines',
-  schoolFees:'sw3_school_fees',
   currency:'sw3_dash_currency',
 };
-const cGet=k=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):null;}catch{return null;}};
-let _lsWarned=false;
-// Every local cache write funnels through here, so a QuotaExceededError silently
-// loses data app-wide. Warn once - repeating it on every write would bury the rest.
-const cSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){if(!_lsWarned){_lsWarned=true;console.warn("localStorage write failed - cached data may be stale (quota or private mode):",e);}}};
+// This device's copy of the data. Until v4.7 it lived in localStorage, which
+// caps out around 5 MB and then silently stops saving. Now it lives in
+// IndexedDB with an in-memory copy, so cGet/cSet stay synchronous: reads come
+// from memory, writes update memory at once and reach IndexedDB a moment
+// later. Values are kept as JSON text so every cGet returns a fresh copy (as
+// localStorage did). Small UI preferences and the retry queues stay in
+// localStorage (_CACHE_LS), so they survive even an abrupt close.
+// Note: this copy is not encrypted — on the device, the data is protected by
+// the phone's own lock (App lock only hides the screen).
+const _CACHE_LS=new Set(['sw3_offline_queue','sw3_ripple_queue','sw3_dash_order','sw3_hidden_cards','sw3_dash_currency']);
+const _cMem=new Map();
+let _cDb=null,_cMode='ls',_cPend=new Map(),_cTimer=null,_lsWarned=false;
+function _cWarn(e){if(!_lsWarned){_lsWarned=true;console.warn('cache write failed - cached data may be stale:',e);}}
+const cGet=k=>{
+  try{
+    if(_cMode==='idb'&&!_CACHE_LS.has(k)){const v=_cMem.get(k);return v?JSON.parse(v):null;}
+    const v=localStorage.getItem(k);return v?JSON.parse(v):null;
+  }catch{return null;}
+};
+const cSet=(k,v)=>{
+  let s;try{s=JSON.stringify(v);}catch(e){_cWarn(e);return;}
+  if(_cMode==='idb'&&!_CACHE_LS.has(k)){_cMem.set(k,s);_cPend.set(k,s);_cSchedule();return;}
+  try{localStorage.setItem(k,s);}catch(e){_cWarn(e);}
+};
+function cDel(k){
+  if(_cMode==='idb'&&!_CACHE_LS.has(k)){_cMem.delete(k);_cPend.set(k,undefined);_cSchedule();return;}
+  try{localStorage.removeItem(k);}catch{}
+}
+// Keys (of the data copy) starting with `prefix`.
+function cKeys(prefix){
+  const out=[];
+  if(_cMode==='idb')_cMem.forEach((_,k)=>{if(k.startsWith(prefix))out.push(k);});
+  else try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith(prefix))out.push(k);}}catch{}
+  return out;
+}
+function _cSchedule(){if(!_cTimer)_cTimer=setTimeout(_cFlush,250);}
+function _cFlush(){
+  _cTimer=null;
+  if(!_cDb||!_cPend.size)return;
+  const batch=_cPend;_cPend=new Map();
+  try{
+    const t=_cDb.transaction('kv','readwrite'),st=t.objectStore('kv');
+    batch.forEach((v,k)=>{if(v===undefined)st.delete(k);else st.put(v,k);});
+    t.onerror=()=>_cWarn(t.error);
+  }catch(e){_cWarn(e);}
+}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')_cFlush();});
+window.addEventListener('pagehide',_cFlush);
+// Open the store and load it into memory before anything renders. The first
+// time, the old localStorage copy is moved across (and removed, to free the
+// space). Falls back to localStorage if IndexedDB isn't available.
+async function cacheInit(){
+  try{
+    _cDb=await new Promise((res,rej)=>{const r=indexedDB.open('spendwise-cache',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});
+    await new Promise((res,rej)=>{
+      const rq=_cDb.transaction('kv','readonly').objectStore('kv').openCursor();
+      rq.onsuccess=()=>{const c=rq.result;if(c){_cMem.set(c.key,c.value);c.continue();}else res();};
+      rq.onerror=()=>rej(rq.error);
+    });
+    _cMode='idb';
+    if(!localStorage.getItem('sw3_cache_moved')){
+      const move=[];
+      for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith('sw3_')&&!_CACHE_LS.has(k)&&!_LS_ONLY.test(k))move.push(k);}
+      move.forEach(k=>{const v=localStorage.getItem(k);if(v!=null&&!_cMem.has(k)){_cMem.set(k,v);_cPend.set(k,v);}});
+      _cFlush();
+      move.forEach(k=>{try{localStorage.removeItem(k);}catch{}});
+      localStorage.setItem('sw3_cache_moved','1');
+    }
+  }catch(e){console.warn('IndexedDB unavailable - keeping this device\'s data copy in localStorage',e);_cMode='ls';_cDb=null;}
+}
+// localStorage keys that are read directly (preferences, lock, queues) and
+// must never be moved into the data copy.
+const _LS_ONLY=/^sw3_(theme|applock|fab_pos|last_page|local_mode|vault_incq|lockv_|getstarted_off|dismissed_notifs|hist_scan_at|cache_moved|last_seen_ym)/;
 
 function loadFromCache(){
   _applyProfile(getProfile());
-
-  // One-time: strip legacy ledger/segment fields from investment meta so
-  // interest is computed statelessly from the current principal only.
-  if(!cGet('sw3_migrated_inv_stateless')){
-    const meta=cGet(INV_META_KEY)||{};
-    let changed=false;
-    Object.keys(meta).forEach(k=>{
-      const m2=meta[k];if(!m2||typeof m2!=='object') return;
-      if('ledger' in m2||'lastSavedPrincipal' in m2||'investmentStartDate' in m2){
-        // Prefer the original investment start date if it was recorded
-        if(m2.investmentStartDate&&!m2.startDate) m2.startDate=m2.investmentStartDate;
-        if(m2.investmentStartDate&&m2.startDate&&m2.investmentStartDate<m2.startDate) m2.startDate=m2.investmentStartDate;
-        delete m2.ledger;delete m2.lastSavedPrincipal;delete m2.investmentStartDate;
-        changed=true;
-      }
-    });
-    if(changed) cSet(INV_META_KEY,meta);
-    cSet('sw3_migrated_inv_stateless','1');
-  }
+  _applyCustomIcons();
 
   const m=S.expMonth,y=S.expYear;
   S.txns=cGet(CK.txns(m,y))||[];
@@ -955,7 +1142,7 @@ function loadFromCache(){
   S.cash=cGet(CK.cash(m,y))||{};
   S.debtors=cGet(CK.debtors)||[];
   S.loans=cGet(CK.loans)||[];
-  S.budgets=cGet(CK.budgets(m,y))||{...DEF_BUDGETS};
+  S.budgets=budgetFor(m,y);
   S.lastSync=cGet(CK.lastSync);
   S.fbSyncVersion=cGet(CK.fbSyncVer);
   S.dashCurrency=cGet(CK.currency)||'NGN';
@@ -981,7 +1168,52 @@ function _syncFxOverrides(ovr){
     .set({overrides:ovr,updatedAt:FV.serverTimestamp()},{merge:false})
     .catch(e=>console.warn('fxOverrides sync failed',e));
 }
-function getFxRates(m,y){const k=fxKey(m,y);const ovr=getFxOverrides();return ovr[k]||FX_RATES[k]||{USD:1600,GBP:2050};}
+// Rate for a month: your own rate (Settings → Advanced) → the automatic rate
+// → the built-in table → the nearest earlier month that has one.
+function getFxRates(m,y){
+  const k=fxKey(m,y);const ovr=getFxOverrides();
+  if(ovr[k])return ovr[k];
+  const a=getFxAuto()[k];if(a&&a.USD)return {USD:a.USD,GBP:a.GBP||Math.round(a.USD*1.27)};
+  return FX_RATES[k]||_nearestFx(k);
+}
+function _nearestFx(k){
+  const auto=getFxAuto(),ovr=getFxOverrides();
+  const all={...FX_RATES};Object.keys(auto).forEach(x=>{if(auto[x]&&auto[x].USD)all[x]={USD:auto[x].USD,GBP:auto[x].GBP||Math.round(auto[x].USD*1.27)};});Object.assign(all,ovr);
+  const keys=Object.keys(all).sort();
+  const before=keys.filter(x=>x<=k);
+  return all[before.length?before[before.length-1]:keys[0]]||{USD:1600,GBP:2050};
+}
+// ── Automatic exchange rates (v4.7) ──
+// Once a day the app fetches today's dollar and pound rates in naira from a
+// free public source (no account; nothing about you is sent) and keeps them
+// as this month's rate, in appConfig/fxAuto so every device agrees. A rate you
+// type in Settings → Advanced → Exchange rates always wins.
+const FX_AUTO_KEY='sw3_fx_auto';
+const FX_AUTO_URL='https://open.er-api.com/v6/latest/USD';
+function getFxAuto(){return cGet(FX_AUTO_KEY)||{};}
+async function loadFxAuto(){
+  if(!db)return;
+  try{const d=await db.collection('appConfig').doc('fxAuto').get();
+    if(d.exists&&d.data()?.rates)cSet(FX_AUTO_KEY,{...getFxAuto(),...d.data().rates});
+  }catch(e){_warnLoad('loadFxAuto',e);}
+}
+async function fxAutoUpdate(){
+  if(navigator.onLine===false)return;
+  const n=new Date(),k=fxKey(n.getMonth()+1,n.getFullYear());
+  const auto=getFxAuto();
+  if(auto[k]&&Date.now()-(auto[k].at||0)<864e5)return;
+  try{
+    const r=await fetch(FX_AUTO_URL,{cache:'no-store'});
+    if(!r.ok)return;
+    const j=await r.json();
+    const ngn=+(j&&j.rates&&j.rates.NGN),gbp=+(j&&j.rates&&j.rates.GBP);
+    if(!(ngn>100))return;
+    auto[k]={USD:Math.round(ngn),GBP:gbp>0?Math.round(ngn/gbp):Math.round(ngn*1.27),at:Date.now()};
+    cSet(FX_AUTO_KEY,auto);
+    if(db)db.collection('appConfig').doc('fxAuto').set({rates:auto,updatedAt:FV.serverTimestamp()},{merge:true}).catch(e=>console.warn('fxAuto sync failed',e));
+    renderDashboard();
+  }catch(e){console.warn('exchange rate fetch failed',e);}
+}
 const fN=n=>n==null||isNaN(n)?'—':'₦'+Number(n).toLocaleString('en-NG',{maximumFractionDigits:0});
 // ── NUMBER INPUT FORMATTING ──────────────────────────────────────────────
 function fmtThousands(v){
@@ -1134,11 +1366,6 @@ function showUndoToast(msg, undoFn, commitFn){
   _undoPending={undo:undoFn,commit:commitFn};
   _undoTimer=setTimeout(()=>{const p=_undoPending;_undoPending=null;_undoTimer=null;el.style.display='none';if(p)p.commit();},5000);
 }
-function _recalcHistIncome(m,y){
-  const hist=cGet('sw3_history')||[];
-  const hIdx=hist.findIndex(h=>h.year===y&&h.month===m);
-  if(hIdx>=0){hist[hIdx].income=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);cSet('sw3_history',hist);}
-}
 function _autoGrowTA(el){el.style.height='auto';el.style.height=el.scrollHeight+'px';}
 function openMod(id){
   document.getElementById(id).classList.add('open');
@@ -1181,8 +1408,8 @@ function hideStaleBar(){document.getElementById('stale-bar').style.display='none
 //          encrypted under users/{uid}/…
 // 'local'  not signed in: db = VAULT's IndexedDB-backed local db, nothing
 //          leaves the device. Same API, so the rest of the app doesn't care.
-// 'locked' signed in but this device has no key yet (e.g. returning from a
-//          Google redirect): db = null until the user unlocks.
+// 'locked' signed in but this device has no key (it was cleared): db = null
+//          until the user signs in again.
 // 'legacy' a device that ran a pre-accounts version: caches hold the owner's
 //          data from the old shared collections. db = null (render from cache,
 //          never overwrite it) until the user creates an account and imports.
@@ -1194,7 +1421,7 @@ const OWNER_UID='pkuOGxHr19goU9qJjmPq2f3MzEw2';
 const LOCAL_MODE_LS='sw3_local_mode';
 function _hasLegacyCache(){
   try{if(localStorage.getItem(LOCAL_MODE_LS))return false;
-    for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(/^sw3_txns_/.test(k))return true;}}catch{}
+    if(cKeys('sw3_txns_').length)return true;}catch{}
   return false;
 }
 function initFirebase(){
@@ -1207,7 +1434,7 @@ function initFirebase(){
     const fs=firebase.firestore();
     fs.enablePersistence().catch(()=>{});
     VAULT.attach(fs);
-    try{await firebase.auth().getRedirectResult();}catch(e){console.warn('google redirect result',e);}
+
     const user=await new Promise(res=>{const u=firebase.auth().onAuthStateChanged(x=>{u();res(x);});});
     if(user&&await VAULT.restoreDevice(user.uid)){await _enterMode('cloud');}
     else if(user){await _enterMode('locked');}
@@ -1246,8 +1473,12 @@ async function _bootSync(){
       S.investments=cGet(CK.inv(m,y))||S.investments;
       S.cash=cGet(CK.cash(m,y))||S.cash;
       S.debtors=cGet(CK.debtors)||S.debtors;
+      S.budgets=budgetFor(m,y);
+      _migrateFixedBills();       // v4.7: Fixed Bills → recurring (once per account)
+      _migrateStandardBudget();   // v4.7: one budget for every month (once per account)
       cSet(CK.lastSync,Date.now());setSyncStatus(DATA_MODE==='local'?'local':'synced');hideStaleBar();renderAll();startRealtimeListeners();
-      _checkMonthEndClose(); // fire-and-forget: freezes any months that closed since the app was last opened
+      runAutoRecurring();         // fire-and-forget: posts "automatic" recurring items that have come due
+      fxAutoUpdate();             // fire-and-forget: this month's exchange rates
       _prefetchHistoryMonths(); // fire-and-forget: pulls prior months so smart insights have history on this device
       _healCashLedgers(); // fire-and-forget: pushes any ledger entries stranded locally on this device up to Firestore
     }catch(e){console.error(e);setSyncStatus('error');}
@@ -1258,8 +1489,10 @@ async function _bootSync(){
 const _KEEP_ON_WIPE=new Set(['sw3_vault_incq','sw3_theme','sw3_fab_pos','sw3_dash_order','sw3_hidden_cards','sw3_last_page','sw3_dash_currency',LOCAL_MODE_LS]);
 function _wipeDataCaches(){
   try{
-    const ks=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith('sw3_')&&!_KEEP_ON_WIPE.has(k))ks.push(k);}
+    cKeys('sw3_').forEach(k=>{if(!_KEEP_ON_WIPE.has(k))cDel(k);});
+    const ks=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith('sw3_')&&!_KEEP_ON_WIPE.has(k)&&k!=='sw3_cache_moved')ks.push(k);}
     ks.forEach(k=>localStorage.removeItem(k));
+    _cFlush();
   }catch(e){console.warn('cache wipe failed',e);}
   S.txns=[];S.income=[];S.investments={};S.cash={};S.debtors=[];
 }
@@ -1280,7 +1513,7 @@ function _renderModeBar(){
 
 async function syncAll(){
   const m=S.expMonth,y=S.expYear;
-  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadCustomLines(),loadAiChats(),loadGoals(),loadRules(),loadAiKeys(),loadSpecialBudgets(),loadInterestPosts(),loadProfile(),loadSharedAiKeys()]);
+  await Promise.all([loadTxns(m,y),loadIncome(m,y),loadInvData(m,y),loadCashData(m,y),loadDebtors(),loadBudgets(m,y),loadHistoricalSummary(),loadInvConfig(),loadCashLogos(),loadCashAccounts(),loadLoans(),loadFxOverrides(),loadNWConfig(),loadRecurring(),loadCustomCats(),loadCustomLines(),loadAiChats(),loadGoals(),loadRules(),loadAiKeys(),loadSpecialBudgets(),loadInterestPosts(),loadProfile(),loadSharedAiKeys(),loadCashInterest(),loadFxAuto()]);
 }
 
 // ── REALTIME LISTENER ─────────────────────────────────────────────────────
@@ -1307,6 +1540,8 @@ let _linesListener=null;
 let _intPostListener=null;
 let _budgetListener=null;
 let _xfrListener=null;
+let _profileListener=null;
+let _cashIntListener=null;
 
 function startRealtimeListeners(){
   stopRealtimeListeners();
@@ -1409,6 +1644,7 @@ function startRealtimeListeners(){
       if(d.platforms&&d.platforms.length&&JSON.stringify(d.platforms)!==JSON.stringify(getPlatforms())){cSet(PLATFORMS_KEY,d.platforms);changed=true;}
       if(d.invMeta&&Object.keys(d.invMeta).length&&JSON.stringify(d.invMeta)!==JSON.stringify(getInvMeta())){cSet(INV_META_KEY,d.invMeta);changed=true;}
       if(d.invSubs&&Object.keys(d.invSubs).length&&JSON.stringify(d.invSubs)!==JSON.stringify(getInvSubs())){cSet(INV_SUBS_KEY,d.invSubs);changed=true;}
+      if(Array.isArray(d.invMoves)&&JSON.stringify(d.invMoves)!==JSON.stringify(getInvMovements())){cSet(INV_MOVE_KEY,d.invMoves);}
       if(changed){PLATFORMS=getPlatforms();renderInvestments();renderDashboard();}
     },err=>console.warn('invConfig listener:',err));
 
@@ -1466,7 +1702,9 @@ function startRealtimeListeners(){
       if(!snap.exists||snap.metadata.hasPendingWrites) return;
       const arr=snap.data()?.cats;
       if(Array.isArray(arr)){
-        try{localStorage.setItem('sw3_custom_cats',JSON.stringify(arr));}catch{}
+        cSet('sw3_custom_cats',arr);
+        if(snap.data()?.icons)cSet('sw3_custom_icons',snap.data().icons);
+        _applyCustomIcons();
         renderExpenses();
       }
     },err=>console.warn('customCats listener:',err));
@@ -1546,7 +1784,7 @@ function startRealtimeListeners(){
       const obj={...d.lines};
       if(d.removed&&typeof d.removed==='object') obj.__removed__=d.removed;
       S.customExpLines=obj;
-      try{localStorage.setItem('sw3_custom_lines',JSON.stringify(obj));}catch{}
+      cSet(CK.customLines,obj);
       const pane=document.getElementById('exp-pane');
       if(pane&&pane.style.display!=='none'&&!pane.contains(document.activeElement))renderExpenses();
     },err=>console.warn('customLines listener:',err));
@@ -1567,15 +1805,39 @@ function startRealtimeListeners(){
   if(_budgetListener){_budgetListener();_budgetListener=null;}
   _budgetListener=db.collection('budgets').doc(sid(m,y))
     .onSnapshot(snap=>{
-      if(!snap.exists||snap.metadata.hasPendingWrites) return;
+      if(snap.metadata.hasPendingWrites) return;
+      const cats=snap.exists?snap.data()?.categories:null;
+      cSet(CK.budgets(m,y),cats&&typeof cats==='object'?{categories:cats}:{none:true});
       if(S.expMonth!==m||S.expYear!==y) return;          // month moved on
-      const cats=snap.data()?.categories;
-      if(!cats||typeof cats!=='object') return;
-      S.budgets={...DEF_BUDGETS,...cats};
-      cSet(CK.budgets(m,y),S.budgets);
+      S.budgets=budgetFor(m,y);
+      renderDashboard();
       const pane=document.getElementById('exp-pane');
       if(pane&&pane.style.display!=='none'&&!pane.contains(document.activeElement))renderExpenses();
     },err=>console.warn('budgets listener:',err));
+
+  // Cash interest rates and auto exchange rates — small settings docs.
+  if(_cashIntListener){_cashIntListener();_cashIntListener=null;}
+  _cashIntListener=db.collection('appConfig').doc('cashInterest')
+    .onSnapshot(snap=>{
+      if(!snap.exists||snap.metadata.hasPendingWrites) return;
+      const meta=snap.data()?.meta;
+      if(meta&&JSON.stringify(meta)!==JSON.stringify(getCashInterestMeta())){cSet(CASH_INT_KEY,meta);renderCashPage();renderIncome();}
+    },err=>console.warn('cashInterest listener:',err));
+
+  // Profile (standard budget, onboarding, migrations) — so a standard budget
+  // changed on another device applies here too.
+  if(_profileListener){_profileListener();_profileListener=null;}
+  _profileListener=db.collection('appConfig').doc('profile')
+    .onSnapshot(snap=>{
+      if(!snap.exists||snap.metadata.hasPendingWrites) return;
+      const p=snap.data()||{};delete p.updatedAt;
+      if(JSON.stringify(p)===JSON.stringify(getProfile()))return;
+      cSet(PROFILE_KEY,p);_applyProfile(p);
+      S.budgets=budgetFor(S.expMonth,S.expYear);
+      renderDashboard();
+      const sb=document.getElementById('sett-budget');
+      if(sb&&sb.style.display!=='none'&&!sb.contains(document.activeElement))renderSettBudget();
+    },err=>console.warn('profile listener:',err));
 
   // Transfers — month-scoped, mirroring _txnListener. Feeds the account
   // drill-down history and the Transfer History modal.
@@ -1619,6 +1881,8 @@ function stopRealtimeListeners(){
   if(_intPostListener){_intPostListener();_intPostListener=null;}
   if(_budgetListener){_budgetListener();_budgetListener=null;}
   if(_xfrListener){_xfrListener();_xfrListener=null;}
+  if(_profileListener){_profileListener();_profileListener=null;}
+  if(_cashIntListener){_cashIntListener();_cashIntListener=null;}
 }
 
 async function loadTxns(m,y){
@@ -1627,7 +1891,10 @@ async function loadTxns(m,y){
     let snap;
     try{snap=await db.collection('transactions').where('year','==',y).where('month','==',m).orderBy('date','desc').get();}
     catch{snap=await db.collection('transactions').where('year','==',y).where('month','==',m).get();}
-    if(snap&&snap.size>0){
+    // An empty answer from the server (or the on-device db) is real: the last
+    // entry may have been deleted elsewhere. An empty answer from an offline
+    // cache is not, so the local copy is kept then.
+    if(snap&&(snap.size>0||db.isLocal||!snap.metadata?.fromCache)){
       const fresh=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:txnTs(b.createdAt)-txnTs(a.createdAt));
       cSet(CK.txns(m,y),fresh);
       if(S.expMonth===m&&S.expYear===y) S.txns=fresh;
@@ -1660,7 +1927,7 @@ async function loadIncome(m,y){
     let snap;
     try{snap=await db.collection('income').where('year','==',y).where('month','==',m).orderBy('date','desc').get();}
     catch{snap=await db.collection('income').where('year','==',y).where('month','==',m).get();}
-    if(snap&&snap.size>0){
+    if(snap&&(snap.size>0||db.isLocal||!snap.metadata?.fromCache)){
       const fresh=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:txnTs(b.createdAt)-txnTs(a.createdAt));
       cSet(CK.inc(m,y),fresh);
       if(S.expMonth===m&&S.expYear===y) S.income=fresh;
@@ -1754,215 +2021,113 @@ async function loadDebtors(){
   // Always fetch from Firestore
   try{
     const snap=await db.collection('debtors').get();
-    if(snap&&snap.size>0){
+    if(snap&&(snap.size>0||db.isLocal||!snap.metadata?.fromCache)){
       S.debtors=snap.docs.map(d=>({id:d.id,...d.data()}));
       cSet(CK.debtors,S.debtors);
     }
   }catch(e){_warnLoad('loadDebtors',e);}
 }
 
+// ── Monthly history (income and spending per month) ────────────────────────
+// sw3_history feeds the 6-month chart, Treasury, History and the full-year
+// view. Until v4.7 every app open re-read EVERY transaction and income record
+// and rewrote every historicalSummary doc (~1,300 reads and ~35 writes per
+// launch, against a free allowance shared by every user). Now:
+//   · opening the app reads only the summary docs (one small doc per month);
+//   · a full re-scan runs at most once a day per device, and also refreshes
+//     this device's copy of every month (search, insights and charts use it);
+//   · a summary doc is written only when its totals actually change
+//     (_histTouch runs after every save and delete).
+const HIST_SCAN_LS='sw3_hist_scan_at';
+function _histLabel(m,y){return MS[m-1]+" '"+String(y).slice(2);}
+function _histSum(txns,inc){return {expenses:(txns||[]).reduce((s,t)=>s+txNGN(t),0),income:(inc||[]).reduce((s,i)=>s+txNGN(i),0)};}
+// Put a month's totals into `hist`; true if anything changed.
+function _histUpsert(hist,m,y,tot){
+  const i=hist.findIndex(h=>h.year===y&&h.month===m);
+  if(i>=0){
+    if(hist[i].expenses===tot.expenses&&hist[i].income===tot.income)return false;
+    hist[i]={...hist[i],...tot};return true;
+  }
+  if(!tot.expenses&&!tot.income)return false;
+  hist.push({year:y,month:m,label:_histLabel(m,y),...tot});
+  hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);
+  return true;
+}
+function _histWrite(m,y,tot){
+  if(!db)return;
+  db.collection('historicalSummary').doc(sid(m,y))
+    .set({year:y,month:m,label:_histLabel(m,y),...tot},{merge:true})
+    .catch(e=>console.warn('historicalSummary write failed',e));
+}
+// Recompute one month from what this device holds (the month on screen, or
+// its cached copy) and save it if the totals changed.
+function _histTouch(m,y){
+  if(!m||!y)return;
+  const inView=m===S.expMonth&&y===S.expYear;
+  const tx=inView?S.txns:cGet(CK.txns(m,y)), inc=inView?S.income:cGet(CK.inc(m,y));
+  if(!Array.isArray(tx)&&!Array.isArray(inc))return;
+  const tot=_histSum(tx,inc);
+  const hist=getHistory();
+  if(_histUpsert(hist,m,y,tot)){cSet('sw3_history',hist);_histWrite(m,y,tot);}
+}
 async function loadHistoricalSummary(){
-  // Always pull from Firebase — never skip with local-always-wins
+  let hist;
   try{
-    // No orderBy — sort client-side to avoid composite index requirement
-    let snap;
-    try{snap=await db.collection('historicalSummary').get({source:'server'});}
-    catch(e){snap=await db.collection('historicalSummary').get();}
-    const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    let hist=[];
-    if(snap&&snap.size>0){
-      hist=snap.docs.map(d=>{const h=d.data();return{year:h.year,month:h.month,
-        label:h.label||(MS2[(h.month||1)-1]+" '"+String(h.year).slice(2)),
-        income:h.income||0,expenses:h.expenses||0};});
-    }
-    // Augment with live months not yet in historicalSummary.
-    // Check Firestore transactions/income collections (not just localStorage)
-    // so mobile devices with no local cache also see all months.
-    const histKeys=new Set(hist.map(h=>`${h.year}-${h.month}`));
-    try{
-      const [txAllSnap,incAllSnap]=await Promise.all([
-        db.collection('transactions').get(),
-        db.collection('income').get(),
-      ]);
-      // Group by year-month
-      const txByMonth={}, incByMonth={};
-      txAllSnap.docs.forEach(d=>{const h=d.data();if(!h.year||!h.month) return;const k=`${h.year}-${h.month}`;txByMonth[k]=(txByMonth[k]||[]);txByMonth[k].push(h);});
-      incAllSnap.docs.forEach(d=>{const h=d.data();if(!h.year||!h.month) return;const k=`${h.year}-${h.month}`;incByMonth[k]=(incByMonth[k]||[]);incByMonth[k].push(h);});
-      const allMonthKeys=new Set([...Object.keys(txByMonth),...Object.keys(incByMonth)]);
-      allMonthKeys.forEach(k=>{
-        const [ys,ms]=k.split('-');const y=parseInt(ys),m=parseInt(ms);
-        const expenses=(txByMonth[k]||[]).reduce((s,t)=>s+txNGN(t),0);
-        const income=(incByMonth[k]||[]).reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-        if(!expenses&&!income) return;
-        const existIdx=hist.findIndex(h=>h.year===y&&h.month===m);
-        if(existIdx>=0){
-          // Always override with live scan — historicalSummary can be stale
-          hist[existIdx].expenses=expenses;
-          hist[existIdx].income=income;
-        } else {
-          hist.push({year:y,month:m,label:MS2[m-1]+" '"+String(y).slice(2),income,expenses});
-          histKeys.add(k);
-        }
-      });
-    }catch(e){
-      // Firestore scan failed — fall back to localStorage only
-      for(let y=2023;y<=new Date().getFullYear();y++){
-        for(let m=1;m<=12;m++){
-          const key=`${y}-${m}`;
-          if(histKeys.has(key)) continue;
-          const txns=cGet(CK.txns(m,y));
-          const inc=cGet(CK.inc(m,y));
-          if(!txns&&!inc) continue;
-          const expenses=(txns||[]).reduce((s,t)=>s+txNGN(t),0);
-          const income=(inc||[]).reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-          if(!expenses&&!income) continue;
-          hist.push({year:y,month:m,label:MS2[m-1]+" '"+String(y).slice(2),income,expenses});
-          histKeys.add(key);
-        }
-      }
-    }
-    // Sort chronologically
+    const snap=await db.collection('historicalSummary').get();
+    hist=snap.docs.map(d=>{const h=d.data();return {year:h.year,month:h.month,label:h.label||_histLabel(h.month||1,h.year),income:h.income||0,expenses:h.expenses||0};}).filter(h=>h.year&&h.month);
     hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);
-    // Always override the current month with live in-memory totals
-    // so the history summary row is never stale for the active month
-    const cm=S.expMonth,cy=S.expYear;
-    const liveExp=S.txns.reduce((s,t)=>s+txNGN(t),0);
-    const liveInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-    const ci=hist.findIndex(h=>h.year===cy&&h.month===cm);
-    if(ci>=0){hist[ci].expenses=liveExp;hist[ci].income=liveInc;}
-    else if(liveExp||liveInc){const MS2b=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];hist.push({year:cy,month:cm,label:MS2b[cm-1]+" '"+String(cy).slice(2),income:liveInc,expenses:liveExp});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
-    if(hist.length){
-      cSet('sw3_history',hist);
-      // Write corrected totals back to Firestore historicalSummary so it stays accurate
-      try{
-        hist.forEach(h=>{
-          const docId=`${h.year}-${String(h.month).padStart(2,'0')}`;
-          db.collection('historicalSummary').doc(docId).set({
-            year:h.year,month:h.month,
-            label:h.label,income:h.income,expenses:h.expenses
-          },{merge:true}).catch(e=>console.warn("historicalSummary write failed",e));
-        });
-      }catch(e){console.warn("historicalSummary backfill failed",e);}
-      // Re-render now that we have authoritative history from Firebase
-      renderAll();
-    }
-  }catch(e){
-    // On error, try to build entirely from localStorage cache
-    _buildHistoryFromCache();
+  }catch(e){_warnLoad('loadHistoricalSummary',e);hist=getHistory();}
+  let last=0;try{last=+localStorage.getItem(HIST_SCAN_LS)||0;}catch{}
+  // Reads from the on-device database cost nothing, so local mode always scans.
+  if(!hist.length||db.isLocal||Date.now()-last>864e5){
+    try{await _histFullScan(hist);try{localStorage.setItem(HIST_SCAN_LS,String(Date.now()));}catch{}}
+    catch(e){_warnLoad('history scan',e);}
   }
+  _histUpsert(hist,S.expMonth,S.expYear,_histSum(S.txns,S.income));
+  cSet('sw3_history',hist);
 }
-
-// ── Automatic month-end close ──────────────────────────────────────────────
-// On the first app load after the real-world calendar month has rolled over,
-// permanently freeze the month(s) that just ended into historicalSummary
-// with an income/expenses/closing-cash snapshot marked closed:true. This
-// runs automatically on boot — no manual export or button press needed.
-async function _checkMonthEndClose(){
-  if(!db) return;
-  try{
-    const _now=new Date();
-    const curY=_now.getFullYear(),curM=_now.getMonth()+1;
-    const lastSeen=localStorage.getItem('sw3_last_seen_ym'); // 'YYYY-M'
-    localStorage.setItem('sw3_last_seen_ym',`${curY}-${curM}`);
-    if(!lastSeen) return; // first ever run on this device — nothing to close retroactively
-    const [ly,lm]=lastSeen.split('-').map(Number);
-    if(!ly||!lm) return;
-    if(ly===curY&&lm===curM) return; // still the same month — nothing has closed
-    const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    let y=ly,m=lm,closedAny=0;
-    // Walk every month from the last time the app was opened up to (but not
-    // including) the current real month, closing each not already closed.
-    while(y<curY||(y===curY&&m<curM)){
-      const docId=sid(m,y);
-      try{
-        const existing=await db.collection('historicalSummary').doc(docId).get();
-        if(!(existing.exists&&existing.data()?.closed)){
-          const [txSnap,incSnap,cashDoc]=await Promise.all([
-            db.collection('transactions').where('year','==',y).where('month','==',m).get(),
-            db.collection('income').where('year','==',y).where('month','==',m).get(),
-            db.collection('cashBalances').doc(docId).get(),
-          ]);
-          const expenses=txSnap.docs.reduce((s,d)=>s+(d.data().amount||0),0);
-          const income=incSnap.docs.reduce((s,d)=>s+(d.data().amtNGN||d.data().amount||0),0);
-          let closingCash=0;
-          if(cashDoc.exists){
-            const cd=cashDoc.data()||{};
-            const fxR=getFxRates(m,y);
-            getCashAccounts().forEach(acct=>{
-              const v=cd[acct]||0;
-              closingCash+=isUSDCashAccount(acct)?v*(fxR.USD||1600):v;
-            });
-          }
-          await db.collection('historicalSummary').doc(docId).set({
-            year:y,month:m,label:MS2[m-1]+" '"+String(y).slice(2),
-            income,expenses,closingCash,closed:true,
-            closedAt:FV.serverTimestamp()
-          },{merge:true});
-          closedAny++;
-        }
-      }catch(e){/* skip this month on error, still try the next */}
-      m++;if(m>12){m=1;y++;}
-    }
-    if(closedAny) toast(`${closedAny} month${closedAny>1?'s':''} closed and archived`);
-  }catch(e){console.warn('month-end close check failed:',e);}
+async function _histFullScan(hist){
+  const [tx,inc]=await Promise.all([db.collection('transactions').get(),db.collection('income').get()]);
+  const by={};
+  const add=(d,k)=>{const r={id:d.id,...d.data()};if(!r.year||!r.month)return;const key=r.year*100+r.month;(by[key]=by[key]||{tx:[],inc:[]})[k].push(r);};
+  tx.docs.forEach(d=>add(d,'tx'));inc.docs.forEach(d=>add(d,'inc'));
+  const byDate=(a,b)=>a.date>b.date?-1:a.date<b.date?1:txnTs(b.createdAt)-txnTs(a.createdAt);
+  Object.keys(by).forEach(k=>{
+    const v=by[k],y=Math.floor(k/100),m=k%100;
+    if(!(m===S.expMonth&&y===S.expYear)){cSet(CK.txns(m,y),v.tx.sort(byDate));cSet(CK.inc(m,y),v.inc.sort(byDate));}
+    const tot=_histSum(v.tx,v.inc);
+    if(_histUpsert(hist,m,y,tot))_histWrite(m,y,tot);
+  });
 }
-
+// First paint on a device with no saved history yet: build it from whatever
+// months are cached. The database version replaces it once it loads.
 function _buildHistoryFromCache(){
-  const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  if(getHistory().length)return;
   const hist=[];
-  for(let y=2023;y<=new Date().getFullYear();y++){
-    for(let m=1;m<=12;m++){
-      const txns=cGet(CK.txns(m,y));
-      const inc=cGet(CK.inc(m,y));
-      if(!txns&&!inc) continue;
-      const expenses=(txns||[]).reduce((s,t)=>s+txNGN(t),0);
-      const income=(inc||[]).reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-      if(!expenses&&!income) continue;
-      hist.push({year:y,month:m,label:MS2[m-1]+" '"+String(y).slice(2),income,expenses});
-    }
-  }
-  if(hist.length){
-    // Override current month with live totals
-    const cm=S.expMonth,cy=S.expYear;
-    const liveExp=S.txns.reduce((s,t)=>s+txNGN(t),0);
-    const liveInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-    const ci=hist.findIndex(h=>h.year===cy&&h.month===cm);
-    if(ci>=0&&(liveExp||liveInc)){hist[ci].expenses=liveExp;hist[ci].income=liveInc;}
-    cSet('sw3_history',hist);
-  }
+  cKeys('sw3_txns_').concat(cKeys('sw3_inc_')).forEach(k=>{
+    const mt=k.match(/_(\d{4})_(\d{1,2})$/);if(!mt)return;
+    const y=+mt[1],m=+mt[2];
+    _histUpsert(hist,m,y,_histSum(cGet(CK.txns(m,y)),cGet(CK.inc(m,y))));
+  });
+  if(hist.length)cSet('sw3_history',hist);
 }
 
 async function loadBudgets(m,y){
-  const local=cGet(CK.budgets(m,y));
-  if(local&&Object.keys(local).length>0){S.budgets=local;} // instant paint from cache
-  // Always refresh from Firestore so a budget edited on another device is
-  // picked up (previously this returned early on any cache hit and a
-  // remote edit was never seen until the local cache was cleared).
-  try{const doc=await db.collection('budgets').doc(sid(m,y)).get();
-    if(doc.exists&&doc.data()?.categories){
-      S.budgets={...DEF_BUDGETS,...doc.data().categories};
-      cSet(CK.budgets(m,y),S.budgets);
-    }else if(!local&&getBudgetRollover()){
-      // No budget saved for this month yet — check whether rollover is on
-      // and copy the previous month's categories in as a starting point.
-      const prevM=m===1?12:m-1,prevY=m===1?y-1:y;
-      try{
-        const pd=await db.collection('budgets').doc(sid(prevM,prevY)).get();
-        if(pd.exists&&pd.data()?.categories){
-          S.budgets={...DEF_BUDGETS,...pd.data().categories};
-          cSet(CK.budgets(m,y),S.budgets);
-        }
-      }catch(e){_warnLoad('loadBudgets (prior-month fallback)',e);}
-    }
+  // The month's own budget if it has one; otherwise the standard budget.
+  try{
+    const doc=await db.collection('budgets').doc(sid(m,y)).get();
+    cSet(CK.budgets(m,y),doc.exists&&doc.data()?.categories?{categories:doc.data().categories}:{none:true});
   }catch(e){_warnLoad('loadBudgets',e);}
+  if(S.expMonth===m&&S.expYear===y)S.budgets=budgetFor(m,y);
 }
-
 function reloadMonth(m,y){
   S.expMonth=m;S.expYear=y;S.expCat='All';
+  // Home shows the same month as Expenses.
+  S.dashMonth=m;S.dashYear=y;try{initPeriodSelector();}catch(e){console.warn('period selector refresh failed',e);}
   S.txns=cGet(CK.txns(m,y))||[];
   S.income=cGet(CK.inc(m,y))||[];
   S.investments=cGet(CK.inv(m,y))||{};
-  S.budgets=cGet(CK.budgets(m,y))||{...DEF_BUDGETS};
+  S.budgets=budgetFor(m,y);
   renderExpenses();renderDashboard();
   if(document.getElementById('inc-pane')?.style.display!=='none') renderIncome();
   if(_dbReady()){
@@ -1973,7 +2138,7 @@ function reloadMonth(m,y){
           S.txns=cGet(CK.txns(m,y))||S.txns;
           S.income=cGet(CK.inc(m,y))||S.income;
           S.investments=cGet(CK.inv(m,y))||S.investments;
-          S.budgets=cGet(CK.budgets(m,y))||S.budgets;
+          S.budgets=budgetFor(m,y);
           setSyncStatus('synced');renderExpenses();renderDashboard();renderInvestments();
           if(document.getElementById('inc-pane')?.style.display!=='none') renderIncome();
         }
@@ -2102,12 +2267,21 @@ function navTo(pg, deepCat){
 // ══════════════════════════════════════════════════════════════════════════
 // DASHBOARD PERIOD SELECTOR
 // ══════════════════════════════════════════════════════════════════════════
+// Years that can be picked: from the first year with any data (or this year)
+// up to this year. (Until v4.7 this was a fixed 2023–2026 list.)
+function _dataYears(){
+  const cy=new Date().getFullYear();
+  let min=cy;
+  getHistory().forEach(h=>{if(h.year&&h.year<min)min=h.year;});
+  cKeys('sw3_txns_').forEach(k=>{const y=+(k.match(/_(\d{4})_/)||[])[1];if(y&&y<min)min=y;});
+  if(S.expYear<min)min=S.expYear;
+  const out=[];for(let y=Math.max(cy,S.dashYear||cy);y>=min;y--)out.push(y);
+  return out;
+}
 function initPeriodSelector(){
   const yearSel=document.getElementById('dash-year');
   const monthSel=document.getElementById('dash-month-sel');
-  // Years from 2023 to current
-  const yrs=[2026,2025,2024,2023];
-  yearSel.innerHTML=yrs.map(y=>`<option value="${y}">${y}</option>`).join('');
+  yearSel.innerHTML=_dataYears().map(y=>`<option value="${y}">${y}</option>`).join('');
   yearSel.value=S.dashYear;
   updateMonthOptions();
   monthSel.value=S.dashMonth;
@@ -2117,13 +2291,20 @@ function updateMonthOptions(){
   const y=parseInt(document.getElementById('dash-year').value);
   const monthSel=document.getElementById('dash-month-sel');
   const maxM=12;
-  const minM=y===2023?11:1;
+  const minM=1;
   const opts=[{value:0,label:'Full Year'}];
   for(let m=minM;m<=maxM;m++) opts.push({value:m,label:MONTHS[m-1]});
   monthSel.innerHTML=opts.map(o=>`<option value="${o.value}">${o.label}</option>`).join('');
   monthSel.value=S.dashMonth;
 }
 
+// One currency setting for the whole app (v4.7; there used to be four
+// separate pickers). Set from Home or Settings.
+function setDisplayCurrency(v){
+  S.dashCurrency=v;cSet(CK.currency,v);
+  const cs=document.getElementById('dash-currency');if(cs&&cs.value!==v)cs.value=v;
+  renderDashboard();renderExpenses();renderIncome();renderForecast();renderInvestments();renderCashPage();renderDebtors();renderLoans();
+}
 function dashPeriodChange(){
   const newYear=parseInt(document.getElementById('dash-year').value);
   const newMonth=parseInt(document.getElementById('dash-month-sel').value);
@@ -2139,7 +2320,7 @@ function dashPeriodChange(){
     S.income=cGet(CK.inc(S.dashMonth,S.dashYear))||[];
     S.investments=cGet(CK.inv(S.dashMonth,S.dashYear))||{};
     S.cash=cGet(CK.cash(S.dashMonth,S.dashYear))||{};
-    S.budgets=cGet(CK.budgets(S.dashMonth,S.dashYear))||{...DEF_BUDGETS};
+    S.budgets=budgetFor(S.dashMonth,S.dashYear);
   }
   renderDashboard();renderExpenses();renderForecast();renderInvestments();renderCashPage();
   if(_dbReady()&&S.dashMonth>0){
@@ -2189,7 +2370,7 @@ function renderAll(){
 const GETSTARTED_LS='sw3_getstarted_off';
 function _hasAnyTxns(min){
   let n=(S.txns||[]).length;
-  try{for(let i=0;i<localStorage.length&&n<min;i++){const k=localStorage.key(i);if(k&&k.startsWith('sw3_txns_'))n+=(cGet(k)||[]).length;}}catch{}
+  for(const k of cKeys('sw3_txns_')){if(n>=min)break;n+=(cGet(k)||[]).length;}
   return n>=min;
 }
 function renderGetStarted(){
@@ -2198,7 +2379,7 @@ function renderGetStarted(){
   if(off||_hasAnyTxns(5)){el.innerHTML='';return;}
   const hasBudget=Object.values(S.budgets||{}).some(v=>+v>0);
   const steps=[
-    {done:getCashAccounts().length>0,t:'Add your bank accounts',s:'Accounts → Cash → ✎ Edit Balances',go:"navTo('accounts')"},
+    {done:getCashAccounts().length>0,t:'Add your bank accounts',s:'Accounts → Cash → ✎ Edit balances &amp; accounts',go:"navTo('accounts')"},
     {done:_hasAnyTxns(1),t:'Log your first expense',s:'Tap the round + button, or type it in Quick add',go:"openExpModal('expense')"},
     {done:hasBudget,t:'Set a monthly budget',s:'Settings → Budget',go:"navTo('settings');settTab('budget',document.querySelectorAll('#pg-settings .tabs .tab')[1])"},
     {done:typeof DATA_MODE!=='undefined'&&DATA_MODE==='cloud',t:'Create an account to sync',s:'Use it on all your devices and never lose your data',go:"acctShowWhy()"},
@@ -2219,9 +2400,75 @@ function renderGetStarted(){
   </div>`;
 }
 function dismissGetStarted(){try{localStorage.setItem(GETSTARTED_LS,'1');}catch{}renderGetStarted();}
+// ── Month in review (v4.7) ────────────────────────────────────────────────
+// For the first week of a month, Home shows how the month before went:
+// spent, earned, saved, the change on the month before, top categories, the
+// biggest expense and any category over budget. Hide dismisses it for that
+// month; Share sends a short text summary.
+const REVIEW_OFF_LS='sw3_review_off';
+function _reviewData(){
+  const n=new Date();if(n.getDate()>7)return null;
+  const pm=n.getMonth()===0?12:n.getMonth(),py=n.getMonth()===0?n.getFullYear()-1:n.getFullYear();
+  try{if(localStorage.getItem(REVIEW_OFF_LS)===`${py}-${pm}`)return null;}catch{}
+  const tx=cGet(CK.txns(pm,py)),inc=cGet(CK.inc(pm,py));
+  if(!Array.isArray(tx)||!tx.length)return null;
+  const spent=tx.reduce((s,t)=>s+txNGN(t),0),income=(inc||[]).reduce((s,i)=>s+txNGN(i),0);
+  const ppm=pm===1?12:pm-1,ppy=pm===1?py-1:py;
+  const prev=getHistory().find(h=>h.year===ppy&&h.month===ppm);
+  const cats={};tx.forEach(t=>{cats[t.category||'Others']=(cats[t.category||'Others']||0)+txNGN(t);});
+  const top=Object.entries(cats).sort((a,b)=>b[1]-a[1]).slice(0,3);
+  const biggest=tx.slice().sort((a,b)=>txNGN(b)-txNGN(a))[0];
+  const B=budgetFor(pm,py);
+  const over=Object.entries(cats).filter(([c,v])=>(+B[ck(c)]||0)>0&&v>+B[ck(c)]).map(([c])=>c);
+  const budgeted=Object.keys(cats).filter(c=>(+B[ck(c)]||0)>0).length;
+  return {pm,py,spent,income,saved:income-spent,prevSpent:prev?prev.expenses:0,top,biggest,over,budgeted,count:tx.length};
+}
+function renderMonthReview(){
+  const el=document.getElementById('dash-review');if(!el)return;
+  const d=_reviewData();
+  if(!d){el.innerHTML='';return;}
+  const name=MONTHS[d.pm-1];
+  const chg=d.prevSpent?Math.round((d.spent-d.prevSpent)/d.prevSpent*100):null;
+  const rate=d.income>0?Math.round(d.saved/d.income*100):null;
+  el.innerHTML=`<div class="card mr-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="font-size:0.84rem;font-weight:800">${name} in review</div>
+      <span class="sh-link" style="font-size:0.66rem" onclick="dismissMonthReview()">Hide</span>
+    </div>
+    <div class="mr-grid">
+      <div><div class="mr-l">Spent</div><div class="mr-v">${maskIf('review',fN(d.spent))}</div>${chg!=null?`<div class="mr-s" style="color:${chg>0?'var(--red)':'var(--accent)'}">${chg>0?'▲':'▼'} ${Math.abs(chg)}% vs ${MS[(d.pm+10)%12]}</div>`:''}</div>
+      <div><div class="mr-l">Income</div><div class="mr-v" style="color:var(--accent)">${d.income?maskIf('review',fN(d.income)):'—'}</div></div>
+      <div><div class="mr-l">${d.saved>=0?'Saved':'Overspent'}</div><div class="mr-v" style="color:${d.saved>=0?'var(--accent)':'var(--red)'}">${d.income?maskIf('review',fN(Math.abs(d.saved))):'—'}</div>${rate!=null&&d.saved>=0?`<div class="mr-s">${rate}% of income</div>`:''}</div>
+    </div>
+    <div class="mr-row"><span>Top spending</span><span>${d.top.map(([c,v])=>`${CAT_ICONS[c]||''} ${esc(c)} ${maskIf('review',fN(v))}`).join(' · ')}</span></div>
+    ${d.biggest?`<div class="mr-row"><span>Biggest expense</span><span>${esc(d.biggest.payee||d.biggest.category||'')} ${maskIf('review',fN(txNGN(d.biggest)))} · ${fmtDate(d.biggest.date)}</span></div>`:''}
+    ${d.budgeted?`<div class="mr-row"><span>Budget</span><span>${d.over.length?`Over in ${d.over.map(esc).join(', ')}`:'Every category within budget ✓'}</span></div>`:''}
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn btn-g btn-sm" style="flex:1" onclick="shareMonthReview()">Share</button>
+      <button class="btn btn-g btn-sm" style="flex:1" onclick="reloadMonth(${d.pm},${d.py});navTo('expenses')">See ${name}</button>
+    </div>
+  </div>`;
+}
+function dismissMonthReview(){
+  const d=_reviewData();if(d){try{localStorage.setItem(REVIEW_OFF_LS,`${d.py}-${d.pm}`);}catch{}}
+  renderMonthReview();
+}
+async function shareMonthReview(){
+  const d=_reviewData();if(!d)return;
+  const name=`${MONTHS[d.pm-1]} ${d.py}`;
+  const lines=[`My ${name} with SpendWise`,
+    `Spent: ${fN(d.spent)}`+(d.prevSpent?` (${d.spent>d.prevSpent?'+':''}${Math.round((d.spent-d.prevSpent)/d.prevSpent*100)}% vs the month before)`:''),
+    d.income?`Income: ${fN(d.income)}`:'',
+    d.income?`${d.saved>=0?'Saved':'Overspent'}: ${fN(Math.abs(d.saved))}${d.saved>=0&&d.income?` (${Math.round(d.saved/d.income*100)}%)`:''}`:'',
+    `Top spending: ${d.top.map(([c,v])=>`${c} ${fN(v)}`).join(', ')}`].filter(Boolean);
+  const text=lines.join('\n');
+  if(navigator.share){try{await navigator.share({title:`${name} in review`,text});}catch(e){/* dismissed */}return;}
+  try{await navigator.clipboard.writeText(text);toast('Summary copied');}catch(e){toast('Could not share');}
+}
 function renderDashboard(){
   const m=S.dashMonth,y=S.dashYear,cur=S.dashCurrency;
   renderGetStarted();
+  try{renderMonthReview();}catch(e){console.warn('month review failed',e);}
   const _cs=document.getElementById('dash-currency');if(_cs&&_cs.value!==cur)_cs.value=cur;
   // Keep all tab currency selects in sync
   ['exp-currency','acct-currency','forecast-currency'].forEach(id=>{const el=document.getElementById(id);if(el&&el.value!==cur)el.value=cur;});
@@ -2258,27 +2505,20 @@ function renderDashboard(){
   const incomeDisplay=incTotal>0?incTotal:(histEntry?histEntry.income:0);
 
   const budgTotal=Object.values(S.budgets).reduce((s,v)=>s+(v||0),0);
-  const cash=S.cash;
+  const _NW=netWorthFor(m,y);
+  const cash=_NW.cashDoc;
   const _fxR=getFxRates(m,y);
-  const _nwCfg=getNWConfig();
-  const _nwAccts=_nwCfg.cashAccounts||getCashAccounts();
-  const cashTotal=_nwAccts.reduce((s,b)=>{const v=cash[b]||0;return s+(isUSDCashAccount(b)?v*(_fxR.USD||1650):v);},0);
-  const inv=S.investments;
-  const invTotal=_nwCfg.includeInvestments!==false?platformsFor(inv).reduce((s,p)=>{
-    const meta=getInvPlatformMeta(p.key);
-    const isFI=meta.assetClass==='fixed_income';
-    if(isFI&&_nwCfg.includeFixedIncome===false) return s;
-    if(!isFI&&_nwCfg.includeEquities===false) return s;
-    return s+invBalanceFor(p.key,m,y,inv);
-  },0):0;
+  const _nwCfg=_NW.cfg;
+  const _nwAccts=_NW.accts;
+  const cashTotal=_NW.cash;
+  const inv=_NW.invDoc;
   // Full portfolio total — ALL platforms, regardless of the Net Worth include
   // toggles. The Investments stat card always shows the complete figure (the
   // Net Worth number above is what honours the include config). Matches the
   // total shown by drillDown('investments').
   const invTotalAll=platformsFor(inv).reduce((s,p)=>s+invBalanceFor(p.key,m,y,inv),0);
-  const debtNW=_nwCfg.includeDebtors!==false?nwDebtorsExpected():0;
-  const loanNW=nwLoansOutstanding(_nwCfg);   // liability — subtracted
-  const nw=invTotal+cashTotal+debtNW-loanNW;
+  const debtNW=_NW.debt, loanNW=_NW.loans;   // loans are a liability — subtracted
+  const nw=_NW.total;
   const _nwParts=[_nwCfg.includeInvestments!==false?'Investments':null,_nwAccts.length?'Cash':null,_nwCfg.includeDebtors!==false&&debtNW?'Debtors':null].filter(Boolean);
   document.getElementById('dash-nw').innerHTML=maskIf('nw',fmtCur(nw,cur,m,y)||'—');
   const _nwEye=document.getElementById('nw-eye');if(_nwEye)_nwEye.innerHTML=eyeBtn('nw','renderDashboard');
@@ -2346,7 +2586,7 @@ function renderDashboard(){
   renderCatChart(catSpend,cur,m,y);
 
   // Spend vs budget
-  const allCats=[...new Set([...CATS,...Object.keys(catSpend)])];
+  const allCats=[...new Set([...getAllCats(),...Object.keys(catSpend)])];
   // Only show categories with actual spend; budgets still count in total for the Spent card
   const catRows=allCats.filter(c=>catSpend[c]>0).map(c=>({cat:c,spent:catSpend[c]||0,budg:S.budgets[ck(c)]||0})).sort((a,b)=>b.spent-a.spent);
   const _catRowHtml=r=>{
@@ -2466,7 +2706,7 @@ function openAllTxnsModal(){
       const icon=tx.category?(CAT_ICONS[tx.category]||''):'';
       const cat=tx.category||'Income';
       const sub=isInc?(tx.notes||tx.bank||''):(tx.payee&&tx.payee!==cat?esc(tx.payee):'')+(tx.bank?`<span style="color:var(--text3)"> · ${esc(tx.bank)}</span>`:'');
-      const amt=`${isInc?'+':'−'}${fmtCur(tx.amount,cur,m,y)}`;
+      const amt=`${isInc?'+':'−'}${fmtCur(txNGN(tx),cur,m,y)}${txFxNote(tx)}`;
       const typeBadge=isInc
         ?`<span style="font-size:0.55rem;font-weight:700;color:var(--accent);background:rgba(52,211,153,0.12);border-radius:3px;padding:1px 4px;margin-left:4px">INC</span>`
         :'';
@@ -2559,7 +2799,7 @@ function showDayTxns(dateStr, evt){
   document.getElementById('dcal-popup-title').textContent=label;
   document.getElementById('dcal-popup-body').innerHTML='<div class="txlist">'+dayTxns.map(tx=>{
     const isInc=tx.type==='inc';
-    return`<div class="txi"><div><div class="txi-cat">${tx.category?(CAT_ICONS[tx.category]||'')+'\u00a0'+tx.category:esc(tx.payee)||'—'}</div><div class="txi-meta">${esc(tx.payee||tx.notes)||'—'}</div></div><div class="${isInc?'txi-amt txi-inc':'txi-amt txi-exp'}">${isInc?'+':'−'}${fmtCur(tx.amount,cur,m,y)}</div></div>`;
+    return`<div class="txi"><div><div class="txi-cat">${tx.category?(CAT_ICONS[tx.category]||'')+'\u00a0'+esc(tx.category):esc(tx.payee)||'—'}</div><div class="txi-meta">${esc(tx.payee||tx.notes)||'—'}</div></div><div class="${isInc?'txi-amt txi-inc':'txi-amt txi-exp'}">${isInc?'+':'−'}${fmtCur(txNGN(tx),cur,m,y)}${txFxNote(tx)}</div></div>`;
   }).join('')+'</div>';
   pop.style.display='flex';
 }
@@ -2789,7 +3029,6 @@ async function _enableNotifsFromGesture(){
   if(!('Notification' in window)){toast('This browser has no notification support');return;}
   try{
     const p=await Notification.requestPermission();
-    _notifPermission=p;
     toast(p==='granted'?'Notifications enabled':'Notifications not enabled');
   }catch(e){
     console.warn('[notif] requestPermission failed',e);
@@ -2886,15 +3125,6 @@ function clearAllNotifs(){
 }
 
 // Device push notifications via Web Notifications API
-let _notifPermission='default';
-async function _requestNotifPermission(){
-  if(!('Notification' in window)) return;
-  if(Notification.permission==='granted'){_notifPermission='granted';return;}
-  if(Notification.permission!=='denied'){
-    const p=await Notification.requestPermission();
-    _notifPermission=p;
-  }
-}
 const _sentPushIds=new Set();
 
 // IMPORTANT — why this goes through the service worker and not `new Notification()`:
@@ -3002,9 +3232,7 @@ function toggleDashEdit(){
     const _cont=document.getElementById('dash-cards-container');
     if(_cont) _cont.style.paddingLeft='';
   }
-  const rail=document.getElementById('dash-scroll-rail');
-  if(rail){rail.classList.toggle('visible',_dashEditMode);}
-  if(_dashEditMode) _updateScrollRail();
+
   const container=document.getElementById('dash-cards-container');
   if(!container) return;
   container.querySelectorAll('.dash-card-wrap').forEach(wrap=>{
@@ -3086,23 +3314,6 @@ function _dragTouchEnd(e, wrap){
 
 
 // ── EDIT MODE SCROLL RAIL ──────────────────────────────────────────────────
-function _railScroll(delta){window.scrollBy({top:delta,behavior:'smooth'});setTimeout(_updateScrollRail,120);}
-function _updateScrollRail(){
-  const thumb=document.getElementById('dash-scroll-thumb');
-  const track=document.getElementById('dash-scroll-track');
-  if(!thumb||!track) return;
-  const trackH=track.getBoundingClientRect().height;
-  const docH=document.documentElement.scrollHeight;
-  const winH=window.innerHeight;
-  const scrolled=window.scrollY;
-  const ratio=winH/docH;
-  const thumbH=Math.max(36,trackH*ratio);
-  const maxTop=trackH-thumbH;
-  const top=(scrolled/(docH-winH))*maxTop;
-  thumb.style.height=thumbH+'px';
-  thumb.style.top=top+'px';
-}
-window.addEventListener('scroll',()=>{if(_dashEditMode) _updateScrollRail();},{passive:true});
 
 
 // ── COLLAPSIBLE TOGGLE ─────────────────────────────────────────────────────
@@ -3171,7 +3382,7 @@ function computeSmartInsights(){
   const daysInMonth=new Date(y,m,0).getDate(),daysLeft=daysInMonth-day;
   const mk=`${y}-${m}`;
   const txns=(S.expMonth===m&&S.expYear===y)?S.txns:(cGet(CK.txns(m,y))||[]);
-  const B=(S.expMonth===m&&S.expYear===y)?S.budgets:(cGet(CK.budgets(m,y))||S.budgets||{});
+  const B=(S.expMonth===m&&S.expYear===y)?S.budgets:budgetFor(m,y);
   const hist=_spendHistoryStats(m,y,day);
   const nMonths=hist.monthsScanned;
   const out={alerts:[],insights:[],catProj:{},totalProj:0,totalBudget:Object.values(B).reduce((s,v)=>s+(v||0),0),monthsUsed:nMonths};
@@ -3308,7 +3519,7 @@ function renderDashAlerts(){
   const alerts=isCurrentMonth?computeSmartInsights().alerts.slice():[];
 
   // 2) Upcoming recurring payments (due this month, not yet posted)
-  const recurring=getRecurring().filter(r=>isDueThisMonth(r.nextRun)&&r.type==='expense');
+  const recurring=getRecurring().filter(r=>isDueThisMonth(r.nextRun)&&r.type==='expense'&&!r.auto);
   if(recurring.length){
     const total=recurring.reduce((s,r)=>s+(r.amount||0),0);
     alerts.push({
@@ -3316,7 +3527,7 @@ function renderDashAlerts(){
       icon:'🔁',
       title:`${recurring.length} recurring payment${recurring.length>1?'s':''} due this month`,
       sub:recurring.map(r=>`${r.payee} (${fN(r.amount)})`).join(' · ')+(total?` · Total: ${fN(total)}`:''),
-      link:{label:'Post now →',fn:"openMod('recur-modal')"}
+      link:{label:'Post now →',fn:"openRecurModal()"}
     });
   }
 
@@ -3361,29 +3572,77 @@ function renderDashAlerts(){
 }
 
 
-// Net worth for a given month from cached balances — subs-aware + debtors.
-// Debtors aren't month-bucketed, so the live debtor balance is used for all points.
-function _nwForMonth(m,y){
-  const inv=cGet(CK.inv(m,y))||{};
-  const cash=cGet(CK.cash(m,y))||{};
-  const invT=PLATFORMS.reduce((s,p)=>{
-    return s+invBalanceFor(p.key,m,y,inv);
-  },0);
-  const cashT=cashTotalNGN(cash,m,y);
-  const _nwCfg=cGet('sw3_nw_config')||{};
-  const debtT=_nwCfg.includeDebtors!==false?nwDebtorsExpected():0;
-  // Loans, like debtors, aren't month-bucketed — the live outstanding balance
-  // is applied to every point on the trend.
-  return invT+cashT+debtT-nwLoansOutstanding(_nwCfg);
+// ── Net worth: one calculation for every screen (v4.7) ────────────────────
+// Home, the Net Worth breakdown, the trend chart, the full-year view and the
+// ▲/▼ badge used to compute it five different ways (some ignored
+// sub-investments, debtors or loans, so they could disagree). All of them use
+// this now, honouring Settings → Advanced → Net Worth.
+// Debtors and loans aren't recorded per month, so today's figures are used
+// for every month.
+function _cashDocFor(m,y){
+  if(m===S.cashMonth&&y===S.cashYear&&S.cash&&Object.keys(S.cash).length)return S.cash;
+  return cGet(CK.cash(m,y))||((m===S.dashMonth&&y===S.dashYear)?S.cash:null)||{};
 }
+function _invDocFor(m,y){
+  return cGet(CK.inv(m,y))||((m===S.dashMonth&&y===S.dashYear)?S.investments:null)||{};
+}
+function netWorthFor(m,y){
+  const cfg=getNWConfig();
+  const inv=_invDocFor(m,y),cash=_cashDocFor(m,y),fx=getFxRates(m,y);
+  const accts=cfg.cashAccounts||getCashAccounts();
+  const cashT=accts.reduce((s,b)=>{const v=+cash[b]||0;return s+(isUSDCashAccount(b)?v*(fx.USD||1600):v);},0);
+  const plats=cfg.includeInvestments===false?[]:platformsFor(inv).filter(p=>{
+    const fi=getInvPlatformMeta(p.key).assetClass==='fixed_income';
+    return !(fi&&cfg.includeFixedIncome===false)&&!(!fi&&cfg.includeEquities===false);
+  });
+  const invT=plats.reduce((s,p)=>s+invBalanceFor(p.key,m,y,inv),0);
+  const debt=cfg.includeDebtors!==false?nwDebtorsExpected():0;
+  const loans=nwLoansOutstanding(cfg);
+  const hasData=Object.keys(cash).some(k=>k!=='month'&&k!=='year'&&+cash[k])||plats.some(p=>invBalanceFor(p.key,m,y,inv));
+  return {total:invT+cashT+debt-loans,inv:invT,cash:cashT,debt,loans,cfg,accts,plats,invDoc:inv,cashDoc:cash,hasData};
+}
+// Fetch every month's saved balances once per session (a few dozen small
+// docs), so the trend chart and badges work on a device that has only ever
+// opened the current month. That gap is why the Net Worth chart was empty.
+let _balHistAt=0,_balHistP=null;
+function ensureBalanceHistory(){
+  if(!db||Date.now()-_balHistAt<6e5)return Promise.resolve(false);
+  if(_balHistP)return _balHistP;
+  _balHistP=(async()=>{
+    try{
+      const [cs,is]=await Promise.all([db.collection('cashBalances').get(),db.collection('investments').get()]);
+      const n=new Date(),live=sid(n.getMonth()+1,n.getFullYear());
+      cs.docs.forEach(d=>{if(!/^\d{4}-\d{2}$/.test(d.id)||d.id===live)return;const [y,m]=d.id.split('-').map(Number);cSet(CK.cash(m,y),d.data());});
+      is.docs.forEach(d=>{if(!/^\d{4}-\d{2}$/.test(d.id)||d.id===live)return;const [y,m]=d.id.split('-').map(Number);cSet(CK.inv(m,y),d.data());});
+      _balHistAt=Date.now();
+      return true;
+    }catch(e){_warnLoad('balance history',e);return false;}
+    finally{_balHistP=null;}
+  })();
+  return _balHistP;
+}
+function _nwForMonth(m,y){return netWorthFor(m,y).total;}
 function renderNWTrendChart(){
-  const hist=getHistory();
-  if(!hist.length) return;
-  const pts=hist.slice(-12).map(h=>({label:h.label,nw:_nwForMonth(h.month,h.year)})).filter(p=>p.nw>0);
-  if(pts.length<2) return;
   const canvas=document.getElementById('nw-trend-chart');
   if(!canvas) return;
-  if(S.nwChart) S.nwChart.destroy();
+  const note=document.getElementById('nw-trend-note');
+  // The last 12 months up to the month on screen that have any balances.
+  const endY=S.dashMonth?S.dashYear:new Date().getFullYear(),endM=S.dashMonth||12;
+  const pts=[];
+  for(let i=11;i>=0;i--){
+    let mm=endM-i,yy=endY;while(mm<1){mm+=12;yy--;}
+    const nw=netWorthFor(mm,yy);
+    if(nw.hasData)pts.push({label:_histLabel(mm,yy),nw:nw.total});
+  }
+  if(S.nwChart){S.nwChart.destroy();S.nwChart=null;}
+  if(pts.length<2){
+    canvas.style.display='none';
+    if(note)note.textContent=db?'Loading your monthly balances…':'Net worth needs at least two months of balances.';
+    if(db)ensureBalanceHistory().then(ok=>{if(ok)renderNWTrendChart();else if(note)note.textContent='Net worth needs at least two months of balances.';});
+    return;
+  }
+  canvas.style.display='block';
+  if(note)note.textContent='Cash + investments at the end of each month. Debtors and loans use today\'s figures.';
   const ctx=canvas.getContext('2d');
   const nwLabelPlugin={id:'nwLabels',afterDatasetsDraw(chart){
     const {ctx:c,data,scales:{x,y}}=chart;
@@ -3392,12 +3651,14 @@ function renderNWTrendChart(){
       const xp=x.getPixelForValue(i);
       const yp=y.getPixelForValue(val);
       const lbl=(val/1e6).toFixed(2)+'M';
-      c.save();c.font='bold 8px DM Mono, monospace';c.fillStyle='#c8f542';c.textAlign='center';
+      c.save();c.font='bold 8px DM Mono, monospace';c.fillStyle=getComputedStyle(document.body).getPropertyValue('--accent').trim()||'#14b8a6';c.textAlign='center';
       c.fillText(lbl,xp,yp-9);
       c.restore();
     });
   }};
-  S.nwChart=new Chart(ctx,{type:'line',data:{labels:pts.map(p=>p.label),datasets:[{data:pts.map(p=>p.nw),borderColor:'#c8f542',backgroundColor:'rgba(200,245,66,0.06)',borderWidth:2,pointBackgroundColor:'#c8f542',pointRadius:4,tension:0.35,fill:true}]},options:{responsive:true,maintainAspectRatio:true,layout:{padding:{top:18}},plugins:{legend:{display:false},tooltip:{backgroundColor:'#12122a',borderColor:'#1f1f3a',borderWidth:1,callbacks:{label:c=>fmtChartNGN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:'#3a3a6a',font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}},plugins:[nwLabelPlugin]});
+  const acc=getComputedStyle(document.body).getPropertyValue('--accent').trim()||'#14b8a6';
+  const tick=getComputedStyle(document.body).getPropertyValue('--text3').trim()||'#7d8fa8';
+  S.nwChart=new Chart(ctx,{type:'line',data:{labels:pts.map(p=>p.label),datasets:[{data:pts.map(p=>p.nw),borderColor:acc,backgroundColor:'rgba(20,184,166,0.08)',borderWidth:2,pointBackgroundColor:acc,pointRadius:4,tension:0.35,fill:true}]},options:{responsive:true,maintainAspectRatio:true,layout:{padding:{top:18}},plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmtChartNGN(c.parsed.y)}}},scales:{x:{grid:{display:false},ticks:{color:tick,font:{family:'DM Mono',size:9}},border:{display:false}},y:{display:false}}},plugins:[nwLabelPlugin]});
 }
 
 function renderDashFullYear(y,totalInc,totalExp,cur){
@@ -3407,11 +3668,12 @@ function renderDashFullYear(y,totalInc,totalExp,cur){
   // Use Dec for completed years, current month for the ongoing year
   const refMonth=y<currentYear?12:(y===currentYear?now.getMonth()+1:12);
   // Pull NW from cached balances for the reference month
-  const refInv=cGet(CK.inv(refMonth,y))||S.investments||{};
-  const refCash=cGet(CK.cash(refMonth,y))||S.cash||{};
-  const refInvTotal=PLATFORMS.reduce((s,p)=>s+(refInv[p.key]||0),0);
+  const _RN=netWorthFor(refMonth,y);
+  if(!_RN.hasData)ensureBalanceHistory().then(ok=>{if(ok&&S.dashMonth===0)renderDashboard();});
+  const refInv=_RN.invDoc,refCash=_RN.cashDoc;
+  const refInvTotal=platformsFor(refInv).reduce((s,p)=>s+invBalanceFor(p.key,refMonth,y,refInv),0);
   const refCashTotal=cashTotalNGN(refCash,refMonth,y);
-  const refNW=refInvTotal+refCashTotal;
+  const refNW=_RN.total;
   const refLabel=y<currentYear?`Dec ${y}`:`${MONTHS[refMonth-1]} ${y}`;
   document.getElementById('dash-nw').textContent=refNW?fmtCur(refNW,cur,refMonth,y):'—';
   document.getElementById('dash-nw-sub').textContent=`Net Worth · ${refLabel}`;
@@ -3431,7 +3693,7 @@ function renderDashFullYear(y,totalInc,totalExp,cur){
   const _cbody=document.getElementById('dash-cash-body');
   if(_cbody)_cbody.innerHTML=getCashAccounts().map(b=>{const v=refCash[b]||0;if(!v)return'';const disp=isUSDCashAccount(b)?'$'+v.toFixed(2):fmtCur(v,cur,refMonth,y);return`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)"><span style="font-size:0.72rem">${b}</span><span style="font-family:var(--mono);font-size:0.76rem;color:var(--blue)">${disp}</span></div>`;}).join('')||'<div class="csub">No cash data</div>';
   document.getElementById('dash-inv-total').textContent=refInvTotal?fmtCur(refInvTotal,cur==='NATIVE'?'NGN':cur,refMonth,y):'—';
-  document.getElementById('dash-inv').innerHTML=PLATFORMS.filter(p=>refInv[p.key]).map(p=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)"><span style="font-size:0.72rem">${p.label}</span><span style="font-family:var(--mono);font-size:0.76rem;color:${p.color}">${fmtCur(refInv[p.key],cur==='NATIVE'?'NGN':cur,refMonth,y)}</span></div>`).join('')||'<div class="csub">No investment data</div>';
+  document.getElementById('dash-inv').innerHTML=platformsFor(refInv).filter(p=>invBalanceFor(p.key,refMonth,y,refInv)).map(p=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border)"><span style="font-size:0.72rem">${esc(p.label)}</span><span style="font-family:var(--mono);font-size:0.76rem;color:${p.color}">${fmtCur(invBalanceFor(p.key,refMonth,y,refInv),cur==='NATIVE'?'NGN':cur,refMonth,y)}</span></div>`).join('')||'<div class="csub">No investment data</div>';
   document.getElementById('dash-abar').innerHTML='';
   if(S.trendChart) S.trendChart.destroy();
   const ctx=document.getElementById('trend-chart').getContext('2d');
@@ -4010,32 +4272,25 @@ function renderIncome(){
   }).join('')+'</div>';
 }
 
+// Edit an income record in the + form (the separate income window was
+// removed in v4.7). The type buttons are hidden while editing, so an edit
+// can't turn into a different kind of record.
 function openEditInc(id){
   const inc=S.income.find(i=>i.id===id);
   if(!inc){toast('Income record not found');return;}
-  const titleEl=document.getElementById('inc-modal-title');
-  const editIdEl=document.getElementById('i-edit-id');
-  const amtEl=document.getElementById('i-amt');
-  const catEl=document.getElementById('i-cat');
-  const bankEl=document.getElementById('i-bank');
-  const dateEl=document.getElementById('i-date');
-  const notesEl=document.getElementById('i-notes');
-  const saveBtn=document.getElementById('i-save');
-  if(titleEl) titleEl.textContent='Edit Income';
-  if(editIdEl) editIdEl.value=id;
-  if(amtEl) amtEl.value=inc.amount||'';
-  if(catEl){
-    // Add category if not in list
-    const opts=[...catEl.options].map(o=>o.value);
-    if(inc.category&&!opts.includes(inc.category)){const o=document.createElement('option');o.value=inc.category;o.textContent=inc.category;catEl.appendChild(o);}
-    catEl.value=inc.category||'Other';
-  }
-  if(bankEl) bankEl.value=inc.bank||bankEl.options[0]?.value||'';
-  if(dateEl) dateEl.value=inc.date||'';
-  if(notesEl) notesEl.value=inc.notes||'';
-  if(saveBtn) saveBtn.textContent='Update Income';
-  updateIncAmtLabel();
-  openMod('inc-modal');
+  openExpModal('income');
+  document.getElementById('e-edit-id').value=id;
+  _setEditMode(true,'Edit Income','Update Income');
+  const cat=document.getElementById('i-cat2');
+  if(cat&&inc.category&&![...cat.options].some(o=>o.value===inc.category)){const o=document.createElement('option');o.value=inc.category;o.textContent=inc.category;cat.appendChild(o);}
+  if(cat)cat.value=inc.category||'Other';
+  const b=document.getElementById('i-bank2');
+  if(b&&inc.bank&&![...b.options].some(o=>o.value===inc.bank)){const o=document.createElement('option');o.value=inc.bank;o.textContent=inc.bank;b.appendChild(o);}
+  if(b)b.value=inc.bank||'';
+  document.getElementById('e-amt').value=inc.amount||'';
+  document.getElementById('e-date').value=inc.date||todayStr();
+  document.getElementById('e-notes').value=inc.notes||'';
+  setTimeout(()=>{const a=document.getElementById('e-amt');if(a)_syncNumDisplay(a);},100);
 }
 
 function delIncome(id){
@@ -4045,22 +4300,28 @@ function delIncome(id){
   // Optimistically remove from local state immediately
   S.income.splice(idx,1);
   cSet(CK.inc(S.expMonth,S.expYear),S.income);
-  if(inc.bank&&inc.amount) _adjustCash(inc.bank, -inc.amount, inc.month||S.expMonth, inc.year||S.expYear, 'income-delete');
-  _recalcHistIncome(S.expMonth,S.expYear);
+  // Interest credited to an investment platform never touched a bank.
+  const _cashBank=inc.bank&&getCashAccounts().includes(inc.bank);
+  if(_cashBank&&inc.amount) _adjustCash(inc.bank, -inc.amount, inc.month||S.expMonth, inc.year||S.expYear, 'income-delete', '', inc.date);
+  _histTouch(S.expMonth,S.expYear);
   renderIncome();renderDashboard();renderCashPage();
   haptic([6]);
   const rollback=()=>{
-    S.income.splice(Math.min(idx,S.income.length),0,inc);
-    cSet(CK.inc(S.expMonth,S.expYear),S.income);
-    if(inc.bank&&inc.amount) _adjustCash(inc.bank, inc.amount, inc.month||S.expMonth, inc.year||S.expYear);
-    _recalcHistIncome(S.expMonth,S.expYear);
+    _placeRecord('inc',{month:S.expMonth,year:S.expYear,...inc},null);
+    if(_cashBank&&inc.amount) _adjustCash(inc.bank, inc.amount, inc.month||S.expMonth, inc.year||S.expYear, 'income-delete-undo', '', inc.date);
     renderIncome();renderDashboard();renderCashPage();
   };
   showUndoToast('Income deleted',
     rollback,
     async ()=>{ // commit: permanent Firestore delete
       try{await db.collection('income').doc(id).delete();}
-      catch(e){toast('Delete failed — restored');rollback();}
+      catch(e){toast('Delete failed — restored');rollback();return;}
+      // A deleted interest posting can be posted again.
+      if(inc.source==='interest'&&inc.intAcct){
+        const posts=getInterestPosts(),p=posts[inc.intAcct]||{};
+        const k=Object.keys(p).find(s=>p[s]&&p[s].incomeId===id);
+        if(k){delete p[k];saveInterestPosts(posts);renderIncome();}
+      }
     });
 }
 
@@ -4070,7 +4331,7 @@ function setExpSort(mode){_expSort=mode;renderExpenses();}
 function renderExpenses(){
   const m=S.expMonth,y=S.expYear;
   const months=[];for(let i=1;i<=12;i++) months.push(i);
-  document.getElementById('exp-months').innerHTML=months.map(mo=>`<div class="mpill ${mo===m?'active':''}" onclick="reloadMonth(${mo},${y})">${MS[mo-1]}</div>`).join('');
+  document.getElementById('exp-months').innerHTML=_monthStrip(m,y,'reloadMonth');
   setTimeout(()=>{const el=document.querySelector('#exp-months .mpill.active');if(el)el.scrollIntoView({inline:'center',block:'nearest'});},0);
 
   // Update sort button active states
@@ -4087,25 +4348,8 @@ function renderExpenses(){
   if(S.expCat!=='All') filtered=filtered.filter(t=>t.category===S.expCat);
   if(searchQ) filtered=filtered.filter(t=>(t.payee||'').toLowerCase().includes(searchQ)||(t.notes||'').toLowerCase().includes(searchQ));
 
-  // ── Cross-month search across cached months ──
-  let _crossHtml='';
-  if(searchQ.length>=2){
-    const _others=[];
-    Object.keys(localStorage).forEach(k=>{
-      const mt=k.match(/^sw3_txns_(\d{4})_(\d{1,2})$/);
-      if(!mt)return;
-      const ky=parseInt(mt[1]),km=parseInt(mt[2]);
-      if(km===m&&ky===y)return;
-      (cGet(k)||[]).forEach(t=>{
-        if((t.payee||'').toLowerCase().includes(searchQ)||(t.notes||'').toLowerCase().includes(searchQ)) _others.push({...t,_m:km,_y:ky});
-      });
-    });
-    if(_others.length){
-      _others.sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:0);
-      const _shown=_others.slice(0,30);
-      _crossHtml=`<div class="card" style="margin-top:12px"><div class="clabel" style="margin-bottom:8px">Results in other months (${_others.length})</div>${_shown.map(t=>`<div class="txi" style="cursor:pointer" onclick="reloadMonth(${t._m},${t._y})"><div style="flex:1;min-width:0"><div class="txi-cat" style="font-size:0.76rem">${esc(t.payee)||'—'}</div><div class="txi-meta">${fmtDate(t.date)} · ${MS[t._m-1]} ${t._y} · ${esc(t.bank||'')}</div></div><div class="txi-amt txi-exp">${fmtCur(txNGN(t),cur,t._m,t._y)}${txFxNote(t)}</div></div>`).join('')}${_others.length>30?`<div class="csub" style="margin-top:6px">Showing first 30 — tap a row to open its month</div>`:`<div class="csub" style="margin-top:6px">Tap a row to open its month</div>`}</div>`;
-    }
-  }
+  // Searching here filters this month; the link opens the search of every month.
+  const _crossHtml=searchQ?`<div class="csub" style="margin-top:10px;text-align:center"><span class="sh-link" onclick="openGlobalSearch();setTimeout(()=>{const i=document.getElementById('global-search-input');if(i){i.value=document.getElementById('exp-search').value;_runGlobalSearch();}},120)">Search every month for \"${esc(searchQ)}\" ›</span></div>`:'';
 
   const total=txns.reduce((s,t)=>s+txNGN(t),0);
   const catSpend={};txns.forEach(t=>{catSpend[t.category]=(catSpend[t.category]||0)+txNGN(t);});
@@ -4232,167 +4476,92 @@ function toggleExpGrp(gid){
 }
 function quickCatFilter(c){S.expCat=S.expCat===c?'All':c;const s=document.getElementById('exp-search');if(s)s.value='';renderExpenses();}
 
-// ── Global search (across ALL months, not just the one currently loaded) ──
-let _globalSearchCache=null; // {txns:[...], income:[...]} — fetched once per modal open
-let _globalSearchDebounceT=null;
-
+// ── Search (every month; opened from Home) ─────────────────────────────────
+// One search for the whole app (v4.7). Results come at once from this
+// device's copy of every month, then from the database (once per 10 minutes),
+// so older months are covered too. Matches the item, category, bank and
+// notes; a number ("5000", "5k") also matches amounts.
+let _gsData=null,_gsAt=0,_gsDebounceT=null;
+function _gsFromCache(){
+  const out=new Map();
+  cKeys('sw3_txns_').forEach(k=>(cGet(k)||[]).forEach(t=>{if(t&&t.id)out.set('e'+t.id,{...t,_kind:'expense'});}));
+  cKeys('sw3_inc_').forEach(k=>(cGet(k)||[]).forEach(t=>{if(t&&t.id)out.set('i'+t.id,{...t,_kind:'income'});}));
+  (S.txns||[]).forEach(t=>out.set('e'+t.id,{...t,_kind:'expense'}));
+  (S.income||[]).forEach(t=>out.set('i'+t.id,{...t,_kind:'income'}));
+  return out;
+}
 async function openGlobalSearch(){
   openMod('global-search-modal');
   const input=document.getElementById('global-search-input');
-  if(input) input.value='';
-  document.getElementById('global-search-body').innerHTML='<div class="csub">Loading all transactions…</div>';
-  if(!db){document.getElementById('global-search-body').innerHTML='<div class="empty"><div class="empty-i">⚠</div>Needs a connection</div>';return;}
+  if(input){input.value='';setTimeout(()=>input.focus(),80);}
+  _gsData=_gsFromCache();
+  _runGlobalSearch();
+  if(!db||Date.now()-_gsAt<6e5)return;
   try{
-    const [txSnap,incSnap]=await Promise.all([
-      db.collection('transactions').get(),
-      db.collection('income').get(),
-    ]);
-    _globalSearchCache={
-      txns:txSnap.docs.map(d=>({id:d.id,...d.data(),_kind:'expense'})),
-      income:incSnap.docs.map(d=>({id:d.id,...d.data(),_kind:'income'})),
-    };
-  }catch(e){
-    document.getElementById('global-search-body').innerHTML='<div class="empty"><div class="empty-i">⚠</div>Could not load — check connection</div>';
-    return;
-  }
-  document.getElementById('global-search-body').innerHTML='<div class="csub">Type to search every transaction across every month.</div>';
-  if(input) input.focus();
+    const [txSnap,incSnap]=await Promise.all([db.collection('transactions').get(),db.collection('income').get()]);
+    txSnap.docs.forEach(d=>_gsData.set('e'+d.id,{id:d.id,...d.data(),_kind:'expense'}));
+    incSnap.docs.forEach(d=>_gsData.set('i'+d.id,{id:d.id,...d.data(),_kind:'income'}));
+    _gsAt=Date.now();
+    _runGlobalSearch();
+  }catch(e){console.warn('search: could not load every month',e);}
 }
-
 function _debounceGlobalSearch(){
-  clearTimeout(_globalSearchDebounceT);
-  _globalSearchDebounceT=setTimeout(_runGlobalSearch,220);
+  clearTimeout(_gsDebounceT);
+  _gsDebounceT=setTimeout(_runGlobalSearch,200);
 }
-
 function _runGlobalSearch(){
-  const body=document.getElementById('global-search-body');
-  const q=(document.getElementById('global-search-input')?.value||'').toLowerCase().trim();
-  if(!q){body.innerHTML='<div class="csub">Type to search every transaction across every month.</div>';return;}
-  if(!_globalSearchCache){body.innerHTML='<div class="csub">Still loading…</div>';return;}
-  const all=[...(_globalSearchCache.txns||[]),...(_globalSearchCache.income||[])];
+  const body=document.getElementById('global-search-body');if(!body)return;
+  const raw=(document.getElementById('global-search-input')?.value||'').trim();
+  const q=raw.toLowerCase();
+  if(!q){body.innerHTML=`<div class="csub">Search every entry in every month: an item, category, bank, note or amount (e.g. "5k").</div>`;return;}
+  const numQ=/^[\d.,\s₦$£kKmM+]+$/.test(raw)?parseFloat(_evalExpr(raw)):NaN;
+  const all=[...(_gsData||new Map()).values()];
   const results=all.filter(r=>{
-    const hay=[r.payee,r.category,r.notes].filter(Boolean).join(' ').toLowerCase();
-    return hay.includes(q);
-  }).sort((a,b)=>(b.date||'')>(a.date||'')?1:-1).slice(0,200);
+    if(!isNaN(numQ)&&numQ>0){
+      const amts=[+r.amount,+r.amtNGN,r.fx&&+r.fx.amount].filter(v=>v>0);
+      if(amts.some(v=>Math.round(v)===Math.round(numQ)))return true;
+    }
+    return [r.payee,r.category,r.notes,r.bank].filter(Boolean).join(' ').toLowerCase().includes(q);
+  }).sort((a,b)=>(b.date||'')>(a.date||'')?1:(b.date||'')<(a.date||'')?-1:0);
   if(!results.length){body.innerHTML='<div class="empty"><div class="empty-i">🔍</div>No matches</div>';return;}
-  body.innerHTML=`<div class="csub" style="margin-bottom:6px">${results.length} match${results.length>1?'es':''}${results.length===200?' (showing first 200)':''}</div>`+
-    results.map(r=>{
+  const shown=results.slice(0,200);
+  const total=results.reduce((s,r)=>s+(r._kind==='expense'?txNGN(r):0),0);
+  body.innerHTML=`<div class="csub" style="margin-bottom:6px">${results.length} match${results.length>1?'es':''}${total?` · ${fN(total)} spent`:''}${results.length>200?' (showing the newest 200)':''}</div>`+
+    shown.map(r=>{
       const isExp=r._kind==='expense';
-      const amt=isExp?(r.amount||0):(r.amtNGN||r.amount||0);
       const label=isExp?(r.payee||r.category||'Expense'):(r.category||'Income');
-      const monthLabel=r.month&&r.year?`${MONTHS[r.month-1]} ${r.year}`:'';
-      return`<div class="dc" style="margin-bottom:6px;cursor:pointer" onclick="_jumpToGlobalResult(${r.month||0},${r.year||0})">
+      const sub=[r.date?fmtDate(r.date):'',isExp&&r.payee&&r.category?r.category:'',r.bank||'',r.notes||''].filter(Boolean).map(esc).join(' · ');
+      return`<div class="dc" style="margin-bottom:6px;cursor:pointer" onclick="_jumpToGlobalResult('${r._kind}','${jsq(r.id)}',${r.month||0},${r.year||0})">
         <div class="dc-top">
-          <div>
-            <div class="dc-name">${esc(label)}</div>
-            <div class="dc-sub">${monthLabel}${r.date?' · '+fmtDate(r.date):''}${r.notes?' · '+esc(r.notes):''}</div>
-          </div>
-          <div style="font-family:var(--mono);font-size:0.8rem;color:${isExp?'var(--red)':'var(--green)'}">${isExp?'-':'+'}${fN(amt)}</div>
+          <div style="min-width:0"><div class="dc-name">${esc(label)}</div><div class="dc-sub">${sub}</div></div>
+          <div style="font-family:var(--mono);font-size:0.8rem;color:${isExp?'var(--red)':'var(--green)'};white-space:nowrap">${isExp?'−':'+'}${fN(txNGN(r))}${txFxNote(r)}</div>
         </div>
       </div>`;
     }).join('');
 }
-
-function _jumpToGlobalResult(m,y){
+// Open the result's month on the Expenses page, then the entry itself.
+function _jumpToGlobalResult(kind,id,m,y){
   if(!m||!y) return;
   closeMod('global-search-modal');
-  const btn=document.getElementById('exp-tab-btn');
-  if(btn) switchExpTab('expenses',btn);
+  navTo('expenses');
+  const btn=document.getElementById(kind==='income'?'inc-tab-btn':'exp-tab-btn');
+  if(btn) switchExpTab(kind==='income'?'income':'expenses',btn);
   reloadMonth(m,y);
-  toast(`Jumped to ${MONTHS[m-1]} ${y}`);
+  const rec=(_gsData&&_gsData.get((kind==='income'?'i':'e')+id))||null;
+  const list=kind==='income'?S.income:S.txns;
+  if(rec&&!list.some(t=>t.id===id))list.unshift(rec);
+  setTimeout(()=>{if(kind==='income')openEditInc(id);else openEditExp(id);},150);
 }
 function setCatFilter(c){S.expCat=c;renderExpenses();}
 function openFilterDrawer(){
   const grid=document.getElementById('filter-grid');
-  grid.innerHTML=['All',...CATS].map(c=>`<div class="filter-chip ${c===S.expCat?'active':''}" onclick="setCatFilter('${c}');document.querySelectorAll('.filter-chip').forEach(x=>x.classList.remove('active'));this.classList.add('active')">${c}</div>`).join('');
+  grid.innerHTML=['All',...getAllCats()].map(c=>`<div class="filter-chip ${c===S.expCat?'active':''}" onclick="setCatFilter('${jsq(c)}');document.querySelectorAll('.filter-chip').forEach(x=>x.classList.remove('active'));this.classList.add('active')">${c}</div>`).join('');
   document.getElementById('filter-drawer').classList.add('open');
 }
 function closeFilterDrawer(){document.getElementById('filter-drawer').classList.remove('open');renderExpenses();}
 function clearFilter(){S.expCat='All';closeFilterDrawer();}
 
-// ══════════════════════════════════════════════════════════════════════════
-// SWIPE-TO-DELETE
-// ══════════════════════════════════════════════════════════════════════════
-const _swipe={};  // per-id touch state
 
-function attachSwipeHandlers(){
-  // Nothing extra needed — handlers are inline on each row via ontouchstart etc.
-  // This function is kept as a hook for future use.
-}
-
-function swipeStart(e, id){
-  const touch=e.touches[0];
-  _swipe[id]={startX:touch.clientX,startY:touch.clientY,dx:0,active:true,passed:false};
-}
-
-function swipeMove(e, id){
-  const st=_swipe[id];
-  if(!st||!st.active) return;
-  const touch=e.touches[0];
-  const dx=touch.clientX-st.startX;
-  const dy=touch.clientY-st.startY;
-
-  // If vertical scroll is dominant, don't hijack
-  if(!st.passed&&Math.abs(dy)>Math.abs(dx)&&Math.abs(dy)>8){st.active=false;return;}
-  if(Math.abs(dx)>8) st.passed=true;
-  if(!st.passed) return;
-
-  // Only allow left-swipe (negative dx)
-  const clampedDx=Math.min(0,dx);
-  st.dx=clampedDx;
-
-  const row=document.getElementById('txi-'+id);
-  const bg=document.getElementById('swbg-'+id);
-  if(!row||!bg) return;
-
-  row.classList.add('swiping');
-  row.style.transform=`translateX(${clampedDx}px)`;
-
-  // Reveal the red bg proportionally, full opacity at 80px
-  const pct=Math.min(1,Math.abs(clampedDx)/80);
-  bg.style.opacity=pct;
-
-  // Prevent page scroll while swiping horizontally
-  if(Math.abs(dx)>10) e.preventDefault();
-}
-
-function swipeEnd(e, id){
-  const st=_swipe[id];
-  if(!st) return;
-  const row=document.getElementById('txi-'+id);
-  const bg=document.getElementById('swbg-'+id);
-  if(!row||!bg){delete _swipe[id];return;}
-
-  row.classList.remove('swiping');
-
-  if(Math.abs(st.dx)>=72){
-    // Committed — execute delete with haptic, animate out
-    haptic([8,30,18]);
-    row.style.transform='translateX(-100%)';
-    bg.style.opacity='1';
-    const wrap=document.getElementById('sw-'+id);
-    if(wrap){
-      wrap.style.transition='max-height 0.28s ease, opacity 0.28s ease';
-      wrap.style.overflow='hidden';
-      // Collapse height then delete
-      requestAnimationFrame(()=>{
-        wrap.style.maxHeight=wrap.offsetHeight+'px';
-        requestAnimationFrame(()=>{
-          wrap.style.maxHeight='0';
-          wrap.style.opacity='0';
-          setTimeout(()=>delExpense(id),300);
-        });
-      });
-    } else {
-      delExpense(id);
-    }
-  } else {
-    // Not committed — snap back
-    row.style.transform='translateX(0)';
-    bg.style.opacity='0';
-  }
-  delete _swipe[id];
-}
 
 // ── TRANSACTION TYPE UI ──
 let _txnType='expense';
@@ -4407,6 +4576,9 @@ function setTxnType(type){
   document.getElementById('e-expense-fields').style.display=type==='expense'?'block':'none';
   document.getElementById('e-income-fields').style.display=type==='income'?'block':'none';
   document.getElementById('e-transfer-fields').style.display=type==='transfer'?'block':'none';
+  // Transfers don't repeat; the row also stays hidden while editing.
+  const _rr=document.getElementById('e-recur-row');
+  if(_rr&&!document.getElementById('e-edit-id').value)_rr.style.display=type==='transfer'?'none':'flex';
   const saveBtn=document.getElementById('e-save');
   if(saveBtn)saveBtn.textContent=type==='income'?'Record Income':type==='transfer'?'Transfer Funds':'Save Expense';
   const title=document.getElementById('exp-modal-title');
@@ -4425,7 +4597,8 @@ function autoSuggestCat(payee){
 function updateRecurDesc(){
   const v=document.getElementById('e-recur')?.value;
   const el=document.getElementById('recur-desc');
-  if(el)el.textContent=v?`Repeats ${v}`:'One-time';
+  if(el)el.textContent=v?`Repeats ${v==='annually'?'yearly':v}`:'One-time';
+  const ar=document.getElementById('e-recur-auto-row');if(ar)ar.style.display=v?'flex':'none';
 }
 function getExpLines(cat){
   return[...new Set([...(CAT_LINES[cat]||[]),...(S.customExpLines[cat]||[])].filter(p=>{const removed=(S.customExpLines['__removed__']||{})[cat]||[];return!removed.includes(p);}))];
@@ -4434,7 +4607,7 @@ function updateExpenseLines(){
   const cat=document.getElementById('e-cat')?.value;if(!cat)return;
   const lines=getExpLines(cat).slice().sort((a,b)=>a.localeCompare(b));
   const sel=document.getElementById('e-payee-sel');
-  if(sel)sel.innerHTML=['-- Select --',...lines,'+ Add new'].map(l=>`<option value="${l}">${l}</option>`).join('');
+  if(sel){sel.innerHTML=['-- Select --',...lines,'+ Add new'].map(l=>`<option value="${esc(l)}">${esc(l)}</option>`).join('');delete sel.dataset.allowEmpty;}
   const wrap=document.getElementById('e-payee-new-wrap');if(wrap)wrap.style.display='none';
   const hint=document.getElementById('e-autocat-hint');if(hint)hint.textContent='';
 }
@@ -4449,7 +4622,7 @@ function handlePayeeSel(){
 const INC_CATS_BASE=['Salary','Allowance','Bonus / Dividend','Interest Income','Other'];
 function getIncomeCats(){
   const seen=new Set();
-  try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith('sw3_inc_')){(cGet(k)||[]).forEach(r=>{if(r&&r.category)seen.add(r.category);});}}}catch(e){console.warn('income categories scan failed',e);}
+  cKeys('sw3_inc_').forEach(k=>(cGet(k)||[]).forEach(r=>{if(r&&r.category)seen.add(r.category);}));
   (S.income||[]).forEach(r=>{if(r&&r.category)seen.add(r.category);});
   const extra=[...seen].filter(c=>!INC_CATS_BASE.includes(c)).sort((a,b)=>a.localeCompare(b));
   return [...INC_CATS_BASE.slice(0,-1),...extra,'Other'];
@@ -4476,7 +4649,9 @@ function openExpModal(type){
   document.getElementById('e-payee-new').value='';
   document.getElementById('e-payee-new-wrap').style.display='none';
   document.getElementById('e-edit-id').value='';
+  _setEditMode(false);
   const rr=document.getElementById('e-recur');if(rr)rr.value='';
+  const ra=document.getElementById('e-recur-auto');if(ra)ra.checked=false;
   updateRecurDesc();
   _xfrType='cash-cash';setXfrType('cash-cash');
   const hint=document.getElementById('e-autocat-hint');if(hint)hint.textContent='';
@@ -4488,19 +4663,37 @@ function openEditExp(id){
   const tx=S.txns.find(t=>t.id===id);if(!tx)return;
   openExpModal('expense');
   document.getElementById('e-edit-id').value=id;
-  const title=document.getElementById('exp-modal-title');if(title)title.textContent='Edit Expense';
-  const saveBtn=document.getElementById('e-save');if(saveBtn)saveBtn.textContent='Update Expense';
+  _setEditMode(true,'Edit Expense','Update Expense');
   // A price entered in $/£ reopens in that currency so it can be corrected.
   const _ec=document.getElementById('e-cur');
   if(tx.fx&&tx.fx.amount&&_ec){_ec.value=tx.fx.currency;document.getElementById('e-amt').value=tx.fx.amount;}
   else{if(_ec)_ec.value='NGN';document.getElementById('e-amt').value=tx.amount;}
-  document.getElementById('e-cat').value=tx.category;
+  // Old records can point at a category, item or account that has since been
+  // renamed or removed (or, before 2026, have no item at all). Offer the
+  // record's own value so it can still be edited and saved as it is.
+  const addOpt=(sel,v,label)=>{if(sel&&v!=null&&![...sel.options].some(o=>o.value===v)){const o=document.createElement('option');o.value=v;o.textContent=label||v;sel.appendChild(o);}};
+  const cs=document.getElementById('e-cat');addOpt(cs,tx.category);cs.value=tx.category;
   updateExpenseLines();
-  const ps=document.getElementById('e-payee-sel');if(ps)ps.value=tx.payee||'-- Select --';
+  const ps=document.getElementById('e-payee-sel');
+  if(ps){
+    if(tx.payee&&tx.payee!=='-- Select --'){addOpt(ps,tx.payee);ps.value=tx.payee;}
+    else{addOpt(ps,'','— No item —');ps.value='';ps.dataset.allowEmpty='1';}
+  }
   document.getElementById('e-notes').value=tx.notes||'';
   document.getElementById('e-date').value=tx.date||todayStr();
-  const eb=document.getElementById('e-bank');if(eb&&tx.bank)eb.value=tx.bank;
+  const eb=document.getElementById('e-bank');if(eb&&tx.bank){addOpt(eb,tx.bank);eb.value=tx.bank;}
   updateExpAmtLabel();
+  setTimeout(()=>{const a=document.getElementById('e-amt');if(a)_syncNumDisplay(a);},100);
+}
+// Editing hides the Expense/Income/Transfer switch and the "repeats" option.
+function _setEditMode(on,title,btn){
+  const row=document.getElementById('e-type-row');if(row)row.style.display=on?'none':'flex';
+  const rr=document.getElementById('e-recur-row');if(rr)rr.style.display=on?'none':'flex';
+  const qa=document.querySelector('#exp-modal .qa-box');if(qa)qa.style.display=on?'none':'';
+  if(on){
+    const t=document.getElementById('exp-modal-title');if(t)t.textContent=title;
+    const b=document.getElementById('e-save');if(b)b.textContent=btn;
+  }
 }
 const openEditExpense=openEditExp; // alias used in category popup
 
@@ -4592,6 +4785,7 @@ Rules:
 - date is YYYY-MM-DD. Use today if no day is mentioned.
 - notes: anything useful not captured elsewhere, else "".
 - currency is the currency the amount was stated in: "NGN", "USD" or "GBP" (e.g. "$7" or "7 dollars" is USD). Do not convert the amount.
+- The note may be a bank SMS or email alert. Then: DR / Debit / "sent" is an expense and CR / Credit / "received" is income; the amount is the transaction amount, never the balance ("Bal", "Avail Bal"); ignore account numbers, references and times; use the narration ("Desc", "Narration") for what it was for, and the bank named in the alert for bank if it matches one of the user's accounts; use the alert's date.
 JSON shape: {"type":"","amount":0,"currency":"NGN","category":null,"payee":null,"bank":null,"toBank":null,"date":"","notes":""}
 Note: ${JSON.stringify(String(text).slice(0,300))}`;
   const res=await Promise.race([
@@ -4651,13 +4845,107 @@ function _qaFill(r){
   }
   if(r.notes&&!nt.value){nt.value=r.notes;nt.dataset.qa='1';}
 }
+// ── Bank alerts (v4.7) ────────────────────────────────────────────────────
+// Paste a debit/credit SMS or email alert into Quick add and it's read like a
+// typed note: DR/Debit → expense, CR/Credit → income; the amount is the
+// transaction amount (never the balance); the narration becomes what it was
+// for. Works offline; the AI (when available) refines it as usual.
+const _QA_BANK_ALIASES={
+  'GTB':['gtb','gtbank','guaranty trust','gtco'],'Access':['access'],'First Bank':['first bank','firstbank','fbn'],
+  'Zenith':['zenith'],'UBA':['uba','united bank for africa'],'Kuda':['kuda'],'Opay':['opay'],'Moniepoint':['moniepoint'],
+  'PalmPay':['palmpay'],'ALAT by Wema':['wema','alat'],'Stanbic IBTC':['stanbic'],'Fidelity':['fidelity'],'FCMB':['fcmb'],
+  'Sterling':['sterling'],'Union Bank':['union bank','unionbank'],'Ecobank':['ecobank'],'Polaris':['polaris'],'Providus':['providus'],
+  'Renmoney':['renmoney'],'Carbon':['carbon'],
+};
+function _qaIsAlert(t){
+  const n=(t.match(/\b(amt|amount|acct|acc|a\/c|avail(able)?\s*bal|bal(ance)?|desc|narration|debit(ed)?|credit(ed)?|dr|cr|txn|ref|alert|you sent|you received)\b/gi)||[]).length;
+  return n>=2&&/\d/.test(t);
+}
+// Which of the user's accounts an alert is about, from a bank name in it.
+function _qaAlertBank(low){
+  const accts=getCashAccounts();
+  const direct=accts.find(a=>{const n=_qaNorm(a);return n.length>2&&(' '+_qaNorm(low)+' ').includes(' '+n+' ');});
+  if(direct)return direct;
+  for(const [name,aliases] of Object.entries(_QA_BANK_ALIASES)){
+    if(!aliases.some(al=>new RegExp('\\b'+al+'\\b','i').test(low)))continue;
+    const hit=accts.filter(a=>{const an=a.toLowerCase();return an.includes(name.toLowerCase())||aliases.some(al=>an.includes(al));});
+    if(hit.length===1)return hit[0];
+  }
+  return null;
+}
+function _qaParseAlert(text){
+  const raw=String(text||'').replace(/\s*[\r\n]+\s*/g,' ; ');
+  if(!_qaIsAlert(raw))return null;
+  const r={type:'expense',amount:null,currency:'NGN',category:null,payee:null,bank:null,toBank:null,date:toLocalISO(new Date()),notes:'',alert:true};
+  // Drop the balance so its figure can't be taken for the amount.
+  const noBal=raw.replace(/(your\s+)?(avail(able)?\.?\s*)?(bal(ance)?|clr\s*bal|ledger\s*bal)\s*(is|of)?\s*[:=]?\s*(ngn|n|₦|usd|\$)?\s*-?[\d,]+(\.\d+)?/gi,' ; ');
+  const low=noBal.toLowerCase();
+  const dr=/\b(dr|debit(ed)?|withdrawal|you sent|sent to|purchase|paid)\b/i.test(noBal);
+  const cr=/\b(cr|credit(ed)?|received|deposit|inflow)\b/i.test(noBal);
+  // "DR"/"CR" right after the amount decides when both words appear.
+  const tag=noBal.match(/[\d,]+\.\d{2}\s*(dr|cr)\b/i);
+  r.type=tag?(tag[1].toLowerCase()==='cr'?'income':'expense'):(cr&&!dr?'income':'expense');
+  if(/\busd\b|\$/.test(low))r.currency='USD';
+  const amtM=noBal.match(/\b(?:txn\s*)?(?:amt|amount)\s*[:=]?\s*(?:ngn|n|₦|usd|\$)?\s*([\d,]+(?:\.\d{1,2})?)/i)
+    ||noBal.match(/(?:ngn|₦)\s?([\d,]+(?:\.\d{1,2})?)/i)
+    ||noBal.match(/\b([\d]{1,3}(?:,\d{3})+(?:\.\d{2})?|\d+\.\d{2})\b/);
+  if(amtM){const v=parseFloat(amtM[1].replace(/,/g,''));if(v>0)r.amount=Math.round(v*100)/100;}
+  // Date: 2026-09-26, 26/09/2026, 26-Sep-2026, 26-SEP-26
+  const MON={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+  let dm=noBal.match(/\b(20\d\d)-(\d{2})-(\d{2})\b/);
+  if(dm)r.date=`${dm[1]}-${dm[2]}-${dm[3]}`;
+  else if((dm=noBal.match(/\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/))){
+    const y=+dm[3]<100?2000+ +dm[3]:+dm[3];const d=new Date(y,+dm[2]-1,+dm[1]);if(!isNaN(d)&&+dm[2]<=12)r.date=toLocalISO(d);
+  }else if((dm=noBal.match(/\b(\d{1,2})[\s\-]([A-Za-z]{3})[a-z]*[\s\-,]*(\d{2,4})\b/))&&MON[dm[2].toLowerCase()]){
+    const y=+dm[3]<100?2000+ +dm[3]:+dm[3];r.date=toLocalISO(new Date(y,MON[dm[2].toLowerCase()]-1,+dm[1]));
+  }
+  if(r.date>todayStr())r.date=todayStr();
+  r.bank=_qaAlertBank(low);
+  // What it was for: the narration, cleaned of transfer codes and references.
+  const dM=noBal.match(/\b(?:desc(?:ription)?|narration|des|remarks?|details|purpose)\s*[:=]\s*(.+?)(?=\s*;|\s+\b(?:avail|bal|date|dt|acct|acc|amt|amount|ref|time)\b|$)/i)
+    ||noBal.match(/\b(?:sent\b[^;]*?\bto|paid to|transfer to|from)\s+(.+?)(?=\s*;|\.\s|\s+\b(?:on|at|ref|avail|bal)\b|$)/i);
+  let desc=dM?dM[1]:'';
+  desc=desc.replace(/\.(com|ng|net|org|io)\b/gi,' ').replace(/\b(pos|web|nip|trf|trsf|transfer|fip|mob|ussd|ftn|purchase|payment|txn|ref|pmt|frm|to|from|via|for|by|ng|lag|lagos|abuja|ng\w{0,2})\b/gi,' ')
+    .replace(/[@\/\\|*#_\-:]+/g,' ').replace(/\b[a-z]*\d[\w]*\b/gi,' ').replace(/\s+/g,' ').trim();
+  if(desc){
+    const phrase=_qaNorm(desc).split(' ').filter(w=>w&&!_QA_FILLER.has(w)).slice(0,4).join(' ');
+    if(r.type==='expense'){
+      const items=_qaAllItems();
+      const hit=items.find(x=>{const n=_qaNorm(x.item);return n&&(phrase.includes(n)||n.includes(phrase));});
+      if(hit){r.payee=hit.item;r.category=hit.cat;}
+      else if(phrase){r.payee=phrase.split(' ').slice(0,3).join(' ').replace(/\b\w/g,c=>c.toUpperCase());r.category=applyRules(desc)||smartCat(desc)||null;}
+    }else r.notes=desc.slice(0,60).toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());
+  }
+  if(r.type==='income'){
+    const ic=getIncomeCats().find(c=>/salary/i.test(c)&&/salary|payroll|sal\b/i.test(noBal));
+    r.category=ic||null;
+  }
+  return r;
+}
+// Paste from the clipboard (📋) or into the box: line breaks are kept as
+// separators, since a text box would otherwise run the alert's lines together.
+function quickAddOnPaste(e){
+  const t=(e.clipboardData||window.clipboardData)?.getData('text');
+  if(!t)return;
+  e.preventDefault();
+  const q=document.getElementById('qa-text');if(q)q.value=t.replace(/\s*[\r\n]+\s*/g,' ; ').trim();
+  setTimeout(quickAddParse,30);
+}
+async function quickAddPaste(){
+  try{
+    const t=await navigator.clipboard.readText();
+    if(!t||!t.trim()){_qaStatus('The clipboard is empty. Copy the bank alert first.','qa-warn');return;}
+    const q=document.getElementById('qa-text');if(q)q.value=t.replace(/\s*[\r\n]+\s*/g,' ; ').trim();
+    quickAddParse();
+  }catch(e){_qaStatus('Couldn\'t read the clipboard. Long-press the box and choose Paste.','qa-warn');}
+}
 function _qaStatus(msg,cls){const el=document.getElementById('qa-status');if(el){el.textContent=msg||'';el.className='qa-status'+(cls?' '+cls:'');}}
 let _qaBusy=false;
 async function quickAddParse(){
   const text=(document.getElementById('qa-text')?.value||'').trim();
   if(!text){_qaStatus('Type or say something like “5k lunch from GTB yesterday”.');return;}
   if(_qaBusy)return;_qaBusy=true;
-  const local=_qaParseLocal(text);
+  const local=_qaParseAlert(text)||_qaParseLocal(text);
   _qaFill(local);
   let r=local,byAI=false;
   if(navigator.onLine!==false&&_aiKey()){
@@ -4920,8 +5208,11 @@ function _adjustCash(bank, delta, m, y, source, ref, dateStr){
         _rippleCashForward(bank,delta,m,y); // fire-and-forget
       }catch(e){
         _clearCashDirty(m,y,bank);
-        // Queue a full-doc fallback so the delta isn't lost while offline
-        oqAdd('cashBalances', sid(m,y), {...base, month:m, year:y}, true);
+        // Retry the same change later. (It used to queue a copy of the whole
+        // month's balances, which could overwrite changes made on another
+        // device in the meantime.)
+        console.warn('balance change not saved yet - will retry',e);
+        _rippleQueueAdd(bank,delta,m,y);
       }
     })();
   }
@@ -4964,14 +5255,6 @@ function _cashBalFor(bank,m,y){
   const base=((m===S.cashMonth&&y===S.cashYear)||(m===S.dashMonth&&y===S.dashYear))
     ? (S.cash||{}) : (cGet(CK.cash(m,y))||{});
   return Number(base[bank])||0;
-}
-// The quick transfer has no date field: use today when today falls inside the
-// month being viewed, else that month's last day, so the month the user is
-// looking at is always the month that moves.
-function _xfrDefaultDate(m,y){
-  const n=new Date();
-  if(m===n.getMonth()+1&&y===n.getFullYear()) return todayStr();
-  return `${y}-${String(m).padStart(2,'0')}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`;
 }
 // Returns {ok, msg}. Callers toast msg and handle their own close/render.
 function _doTransfer({kind,from,to,amt,date,notes}){
@@ -5026,7 +5309,6 @@ function _doTransfer({kind,from,to,amt,date,notes}){
     const toAmt=isUSDCashAccount(to)?+(amt/fx).toFixed(2):amt;
     const ref=_saveXfrRecord(from,to,amt,date,m,y,notes,toAmt,'inv-cash');
     _adjustCash(to,toAmt,m,y,'Transfer ← '+platLabel,ref,date);
-    addInvWithdrawal(from,amt,date,notes);
     addInvMovement(from,-amt,date,notes);
     return {ok:true,msg:`${fN(amt)}: ${platLabel} → ${to}`};
   }
@@ -5089,12 +5371,7 @@ async function loadInterestPosts(){
 }
 function _daysInMonth(m,y){return new Date(y,m,0).getDate();}
 // Simple daily accrual (or daily compounding) over `days` on a flat balance.
-function _interestOnBalance(bal,ratePct,ct,days){
-  bal=_sbNum(bal);ratePct=_sbNum(ratePct);days=Math.max(0,days|0);
-  if(bal<=0||ratePct<=0||days<=0)return 0;
-  const r=ratePct/100;
-  return Math.round(ct==='daily_compound'?bal*(Math.pow(1+r/365,days)-1):bal*(r/365)*days);
-}
+function _interestOnBalance(bal,ratePct,ct,days){return Math.round(interestFor(bal,ratePct,ct,days));}
 // Candidate accounts: cash accounts with an interest rate set, plus investment
 // platforms whose subs carry a rate.
 function _interestAccounts(){
@@ -5158,21 +5435,14 @@ function postInterest(acctKey){
   const monName=MONTHS[pm.pMonth-1];
   if(!confirm(`Post ${fN(pm.amount)} as ${acct.name} interest income for ${monName} ${pm.pYear}, and credit ${acct.name}?`))return;
   const dateStr=`${cy}-${String(cm).padStart(2,'0')}-01`;
-  const id=db?db.collection('income').doc().id:'int_'+Date.now().toString(36);
-  const entry={id,amount:pm.amount,amtNGN:pm.amount,currency:'NGN',category:'Interest Income',
+  const ref=db.collection('income').doc(),id=ref.id;
+  // A dollar account's interest is in dollars (its balance is).
+  const usd=acct.kind==='cash'&&isUSDCashAccount(acct.name);
+  const entry={amount:pm.amount,amtNGN:usd?Math.round(pm.amount*(getFxRates(cm,cy).USD||1600)):pm.amount,currency:usd?'USD':'NGN',category:'Interest Income',
     bank:acct.name,notes:`${monName} ${pm.pYear} interest`,date:dateStr,month:cm,year:cy,
     type:'income',source:'interest',intAcct:acctKey};
-  // Upsert into the current month's income (local + Firestore)
-  const isView=(S.expMonth===cm&&S.expYear===cy);
-  const arr=isView?S.income:(cGet(CK.inc(cm,cy))||[]);
-  arr.unshift(entry);cSet(CK.inc(cm,cy),arr);if(isView)S.income=arr;
-  if(db)db.collection('income').doc(id).set({...entry,createdAt:FV.serverTimestamp()}).catch(e=>console.warn('interest income sync failed',e));
-  // Keep the month's history income total current
-  const hist=cGet('sw3_history')||[];const hi=hist.findIndex(h=>h.year===cy&&h.month===cm);
-  const totalInc=arr.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-  if(hi>=0)hist[hi].income=totalInc;
-  else{hist.push({year:cy,month:cm,label:MS[cm-1]+" '"+String(cy).slice(2),income:totalInc,expenses:(cGet(CK.txns(cm,cy))||[]).reduce((s,t)=>s+(t.amount||0),0)});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
-  cSet('sw3_history',hist);
+  _placeRecord('inc',{...entry,id},null);
+  ref.set({...entry,createdAt:FV.serverTimestamp()}).catch(e=>{console.warn('interest income sync failed — queued',e);oqAdd('income',id,entry,true);});
   // Credit the account balance
   if(acct.kind==='cash')_adjustCash(acct.name,pm.amount,cm,cy,'interest','',dateStr);
   else _invDeposit(acct.pKey,pm.amount,cm,cy);
@@ -5322,40 +5592,39 @@ async function saveExpense(){
     return;
   }
 
-  // ── Income ──
+  // ── Income (new, or an edit opened from the Income list) ──
   if(type==='income'){
+    const editId=document.getElementById('e-edit-id').value;
+    const _editInc=editId?S.income.find(i=>i.id===editId):null;
     const incBank=document.getElementById('i-bank2')?.value||getCashAccounts()[0];
+    if(!incBank){toast('Add a bank account first (Accounts → Cash)');return;}
     const incIsUSD=isUSDCashAccount(incBank);
     const incDateVal=document.getElementById('e-date').value||todayStr();
     const _idp=incDateVal.split('-');const incTxM=parseInt(_idp[1]),incTxY=parseInt(_idp[0]);
     const incFxRates=getFxRates(incTxM,incTxY);
     const incAmtNGN=incIsUSD?Math.round(amt*incFxRates.USD):amt;
     const data={amount:amt,amtNGN:incAmtNGN,currency:incIsUSD?'USD':'NGN',category:document.getElementById('i-cat2')?.value||'Other',bank:incBank,notes:document.getElementById('e-notes').value,date:incDateVal,month:incTxM,year:incTxY,type:'income'};
-    // Save as recurring if set
     const freq=document.getElementById('e-recur')?.value;
-    if(freq){const rl=getRecurring();rl.push({payee:data.category,amount:amt,incCat:data.category,bank:data.bank,notes:data.notes,frequency:freq,type:'income',nextRun:nextRunDate(freq,data.date),lastPosted:data.date});saveRecurring(rl);}
+    if(freq&&!editId)_addRecurring({payee:data.category,amount:amt,incCat:data.category,bank:data.bank,notes:data.notes,frequency:freq,type:'income',date:data.date});
 
     // Apply locally + adjust cash right away — instant no matter how poor the
     // connection is. The doc ID is generated client-side (no network round-trip);
     // the actual write is fired in the background below and never awaited here.
-    const ref=db.collection('income').doc();
-    S.income.unshift({...data,id:ref.id});
-    cSet(CK.inc(incTxM,incTxY),S.income);
-    _adjustCash(incBank, amt, incTxM, incTxY, 'income');
-    const hist=cGet('sw3_history')||[];
-    const hIdx=hist.findIndex(h=>h.year===incTxY&&h.month===incTxM);
-    const totalInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-    if(hIdx>=0){hist[hIdx].income=totalInc;}
-    else{const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];hist.push({year:incTxY,month:incTxM,label:MS2[incTxM-1]+" '"+String(incTxY).slice(2),income:totalInc,expenses:S.txns.reduce((s,t)=>s+(t.amount||0),0)});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
-    cSet('sw3_history',hist);
-    closeMod('exp-modal');toast(`Income recorded · ${incBank} updated`);haptic([8,40,8]);renderDashboard();renderCashPage();renderIncome();
+    const ref=editId?db.collection('income').doc(editId):db.collection('income').doc();
+    if(_editInc){
+      const oB=_editInc.bank||'',oA=_editInc.amount||0,oM=_editInc.month||incTxM,oY=_editInc.year||incTxY;
+      if(oB===incBank&&oM===incTxM&&oY===incTxY){if(amt!==oA)_adjustCash(incBank,amt-oA,incTxM,incTxY,'income-edit','',incDateVal);}
+      else{if(oB&&oA)_adjustCash(oB,-oA,oM,oY,'income-edit-reverse','',_editInc.date);_adjustCash(incBank,amt,incTxM,incTxY,'income-edit','',incDateVal);}
+    }else _adjustCash(incBank, amt, incTxM, incTxY, 'income', '', incDateVal);
+    _placeRecord('inc',{...(_editInc||{}),...data,id:ref.id},_editInc);
+    const _otherMonth=(incTxM!==S.expMonth||incTxY!==S.expYear)?` · filed under ${MONTHS[incTxM-1]} ${incTxY}`:'';
+    closeMod('exp-modal');toast(`${_editInc?'Income updated':'Income recorded'} · ${incBank} updated${_otherMonth}`);haptic([8,40,8]);renderDashboard();renderCashPage();renderIncome();
 
     // Sync to Firestore in the background. Never awaited, so a slow or flaky
     // connection can't stall the save; Firestore's own offline persistence
-    // carries the write through automatically. The offline queue below is a
-    // fallback for genuine failures (not just a slow write).
+    // carries the write through automatically.
     setSyncStatus('syncing');
-    ref.set({...data,createdAt:FV.serverTimestamp()})
+    (_editInc?ref.update(data):ref.set({...data,createdAt:FV.serverTimestamp()}))
       .then(()=>setSyncStatus('synced'))
       .catch(e=>{
         console.warn('[income] background save failed — queued for retry',e);
@@ -5384,7 +5653,9 @@ async function saveExpense(){
   }
   // The placeholder must never be stored as a real item (it leaked into ~10
   // records before v4.6.1).
-  if(!payee||payee==='-- Select --'){toast('Choose what it was spent on, or pick “+ Add new”');document.getElementById('e-payee-sel')?.focus();return;}
+  // An old record with no item may be saved as it is (see openEditExp).
+  const _allowEmpty=!!document.getElementById('e-edit-id').value&&document.getElementById('e-payee-sel')?.dataset.allowEmpty==='1';
+  if(payee==='-- Select --'||(!payee&&!_allowEmpty)){toast('Choose what it was spent on, or pick “+ Add new”');document.getElementById('e-payee-sel')?.focus();return;}
   const expBank=document.getElementById('e-bank').value;
   const expIsUSD=isUSDCashAccount(expBank);
   const expDateVal=document.getElementById('e-date').value||todayStr();
@@ -5410,11 +5681,7 @@ async function saveExpense(){
   const freq=document.getElementById('e-recur')?.value;
   const amtNGN=expIsUSD?Math.round(amtB*expFxRates.USD):amtB;
   const data={amount:amtB,amtNGN,fx:fxOrig,currency:expIsUSD?'USD':'NGN',category:document.getElementById('e-cat').value,bank:expBank,payee,notes:document.getElementById('e-notes').value,date:expDateVal,month:expTxM,year:expTxY,type:'expense'};
-  if(freq&&!editId){
-    const rl=getRecurring();
-    rl.push({payee,amount:amtB,category:data.category,bank:data.bank,notes:data.notes,frequency:freq,type:'expense',nextRun:nextRunDate(freq,data.date),lastPosted:data.date});
-    saveRecurring(rl);renderRecurringCard();
-  }
+  if(freq&&!editId)_addRecurring({payee,amount:amtB,category:data.category,bank:data.bank,notes:data.notes,frequency:freq,type:'expense',date:data.date});
   const _editTx=editId?S.txns.find(t=>t.id===editId):null;
   // Doc ref generated client-side (no network round-trip) so the id is known
   // immediately, whether this is a new doc or an existing one being edited.
@@ -5423,22 +5690,23 @@ async function saveExpense(){
   // Apply locally + adjust cash right away — instant no matter how poor the
   // connection is. The actual Firestore write happens in the background below.
   if(editId){
-    const idx=S.txns.findIndex(t=>t.id===editId);if(idx>=0)S.txns[idx]={...S.txns[idx],...data};
-    // Same bank: single net delta (one cash update). Different banks: reverse
-    // the old bank's debit, then debit the new bank — back-to-back, synchronous.
+    // Same bank and month: one net change. Otherwise reverse the old debit in
+    // its own month, then debit the new bank in the new month.
     const _eOldBank=_editTx?.bank||'', _eOldAmt=_editTx?.amount||0;
-    if(_eOldBank===data.bank&&_eOldBank){
+    const oM=_editTx?.month||expTxM, oY=_editTx?.year||expTxY;
+    if(_eOldBank===data.bank&&_eOldBank&&oM===expTxM&&oY===expTxY){
       const _net=_eOldAmt-amtB; // positive = expense reduced, negative = expense increased
-      if(_net!==0) _adjustCash(data.bank, _net, expTxM, expTxY, 'expense-edit');
+      if(_net!==0) _adjustCash(data.bank, _net, expTxM, expTxY, 'expense-edit', '', expDateVal);
     }else{
-      if(_eOldBank&&_eOldAmt) _adjustCash(_eOldBank, _eOldAmt, _editTx.month||expTxM, _editTx.year||expTxY, 'expense-edit-reverse');
-      if(data.bank) _adjustCash(data.bank, -amtB, expTxM, expTxY, 'expense-edit');
+      if(_eOldBank&&_eOldAmt) _adjustCash(_eOldBank, _eOldAmt, oM, oY, 'expense-edit-reverse', '', _editTx.date);
+      if(data.bank) _adjustCash(data.bank, -amtB, expTxM, expTxY, 'expense-edit', '', expDateVal);
     }
   } else {
-    S.txns.unshift({...data,id:docRef.id});
-    if(data.bank) _adjustCash(data.bank, -amtB, expTxM, expTxY, 'expense');                     // deduct
+    if(data.bank) _adjustCash(data.bank, -amtB, expTxM, expTxY, 'expense', '', expDateVal);  // deduct
   }
-  cSet(CK.txns(expTxM,expTxY),S.txns);closeMod('exp-modal');const _ep=document.getElementById('e-payee-emoji');if(_ep)_ep.textContent='📦';toast(editId?'Updated':'Saved');haptic([8,40,8]);renderExpenses();renderDashboard();
+  _placeRecord('txn',{...(_editTx||{}),...data,id:docRef.id},_editTx);
+  const _otherMonth=(expTxM!==S.expMonth||expTxY!==S.expYear)?` · filed under ${MONTHS[expTxM-1]} ${expTxY}`:'';
+  closeMod('exp-modal');const _ep=document.getElementById('e-payee-emoji');if(_ep)_ep.textContent='📦';toast((editId?'Updated':'Saved')+_otherMonth);haptic([8,40,8]);renderExpenses();renderDashboard();
 
   // Sync to Firestore in the background. Never awaited, so a slow or flaky
   // connection can't stall the save; Firestore's own offline persistence
@@ -5452,6 +5720,29 @@ async function saveExpense(){
     toast('Sync issue — will retry automatically');
   });
 }
+// File a new or edited record under its own month. S.txns / S.income only
+// ever hold the month on screen, so a record dated in another month goes to
+// that month's cache instead (and leaves this one if an edit moved it). A
+// month that has never been loaded on this device is left alone: it is read
+// in full from the database when it's opened.
+function _placeRecord(kind,rec,oldRec){
+  const list=kind==='inc'?'income':'txns', key=kind==='inc'?CK.inc:CK.txns;
+  const vm=S.expMonth,vy=S.expYear;
+  const inView=(m,y)=>m===vm&&y===vy;
+  if(oldRec&&!inView(oldRec.month,oldRec.year)){
+    const c=cGet(key(oldRec.month,oldRec.year));
+    if(Array.isArray(c))cSet(key(oldRec.month,oldRec.year),c.filter(t=>t.id!==rec.id));
+  }
+  S[list]=(S[list]||[]).filter(t=>t.id!==rec.id);
+  if(inView(rec.month,rec.year))S[list].unshift(rec);
+  else{
+    const c=cGet(key(rec.month,rec.year));
+    if(Array.isArray(c)){c.unshift(rec);cSet(key(rec.month,rec.year),c.filter((t,i,a)=>a.findIndex(x=>x.id===t.id)===i));}
+  }
+  cSet(key(vm,vy),S[list]);
+  _histTouch(rec.month,rec.year);
+  if(oldRec&&(oldRec.month!==rec.month||oldRec.year!==rec.year))_histTouch(oldRec.month,oldRec.year);
+}
 function delExpense(id){
   const idx=S.txns.findIndex(t=>t.id===id);
   const tx=idx>=0?S.txns[idx]:null;
@@ -5459,14 +5750,15 @@ function delExpense(id){
   // Optimistically remove from local state immediately
   S.txns.splice(idx,1);
   cSet(CK.txns(S.expMonth,S.expYear),S.txns);
+  _histTouch(S.expMonth,S.expYear);
   // Restore cash balance immediately — to the transaction's own month bucket
-  if(tx.bank&&tx.amount) _adjustCash(tx.bank, tx.amount, tx.month||S.expMonth, tx.year||S.expYear, 'expense-delete');
+  if(tx.bank&&tx.amount) _adjustCash(tx.bank, tx.amount, tx.month||S.expMonth, tx.year||S.expYear, 'expense-delete', '', tx.date);
   renderExpenses();renderDashboard();
   haptic([6]);
   const rollback=()=>{
-    S.txns.splice(Math.min(idx,S.txns.length),0,tx);
-    cSet(CK.txns(S.expMonth,S.expYear),S.txns);
-    if(tx.bank&&tx.amount) _adjustCash(tx.bank, -tx.amount, tx.month||S.expMonth, tx.year||S.expYear);
+    // Back into its own month, even if another month is on screen by now.
+    _placeRecord('txn',{month:S.expMonth,year:S.expYear,...tx},null);
+    if(tx.bank&&tx.amount) _adjustCash(tx.bank, -tx.amount, tx.month||S.expMonth, tx.year||S.expYear, 'expense-delete-undo', '', tx.date);
     renderExpenses();renderDashboard();
   };
   showUndoToast('Expense deleted',
@@ -5480,13 +5772,8 @@ function delExpense(id){
 // ══════════════════════════════════════════════════════════════════════════
 // INCOME
 // ══════════════════════════════════════════════════════════════════════════
-function updateIncAmtLabel(){
-  const bank=document.getElementById('i-bank')?.value||'';
-  const lbl=document.getElementById('i-amt-label');
-  if(lbl) lbl.textContent=isUSDCashAccount(bank)?'Amount ($)':'Amount (₦)';
-}
 function updateExpAmtLabel(){
-  const bank=document.getElementById('e-bank')?.value||'';
+  const bank=document.getElementById(typeof _txnType!=='undefined'&&_txnType==='income'?'i-bank2':'e-bank')?.value||'';
   const usdBank=isUSDCashAccount(bank);
   const curSel=document.getElementById('e-cur');
   // The currency picker is for expenses paid from a naira account; a USD
@@ -5527,82 +5814,6 @@ function txFxNote(t){
   if(t.fx&&t.fx.amount)return`<span class="fx-note">(${t.fx.currency==='GBP'?'£':'$'}${(+t.fx.amount).toLocaleString('en-US',{maximumFractionDigits:2})})</span>`;
   if(t.currency==='USD')return`<span class="fx-note">($${(+t.amount||0).toLocaleString('en-US',{maximumFractionDigits:2})})</span>`;
   return'';
-}
-function openIncModal(){
-  _resetIncModal();
-  document.getElementById('i-date').value=todayStr();
-  ['i-amt','i-notes'].forEach(id=>document.getElementById(id).value='');
-  const bankSel=document.getElementById('i-bank');
-  if(bankSel){bankSel.innerHTML=cashOptsWithBal();updateIncAmtLabel();}
-  openMod('inc-modal');
-  setTimeout(()=>document.getElementById('i-amt').focus(),300);
-}
-function saveIncome(){
-  if(S.saving) return; // respects an in-flight save elsewhere (e.g. a debtor/loan form still on the old awaited-write path)
-  const amt=numVal('i-amt');
-  if(!amt||amt<=0){toast('Enter a valid amount');return;}
-  const bank=document.getElementById('i-bank').value;
-  const isUSD=isUSDCashAccount(bank);
-  const dateVal=document.getElementById('i-date').value||todayStr();
-  const _dp=dateVal.split('-');const txM=parseInt(_dp[1]),txY=parseInt(_dp[0]);
-  const fxRates=getFxRates(txM,txY);
-  const amtNGN=isUSD?Math.round(amt*fxRates.USD):amt;
-  const editId=document.getElementById('i-edit-id')?.value||'';
-  const data={amount:amt,amtNGN,currency:isUSD?'USD':'NGN',category:document.getElementById('i-cat').value,bank,notes:document.getElementById('i-notes').value,date:dateVal,month:txM,year:txY};
-  const _editInc=editId?S.income.find(i=>i.id===editId):null;
-  const docRef=editId?db.collection('income').doc(editId):db.collection('income').doc();
-
-  // Apply locally + adjust cash right away — instant no matter how poor the
-  // connection is. The actual Firestore write happens in the background below.
-  if(editId){
-    const idx=S.income.findIndex(i=>i.id===editId);
-    if(idx>=0) S.income[idx]={...S.income[idx],...data};
-    else S.income.unshift({...data,id:editId});
-    const _iOldBank=_editInc?.bank||'', _iOldAmt=_editInc?.amount||0;
-    if(_iOldBank===bank&&_iOldBank){
-      const _inet=amt-_iOldAmt; // positive = income increased, negative = decreased
-      if(_inet!==0) _adjustCash(bank, _inet, txM, txY, 'income-edit');
-    }else{
-      if(_iOldBank&&_iOldAmt) _adjustCash(_iOldBank, -_iOldAmt, _editInc?.month||txM, _editInc?.year||txY, 'income-edit-reverse');
-      _adjustCash(bank, amt, txM, txY, 'income-edit');
-    }
-    toast(`Income updated · ${bank} adjusted`);
-  } else {
-    S.income.unshift({...data,id:docRef.id});
-    _adjustCash(bank, amt, txM, txY, 'income');
-    toast(`Income recorded · ${bank} updated`);
-  }
-  cSet(CK.inc(txM,txY),S.income);
-  const hist=cGet('sw3_history')||[];
-  const hIdx=hist.findIndex(h=>h.year===txY&&h.month===txM);
-  const totalInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-  if(hIdx>=0){hist[hIdx].income=totalInc;}
-  else{const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];hist.push({year:txY,month:txM,label:MS2[txM-1]+" '"+String(txY).slice(2),income:totalInc,expenses:S.txns.reduce((s,t)=>s+(t.amount||0),0)});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
-  cSet('sw3_history',hist);
-  haptic([8,40,8]);
-  closeMod('inc-modal');
-  _resetIncModal();
-  renderIncome();renderDashboard();renderCashPage();
-
-  // Sync to Firestore in the background. Never awaited, so a slow or flaky
-  // connection can't stall the save; Firestore's own offline persistence
-  // carries the write through automatically. The offline queue below is a
-  // fallback for genuine failures (not just a slow write).
-  setSyncStatus('syncing');
-  const _write=editId?docRef.update(data):docRef.set({...data,createdAt:FV.serverTimestamp()});
-  _write.then(()=>setSyncStatus('synced')).catch(e=>{
-    console.warn('[income] background save failed — queued for retry',e);
-    oqAdd('income',docRef.id,data,true);
-    toast('Sync issue — will retry automatically');
-  });
-}
-function _resetIncModal(){
-  const editIdEl=document.getElementById('i-edit-id');
-  const titleEl=document.getElementById('inc-modal-title');
-  const saveBtn=document.getElementById('i-save');
-  if(editIdEl) editIdEl.value='';
-  if(titleEl) titleEl.textContent='Record Income';
-  if(saveBtn) saveBtn.textContent='Record Income';
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -5761,7 +5972,7 @@ function _renderInvInto(suffix){
 
     const editSection=!live?"":`<div id="inv-edit-panel-${p.key}${s}" onclick="event.stopPropagation()" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
       <div style="font-size:0.68rem;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px">Edit ${esc(p.label)}</div>
-      <div style="margin-bottom:8px"><label class="ilabel" style="font-size:0.65rem">Logo filename</label><input class="ifield" id="plat-logo-${p.key}${s}" type="text" placeholder="e.g. piggyvest.png" value="${esc(p.logo||'')}" style="font-size:0.72rem;padding:4px 8px;margin-top:3px" oninput="updatePlatLogo('${p.key}',this.value)"><div class="csub" style="font-size:0.58rem;margin-top:2px">File in your Logos/ folder on GitHub</div></div>
+      <div style="margin-bottom:8px;display:flex;align-items:center;gap:8px"><span class="ilabel" style="font-size:0.65rem;margin:0;flex:1">Logo</span><button class="btn btn-g btn-sm" style="padding:3px 8px;font-size:0.62rem" onclick="pickLogo('platform','${p.key}')">Upload a logo</button>${p.logo?`<button class="btn btn-g btn-sm" style="padding:3px 8px;font-size:0.62rem" onclick="updatePlatLogo('${p.key}','');renderInvestments()">↺ Standard</button>`:''}</div>
       <div id="inv-sub-list-${p.key}${s}">${editPanels}</div>
       ${addSubBtn}
       <button class="txi-del" onclick="removePlatform('${p.key}')" style="margin-top:10px;width:100%;text-align:center;padding:4px;font-size:0.65rem;color:var(--text3)">Remove platform</button>
@@ -5836,7 +6047,7 @@ function toggleInvEdit(pKey, suffix){
   const saveBtn=document.getElementById('inv-save-btn'+s);
   if(saveBtn){
     const anyOpen=[...document.querySelectorAll('[id^="inv-edit-panel-"]')].filter(el=>el.id.endsWith(s));
-    saveBtn.style.display=(live&&anyOpen.some(el=>el.style.display!=="none"))?"block":"none";
+    saveBtn.style.display=anyOpen.some(el=>el.style.display!=="none")?"block":"none";
   }
   if(panel.style.display!=='none') setTimeout(()=>initNumInputs(panel),0);
 }
@@ -6055,22 +6266,10 @@ function openLiqModal(pKey, subId){
 // entry for that period (Income History / Insights), without touching cash —
 // the cash side is already handled by the liquidation's own _adjustCash call.
 async function _recordInvestmentInterestIncome(label,bank,amtNGN,date,m,y){
-  const data={amount:amtNGN,amtNGN,currency:'NGN',category:'Interest Income',bank,notes:`${label} — fixed income payout`,date,month:m,year:y};
-  try{
-    const ref=await db.collection('income').add({...data,createdAt:FV.serverTimestamp()});
-    S.income.unshift({...data,id:ref.id});
-  }catch(e){
-    const offId='offline_inc_'+Date.now();
-    oqAdd('income',offId,data,true);
-    S.income.unshift({...data,id:offId});
-  }
-  cSet(CK.inc(m,y),S.income);
-  const hist=cGet('sw3_history')||[];
-  const hIdx=hist.findIndex(h=>h.year===y&&h.month===m);
-  const totalInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-  if(hIdx>=0){hist[hIdx].income=totalInc;}
-  else{const MS2=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];hist.push({year:y,month:m,label:MS2[m-1]+" '"+String(y).slice(2),income:totalInc,expenses:S.txns.reduce((s,t)=>s+(t.amount||0),0)});hist.sort((a,b)=>a.year!==b.year?a.year-b.year:a.month-b.month);}
-  cSet('sw3_history',hist);
+  const data={amount:amtNGN,amtNGN,currency:'NGN',category:'Interest Income',bank,notes:`${label} — fixed income payout`,date,month:m,year:y,type:'income',source:'liquidation-interest'};
+  const ref=db.collection('income').doc();
+  _placeRecord('inc',{...data,id:ref.id},null);
+  ref.set({...data,createdAt:FV.serverTimestamp()}).catch(e=>{console.warn('interest income write failed — queued',e);oqAdd('income',ref.id,data,true);});
 }
 async function confirmLiquidation(){
   if(!_liqPKey||!_liqSubId){closeMod('liq-modal');return;}
@@ -6090,9 +6289,12 @@ async function confirmLiquidation(){
   // Payout above principal on a fixed-income sub is realised interest — report
   // it as income for the period. Principal itself is never counted as income.
   const interestNGN=(sub.assetClass==='fixed_income'&&sub.rate)?Math.max(0,amtNGN-pNGN):0;
+  // A partial cash-out only takes what was cashed out; the rest stays invested.
+  // (Before v4.7 the whole principal was zeroed whatever the amount.)
+  const remaining=Math.max(0,pNGN-amtNGN);
+  if(remaining>0&&!confirm(`Cash out ${fN(amtNGN)} and leave ${fN(remaining)} invested in ${sub.label}?`))return;
 
-  // Zero out the sub principal
-  subs[subIdx]={...sub,principal:0};
+  subs[subIdx]={...sub,principal:remaining};
   saveSubsForPlatform(_liqPKey,subs);
 
   // Recompute and persist platform total
@@ -6125,7 +6327,9 @@ async function confirmLiquidation(){
     toast(`₦${fNum(amtNGN)} → ${destPlat?destPlat.label:destPKey}`);
   } else {
     // Liquidate to cash account
-    _adjustCash(destVal,amtNGN,liqM,liqY,'investment-liquidation');
+    // A dollar account is credited in dollars.
+    const _liqCredit=isUSDCashAccount(destVal)?+(amtNGN/(getFxRates(liqM,liqY).USD||1600)).toFixed(2):amtNGN;
+    _adjustCash(destVal,_liqCredit,liqM,liqY,'investment-liquidation','',date);
     toast(`₦${fNum(amtNGN)} liquidated → ${destVal}`);
     if(interestNGN>0) await _recordInvestmentInterestIncome(sub.label,destVal,interestNGN,date,liqM,liqY);
   }
@@ -6203,8 +6407,7 @@ async function saveInvFromEdit(){
   finally{S.saving=false;}
 }
 function renderInvestments(){
-  _renderInvInto('');    // pg-investments page (legacy, may not be visible)
-  _renderInvInto('-2');  // acct-invest tab inside pg-accounts (the live one)
+  _renderInvInto('-2');  // Accounts → Investments
 }
 function invTab(tab,btn){
   const tabs=['current','trend'];
@@ -6271,7 +6474,7 @@ function renderCashPage(){
   const m=S.cashMonth,y=S.cashYear,cur=S.dashCurrency;
   const ACCTS=getCashAccounts();
   const months=[];for(let i=1;i<=12;i++) months.push(i);
-  document.getElementById('cash-months').innerHTML=months.map(mo=>`<div class="mpill ${mo===m?'active':''}" onclick="changeCashMonth(${mo})">${MS[mo-1]}</div>`).join('');
+  document.getElementById('cash-months').innerHTML=_monthStrip(m,y,'changeCashMonth');
   setTimeout(()=>{const el=document.querySelector('#cash-months .mpill.active');if(el)el.scrollIntoView({inline:'center',block:'nearest'});},0);
   document.getElementById('cash-month-label').textContent=`${MONTHS[m-1]} ${y}`;
   const cash=S.cash;
@@ -6284,8 +6487,11 @@ function renderCashPage(){
     const val=cash[b]||0,pct=total_ngn?Math.round((isUSDCashAccount(b)?(val*(getFxRates(m,y).USD||1650)):val)/total_ngn*100):0;
     const ci=intMeta[b];
     const intInfo=ci&&ci.interestRate?`<span class="int-badge">${ci.interestRate}% p.a.</span>`:'';
-    const projInt=ci&&ci.interestRate&&val?calcInterestAccrual(val,ci.interestRate,'daily_accrual',ci.startDate||null,null).interest:0;
-    const intProjection=projInt>0.5?`<div style="font-size:0.6rem;color:var(--gold);margin-top:1px">~${isUSDCashAccount(b)?'$'+projInt.toFixed(2):fN(Math.round(projInt))} accrued${ci.startDate?' since '+ci.startDate:''}</div>`:'';
+    // Interest so far this month on today's balance (the same figure the
+    // Income tab offers to post). It used to multiply today's balance by the
+    // whole time since the start date, which overstated it.
+    const projInt=ci&&ci.interestRate&&val?_accruedSoFar({kind:'cash',name:b,rate:+ci.interestRate,compoundType:ci.compoundType||'daily_accrual',startDate:ci.startDate||''}).amount:0;
+    const intProjection=projInt>0.5?`<div style="font-size:0.6rem;color:var(--gold);margin-top:1px">~${isUSDCashAccount(b)?'$'+projInt.toFixed(2):fN(Math.round(projInt))} interest so far this month</div>`:'';
     const _fxR2=getFxRates(m,y);
     let dispVal;
     if(isUSDCashAccount(b)){
@@ -6322,13 +6528,10 @@ function renderCashPage(){
     }
   }
   if(intEl) intEl.innerHTML=intHtml;
-  const customAccts=ACCTS.filter(a=>!DEFAULT_CASH_ACCOUNTS.includes(a));
+
   const caEl=document.getElementById('custom-accts-list');
   // Show logo editing for ALL accounts (default + custom)
-  if(caEl){const allAccts=getCashAccounts();const logos=getCashLogos();caEl.innerHTML=allAccts.map(a=>{const isDefault=DEFAULT_CASH_ACCOUNTS.includes(a);const logoFile=logos[a]||'';const _safeId=a.replace(/\s/g,'-');return`<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)"><div id="cash-logo-th-${_safeId}" style="flex-shrink:0">${bankLogoEl(a,20)}</div><div style="flex:1;min-width:0"><div style="font-size:0.74rem;font-weight:600">${a}</div><input class="ifield" type="text" placeholder="logo filename, e.g. gtb.png" value="${esc(logoFile)}" style="font-size:0.65rem;padding:3px 6px;margin-top:3px" oninput="setCashLogo('${jsq(a)}',this.value)" onblur="renderCashPage()"></div>${isDefault?'':` <button class="btn btn-d btn-sm" onclick="removeCashAccount('${jsq(a)}')">✕</button>`}</div>`;}).join('');}
-  const opts=ACCTS.map(a=>`<option>${a}</option>`).join('');
-  const xFrom=document.getElementById('xfr-from');const xTo=document.getElementById('xfr-to');
-  if(xFrom) xFrom.innerHTML=opts;if(xTo) xTo.innerHTML=opts;
+  if(caEl){const allAccts=getCashAccounts();const logos=getCashLogos();caEl.innerHTML=allAccts.map(a=>{const _safeId=a.replace(/\s/g,'-');const own=!!logos[a];return`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)"><div id="cash-logo-th-${_safeId}" style="flex-shrink:0">${bankLogoEl(a,22)}</div><div style="flex:1;min-width:0;font-size:0.74rem;font-weight:600">${esc(a)}${isUSDCashAccount(a)?' <span style="font-size:0.6rem;color:var(--text3)">USD</span>':''}</div><button class="btn btn-g btn-sm" style="padding:3px 8px;font-size:0.62rem" onclick="pickLogo('bank','${jsq(a)}')">Logo</button>${own?`<button class="btn btn-g btn-sm" style="padding:3px 8px;font-size:0.62rem" onclick="setCashLogo('${jsq(a)}','');renderCashPage()" title="Use the standard logo">↺</button>`:''}<button class="btn btn-d btn-sm" onclick="removeCashAccount('${jsq(a)}')">✕</button></div>`;}).join('');}
 }
 function saveCashInterest(){
   const ACCTS=getCashAccounts();
@@ -6347,8 +6550,17 @@ function saveCashInterest(){
   toast('Interest rates saved');
   renderCashPage();renderDashboard();
 }
-async function changeCashMonth(m){
-  S.cashMonth=m;
+// Month strip with the previous year at the start and the next year (up to
+// this one) at the end, so any month of any year can be reached.
+function _monthStrip(m,y,fn){
+  const cy=new Date().getFullYear();
+  let h=`<div class="mpill mpill-yr" onclick="${fn}(12,${y-1})">‹ ${y-1}</div>`;
+  for(let mo=1;mo<=12;mo++)h+=`<div class="mpill ${mo===m?'active':''}" onclick="${fn}(${mo},${y})">${MS[mo-1]}${mo===m&&y!==cy?' '+String(y).slice(2):''}</div>`;
+  if(y<cy)h+=`<div class="mpill mpill-yr" onclick="${fn}(1,${y+1})">${y+1} ›</div>`;
+  return h;
+}
+async function changeCashMonth(m,y){
+  S.cashMonth=m;if(y)S.cashYear=y;
   const cached=cGet(CK.cash(m,S.cashYear));
   const accts=getCashAccounts();
   const cachedTotal=cached?accts.reduce((s,b)=>s+Math.abs(cached[b]||0),0):0;
@@ -6400,100 +6612,26 @@ async function saveCash(){
   }
 }
 function removeCashAccount(name){
-  if(DEFAULT_CASH_ACCOUNTS.includes(name)){toast('Cannot remove default accounts');return;}
+  if(!confirm(`Remove ${name} from your accounts? Its past entries and balances stay in your history.`))return;
   setCashAccounts(getCashAccounts().filter(a=>a!==name));
-  toast(`${name} removed`);renderCashPage();
+  toast(`${name} removed`);renderCashPage();renderDashboard();
+}
+// Upload your own logo for an account ('bank') or investment platform: it's
+// shrunk to 64px on the device and saved in your settings.
+function pickLogo(kind,id){
+  const inp=document.createElement('input');inp.type='file';inp.accept='image/*';
+  inp.onchange=async()=>{
+    const f=inp.files&&inp.files[0];if(!f)return;
+    try{
+      const url=await _suLogoFromFile(f);
+      if(kind==='bank'){setCashLogo(id,url);renderCashPage();}
+      else{updatePlatLogo(id,url);renderInvestments();}
+      renderDashboard();toast('Logo updated');
+    }catch(e){toast(e.message||'Could not use that image');}
+  };
+  inp.click();
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// MOVE FUNDS (Cash ↔ Investment)
-// ══════════════════════════════════════════════════════════════════════════
-let _moveDir = 'cash-inv'; // 'cash-inv' | 'inv-cash'
-
-function openMoveFunds(){
-  _moveDir = 'cash-inv';
-  document.getElementById('move-date').value = todayStr();
-  document.getElementById('move-amt').value = '';
-  document.getElementById('move-notes').value = '';
-  _populateMoveSelects();
-  _syncMoveDirUI();
-  openMod('move-modal');
-  setTimeout(()=>initNumInputs(document.getElementById('move-modal')), 80);
-}
-
-function setMoveDir(dir){
-  _moveDir = dir;
-  _syncMoveDirUI();
-  _populateMoveSelects();
-}
-
-function _syncMoveDirUI(){
-  const ci = document.getElementById('move-dir-ci');
-  const ic = document.getElementById('move-dir-ic');
-  if(ci) { ci.className = _moveDir==='cash-inv' ? 'btn btn-p btn-sm' : 'btn btn-g btn-sm'; }
-  if(ic) { ic.className = _moveDir==='inv-cash' ? 'btn btn-p btn-sm' : 'btn btn-g btn-sm'; }
-  const fromLbl = document.getElementById('move-from-label');
-  const toLbl   = document.getElementById('move-to-label');
-  if(_moveDir==='cash-inv'){
-    if(fromLbl) fromLbl.textContent = 'From Account (Cash)';
-    if(toLbl)   toLbl.textContent   = 'To Platform (Investment)';
-  } else {
-    if(fromLbl) fromLbl.textContent = 'From Platform (Investment)';
-    if(toLbl)   toLbl.textContent   = 'To Account (Cash)';
-  }
-  const title = document.getElementById('move-modal-title');
-  if(title) title.textContent = _moveDir==='cash-inv' ? 'Cash → Investment' : 'Investment → Cash';
-}
-
-function _populateMoveSelects(){
-  const cashOpts = cashOptsWithBal();
-  const invOpts  = invOptsWithBal();
-  const fromSel = document.getElementById('move-from');
-  const toSel   = document.getElementById('move-to');
-  if(_moveDir==='cash-inv'){
-    if(fromSel) fromSel.innerHTML = cashOpts;
-    if(toSel)   toSel.innerHTML   = invOpts;
-  } else {
-    if(fromSel) fromSel.innerHTML = invOpts;
-    if(toSel)   toSel.innerHTML   = cashOpts;
-  }
-}
-
-async function saveMoveFunds(){
-  const r=_doTransfer({
-    kind:_moveDir,                                  // 'cash-inv' | 'inv-cash'
-    from:document.getElementById('move-from').value,
-    to:document.getElementById('move-to').value,
-    amt:numVal('move-amt'),
-    date:document.getElementById('move-date').value||todayStr(),
-    notes:document.getElementById('move-notes').value.trim(),
-  });
-  if(!r.ok){toast(r.msg);return;}
-  toast('Moved '+r.msg);
-  haptic([8,40,8]);
-  closeMod('move-modal');
-  renderCashPage();
-  renderInvestments();
-  renderDashboard();
-}
-
-async function transferFunds(){
-  setSyncStatus('syncing');
-  const r=_doTransfer({
-    kind:'cash-cash',
-    from:document.getElementById('xfr-from').value,
-    to:document.getElementById('xfr-to').value,
-    amt:numVal('xfr-amt')||0,
-    // No date field on this form — date it inside the month being viewed.
-    date:_xfrDefaultDate(S.cashMonth,S.cashYear),
-    notes:'',
-  });
-  if(!r.ok){setSyncStatus('synced');toast(r.msg);return;}
-  document.getElementById('xfr-amt').value='';
-  toast('Transferred '+r.msg);
-  renderCashPage();renderDashboard();
-  setSyncStatus('synced');
-}
 
 // ══════════════════════════════════════════════════════════════════════════
 // DEBTORS
@@ -6804,7 +6942,26 @@ function togglePmtLog(id){
   const el=document.getElementById('pmt-log-'+id);
   if(el) el.style.display=el.style.display==='none'?'block':'none';
 }
-async function removeDeb(id){if(!confirm('Remove this debtor?')) return;try{await db.collection('debtors').doc(id).delete();toast('Removed');await loadDebtors();renderDebtors();}catch(e){toast('Error removing');}}
+// Removing a debt can also undo what it did to your banks: the money that
+// went out when it was lent, and any repayments credited to a bank.
+function _debtCashDelta(d,amt,bank){
+  const rate=d.rate||DEF_RATES[d.currency]||1;
+  return isUSDCashAccount(bank)?(d.currency==='USD'?amt:amt/rate):((d.currency==='NGN'||!d.currency)?amt:amt*rate);
+}
+async function removeDeb(id){
+  const d=S.debtors.find(x=>x.id===id);if(!d)return;
+  if(!confirm(`Remove ${d.name}'s ${d.currency||'NGN'} ${fNum(d.amount)} debt?`)) return;
+  const moves=[];
+  if(d.disbursedFrom&&d.amount)moves.push({bank:d.disbursedFrom,delta:_debtCashDelta(d,d.amount,d.disbursedFrom),date:d.date});
+  (d.pmtLog||[]).forEach(p=>{if(p.creditedTo&&p.amount)moves.push({bank:p.creditedTo,delta:-_debtCashDelta(d,p.amount,p.creditedTo),date:p.date});});
+  const undo=moves.length&&confirm(`Also undo its bank movements?\n\n${moves.map(mv=>`${mv.bank}: ${mv.delta>0?'+':'−'}${fNum(Math.abs(mv.delta))}`).join('\n')}\n\nOK = undo them · Cancel = remove the record only`);
+  try{
+    await db.collection('debtors').doc(id).delete();
+    if(undo)moves.forEach(mv=>{const {m,y}=_ymOf(mv.date);_adjustCash(mv.bank,mv.delta,m,y,'debt-remove-reverse',id,mv.date);});
+    toast(undo?'Removed · bank balances restored':'Removed');
+    await loadDebtors();renderDebtors();renderDashboard();
+  }catch(e){toast('Error removing');}
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // ACCOUNTS PAGE (Cash + Investments)
@@ -6969,11 +7126,17 @@ async function saveLoan(){
 }
 
 async function removeLoan(id){
-  if(!confirm('Remove this loan record? This does not reverse any cash entries.')) return;
+  const l=S.loans.find(x=>x.id===id);if(!l)return;
+  if(!confirm(`Remove the ${l.lender} loan?`)) return;
+  const moves=[];
+  if(l.disbursedTo&&(l.amtNGN||l.amount))moves.push({bank:l.disbursedTo,delta:-(l.amtNGN||l.amount),date:l.startDate});
+  (l.repayLog||[]).forEach(r=>{if(r.account&&r.amount)moves.push({bank:r.account,delta:+r.amount,date:r.date});});
+  const undo=moves.length&&confirm(`Also undo its bank movements?\n\n${moves.map(mv=>`${mv.bank}: ${mv.delta>0?'+':'−'}${fNum(Math.abs(mv.delta))}`).join('\n')}\n\nOK = undo them · Cancel = remove the record only`);
   try{
     await db.collection('loans').doc(id).delete();
-    toast('Loan removed');
-    await loadLoans();renderLoans();
+    if(undo)moves.forEach(mv=>{const {m,y}=_ymOf(mv.date);_adjustCash(mv.bank,mv.delta,m,y,'loan-remove-reverse',id,mv.date);});
+    toast(undo?'Loan removed · bank balances restored':'Loan removed');
+    await loadLoans();renderLoans();renderDashboard();
   }catch(e){toast('Error removing loan');}
 }
 
@@ -7146,6 +7309,9 @@ function dashChartTab(tab, btn){
   btn.classList.add('active');
   if(tab==='cashflow') renderCashFlowChart();
   if(tab==='trends') renderCategoryTrends();
+  // Charts drawn while their tab was hidden have no size, so draw on open.
+  if(tab==='networth') renderNWTrendChart();
+  if(tab==='trend'&&S.trendChart) S.trendChart.resize();
 }
 
 // ── CATEGORY TRENDS (6-month sparklines) ──────────────────────────────────
@@ -7301,7 +7467,7 @@ function renderCashFlowChart(){
 // ══════════════════════════════════════════════════════════════════════════
 // FORECAST — Treasury, Net Worth, Analytics, History, Fixed Bills
 // ══════════════════════════════════════════════════════════════════════════
-function renderForecast(){renderProjInsights();renderProjTreasury();renderProjHistory();renderProjObligations();renderProjFees();renderProjAI();}
+function renderForecast(){renderProjInsights();renderProjTreasury();renderProjHistory();renderProjAI();}
 function projTab(tab,btn){
   ['insights','treasury','history','obligations','ai'].forEach(t=>{
     const el=document.getElementById('proj-'+t);if(el)el.style.display=t===tab?'block':'none';
@@ -7375,14 +7541,16 @@ function renderProjInsights(){
 function renderProjTreasury(){
   const el=document.getElementById('proj-treasury');if(!el)return;
   const m=S.dashMonth||S.expMonth,y=S.dashYear||S.expYear,cur=S.dashCurrency||'NGN';
-  const hist=getHistory().filter(h=>h.expenses>0).slice(-6);
+  // Completed months only: the month in progress would pull the averages down.
+  const hist=_completedHistory().filter(h=>h.expenses>0).slice(-6);
   const cash=S.cash,cashTotal=cashTotalNGN(cash);
   const avgSpend=hist.length?hist.reduce((s,h)=>s+h.expenses,0)/hist.length:0;
   const avgInc=hist.length?hist.reduce((s,h)=>s+(h.income||0),0)/hist.length:0;
-  const {fixed:_tFixed,custom:_tCustom}=_getAllObl();const allObl=[..._tFixed,..._tCustom];
-  const fixedTotal=allObl.reduce((s,o)=>s+o.amount,0);
+  // Fixed obligations = recurring expenses, as a monthly amount (v4.7: Fixed
+  // Bills became recurring items).
+  const fixedItems=getRecurring().filter(r=>r.type!=='income');
+  const fixedTotal=fixedItems.reduce((s,r)=>s+_recurMonthly(r),0);
   const runway=avgSpend>0?(cashTotal/avgSpend):null;
-  const liquidityRatio=avgSpend>0?(cashTotal/avgSpend):null;
   const savingsRates=hist.map(h=>h.income>0?Math.max(0,(h.income-h.expenses)/h.income*100):0);
   const avgSaveRate=savingsRates.length?savingsRates.reduce((a,b)=>a+b,0)/savingsRates.length:0;
   const latestRate=savingsRates[savingsRates.length-1]||0;
@@ -7391,19 +7559,15 @@ function renderProjTreasury(){
   const last3Avg=last3.length?last3.reduce((s,h)=>s+h.expenses,0)/last3.length:0;
   const prev3Avg=prev3.length?prev3.reduce((s,h)=>s+h.expenses,0)/prev3.length:0;
   const expInflation=prev3Avg>0?((last3Avg-prev3Avg)/prev3Avg*100):null;
-  const base=avgInc-avgSpend,cons=avgInc*0.9-avgSpend*1.1,opt=avgInc*1.05-avgSpend*0.95;
+  const base=avgInc-avgSpend;
   el.innerHTML=`
-    <div class="g3" style="margin-bottom:10px">
+    <div class="g2" style="margin-bottom:10px">
       <div class="card card-sm" style="margin-bottom:0;text-align:center">
         <div class="clabel">Runway</div>
         <div style="font-family:var(--mono);font-size:1.1rem;font-weight:500;color:${runway>6?'var(--accent)':runway>3?'var(--gold)':'var(--red)'}">${runway?runway.toFixed(1)+'mo':'—'}</div>
         <div class="csub">at avg burn</div>
       </div>
-      <div class="card card-sm" style="margin-bottom:0;text-align:center">
-        <div class="clabel">Liquidity</div>
-        <div style="font-family:var(--mono);font-size:1.1rem;font-weight:500;color:${liquidityRatio>3?'var(--accent)':liquidityRatio>1?'var(--gold)':'var(--red)'}">${liquidityRatio?liquidityRatio.toFixed(1)+'x':'—'}</div>
-        <div class="csub">cash / burn</div>
-      </div>
+
       <div class="card card-sm" style="margin-bottom:0;text-align:center">
         <div class="clabel">Save Rate</div>
         <div style="font-family:var(--mono);font-size:1.1rem;font-weight:500;color:${avgSaveRate>25?'var(--accent)':avgSaveRate>10?'var(--gold)':'var(--red)'}">${avgSaveRate.toFixed(1)}%</div>
@@ -7414,19 +7578,13 @@ function renderProjTreasury(){
       <div class="sh" style="margin-bottom:10px"><div class="sh-title">Cash Flow Analysis</div></div>
       <div class="pjrow"><span class="pjlabel">Avg. monthly income (6m)</span><span class="pjval" style="color:var(--accent)">${fmtCur(Math.round(avgInc),cur,m,y)}</span></div>
       <div class="pjrow"><span class="pjlabel">Avg. monthly spend (6m)</span><span class="pjval" style="color:var(--red)">${fmtCur(Math.round(avgSpend),cur,m,y)}</span></div>
-      <div class="pjrow"><span class="pjlabel">Fixed obligations</span><span class="pjval" style="color:var(--gold)">${fmtCur(Math.round(fixedTotal),cur,m,y)}</span></div>
+      <div class="pjrow"><span class="pjlabel">Fixed obligations <span class="sh-link" style="font-size:0.62rem" onclick="openRecurModal()">(${fixedItems.length} recurring ›)</span></span><span class="pjval" style="color:var(--gold)">${fmtCur(Math.round(fixedTotal),cur,m,y)}</span></div>
       <div class="pjrow"><span class="pjlabel">Discretionary (avg − fixed)</span><span class="pjval">${fmtCur(Math.round(Math.max(0,avgSpend-fixedTotal)),cur,m,y)}</span></div>
       <div class="pjrow" style="font-weight:700"><span>Avg. net / month</span><span class="pjval" style="color:${base>=0?'var(--accent)':'var(--red)'}">${fmtCur(Math.round(base),cur,m,y)} ${base>=0?'saved':'deficit'}</span></div>
       ${expInflation!==null?`<div style="margin-top:10px;padding:8px 10px;border-radius:var(--rsm);background:${Math.abs(expInflation)>10?'var(--rdim)':'var(--bg2)'};font-size:0.72rem;color:${expInflation>10?'var(--red)':expInflation<-5?'var(--accent)':'var(--text2)'}">
         ${expInflation>10?'⚠':'◈'} Expense ${expInflation>0?'inflation':'deflation'}: spending is <strong>${Math.abs(expInflation).toFixed(1)}%</strong> ${expInflation>0?'higher':'lower'} vs prior 3 months</div>`:''}
     </div>
-    <div class="card">
-      <div class="sh" style="margin-bottom:10px"><div class="sh-title">Monthly Net Forecast</div><span style="font-size:0.62rem;color:var(--text3)">next month</span></div>
-      <div class="pjrow"><span class="pjlabel" style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:var(--red);display:inline-block"></span>Conservative</span><span class="pjval" style="color:${cons>=0?'var(--accent)':'var(--red)'}">${fmtCur(Math.round(cons),cur,m,y)}</span></div>
-      <div class="pjrow"><span class="pjlabel" style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:var(--gold);display:inline-block"></span>Base</span><span class="pjval" style="color:${base>=0?'var(--accent)':'var(--red)'}">${fmtCur(Math.round(base),cur,m,y)}</span></div>
-      <div class="pjrow"><span class="pjlabel" style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block"></span>Optimistic</span><span class="pjval" style="color:var(--accent)">${fmtCur(Math.round(opt),cur,m,y)}</span></div>
-      <div class="csub" style="margin-top:8px">Conservative = income −10%, spend +10%. Optimistic = income +5%, spend −5%.</div>
-    </div>
+
     <div class="card">
       <div class="sh" style="margin-bottom:14px"><div class="sh-title">Savings Rate Trend</div></div>
       <div style="display:flex;align-items:flex-end;gap:5px;height:100px;padding-bottom:2px">
@@ -7455,177 +7613,7 @@ function renderProjTreasury(){
   el.appendChild(stCard);
 }
 
-function _getAllObl(){
-  // Fixed bills = seeded FIXED_OBL overridable via sw3_fixed_obl + user additions in sw3_custom_obl
-  const fixed=cGet('sw3_fixed_obl')||FIXED_OBL.map(o=>({...o}));
-  const custom=cGet('sw3_custom_obl')||[];
-  return{fixed,custom};
-}
-function renderProjObligations(){
-  const el=document.getElementById('proj-obligations');
-  if(!el) return;
-  const m=S.dashMonth||S.expMonth,y=S.dashYear||S.expYear,cur=S.dashCurrency||'NGN';
-  const {fixed,custom}=_getAllObl();
-  const allObl=[...fixed,...custom];
-  const grandTotal=allObl.reduce((s,o)=>s+o.amount,0);
-  const recent=getHistory().filter(h=>h.income&&h.expenses).slice(-3);
-  const avgInc=recent.length?recent.reduce((s,h)=>s+h.income,0)/recent.length:0;
-  const oblPct=avgInc?Math.round((grandTotal/avgInc)*100):null;
-  el.innerHTML=`
-    <div class="card">
-      <div class="clabel">Total Fixed Monthly</div>
-      <div class="cval" style="color:var(--gold)">${fmtCur(Math.round(grandTotal),cur,m,y)}</div>
-      ${oblPct!==null?`<div class="csub">${oblPct}% of avg. monthly income</div>`:''}
-    </div>
-    <div class="card">
-      <div class="sh"><div class="sh-title">Fixed Bills</div><button class="btn btn-g btn-sm" onclick="addObligation()">+ Add</button></div>
-      ${fixed.map((o,i)=>`
-        <div class="pjrow" id="obl-fixed-row-${i}">
-          <span class="pjlabel" style="flex:1">${o.label}</span>
-          <span class="pjval" style="color:var(--gold);margin-right:8px">${fmtCur(Math.round(o.amount),cur,m,y)}</span>
-          <button class="btn btn-g btn-sm" style="padding:2px 7px;font-size:0.68rem;margin-right:4px" onclick="editFixedObl(${i})">Edit</button>
-          <button class="txi-del" style="font-size:0.7rem" onclick="deleteFixedObl(${i})">×</button>
-        </div>
-        <div id="obl-fixed-edit-${i}" style="display:none;background:var(--bg2);border-radius:6px;padding:8px 10px;margin:2px 0 6px">
-          <div class="ig" style="margin-bottom:6px"><label class="ilabel">Label</label><input class="ifield" id="obl-fe-lbl-${i}" type="text" value="${o.label}"></div>
-          <div class="ig" style="margin-bottom:8px"><label class="ilabel">Amount (₦)</label><input class="ifield" id="obl-fe-amt-${i}" type="text" value="${o.amount}"></div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-p btn-sm" onclick="saveFixedObl(${i})">Save</button>
-            <button class="btn btn-g btn-sm" onclick="document.getElementById('obl-fixed-edit-${i}').style.display='none'">Cancel</button>
-          </div>
-        </div>`).join('')}
-      ${custom.map((o,i)=>`
-        <div class="pjrow">
-          <span class="pjlabel" style="flex:1">${o.label}</span>
-          <span class="pjval" style="color:var(--gold);margin-right:8px">${fmtCur(Math.round(o.amount),cur,m,y)}</span>
-          <button class="txi-del" style="font-size:0.7rem" onclick="removeObligation(${i})">×</button>
-        </div>`).join('')}
-      <div class="pjrow" style="font-weight:700;border-top:1px solid var(--border2);margin-top:6px;padding-top:10px">
-        <span>Total</span><span class="pjval" style="color:var(--gold)">${fmtCur(Math.round(grandTotal),cur,m,y)}</span>
-      </div>
-    </div>
-    <div class="card" id="obl-add-card" style="display:none">
-      <div class="clabel" style="margin-bottom:10px">Add Fixed Bill</div>
-      <div class="ig"><label class="ilabel">Label</label><input class="ifield" id="obl-lbl" type="text" placeholder="e.g. School fees"></div>
-      <div class="ig"><label class="ilabel">Monthly Amount (₦)</label><input class="ifield" id="obl-amt" type="text" placeholder="0"></div>
-      <div style="display:flex;gap:8px;margin-top:4px">
-        <button class="btn btn-p btn-sm" onclick="saveObligation()">Save</button>
-        <button class="btn btn-g btn-sm" onclick="document.getElementById('obl-add-card').style.display='none'">Cancel</button>
-      </div>
-    </div>`;
-}
-function editFixedObl(i){
-  document.querySelectorAll('[id^="obl-fixed-edit-"]').forEach(el=>el.style.display='none');
-  document.getElementById('obl-fixed-edit-'+i).style.display='block';
-}
-function deleteFixedObl(i){
-  if(!confirm('Remove this fixed bill?')) return;
-  const fixed=cGet('sw3_fixed_obl')||FIXED_OBL.map(o=>({...o}));
-  fixed.splice(i,1);
-  cSet('sw3_fixed_obl',fixed);saveProfile({fixedObl:fixed});
-  renderProjObligations();renderProjTreasury();toast('Bill removed');
-}
-function saveFixedObl(i){
-  const lbl=document.getElementById('obl-fe-lbl-'+i).value.trim();
-  const amt=numVal('obl-fe-amt-'+i);
-  if(!lbl||isNaN(amt)||amt<0){toast('Enter a valid label and amount');return;}
-  const fixed=cGet('sw3_fixed_obl')||FIXED_OBL.map(o=>({...o}));
-  fixed[i]={label:lbl,amount:amt};
-  cSet('sw3_fixed_obl',fixed);saveProfile({fixedObl:fixed});
-  renderProjObligations();renderProjTreasury();toast('Bill updated');
-}
-function addObligation(){document.getElementById('obl-add-card').style.display='block';document.getElementById('obl-lbl').value='';document.getElementById('obl-amt').value='';}
-function saveObligation(){
-  const lbl=document.getElementById('obl-lbl').value.trim();
-  const amt=numVal('obl-amt');
-  if(!lbl||!amt){toast('Enter label and amount');return;}
-  const custom=cGet('sw3_custom_obl')||[];
-  custom.push({label:lbl,amount:amt});
-  cSet('sw3_custom_obl',custom);
-  document.getElementById('obl-add-card').style.display='none';
-  renderProjObligations();toast('Fixed bill added');
-}
-function removeObligation(i){
-  const custom=cGet('sw3_custom_obl')||[];
-  custom.splice(i,1);cSet('sw3_custom_obl',custom);
-  renderProjObligations();toast('Removed');
-}
 
-function renderProjFees(){
-  const el=document.getElementById('proj-fees');if(!el)return;
-  const m=S.dashMonth||S.expMonth,y=S.dashYear||S.expYear,cur=S.dashCurrency||'NGN';
-  const feeState=cGet(CK.schoolFees)||SCHOOL_FEES_DEFAULT.map((f,i)=>({...f,id:i}));
-  const rem=feeState.filter(f=>!f.paid).reduce((s,f)=>s+f.amount,0);
-  const paid=feeState.filter(f=>f.paid).reduce((s,f)=>s+f.amount,0);
-  el.innerHTML=`
-    <div class="g2" style="margin-bottom:10px">
-      <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Remaining</div><div class="cval-sm" style="color:var(--red)">${fmtCur(Math.round(rem),cur,m,y)}</div></div>
-      <div class="card card-sm" style="margin-bottom:0"><div class="clabel">Paid So Far</div><div class="cval-sm" style="color:var(--accent)">${fmtCur(Math.round(paid),cur,m,y)}</div></div>
-    </div>
-    <div class="card">
-      <div class="sh" style="margin-bottom:8px"><div class="clabel" style="margin-bottom:0">Fee Schedule</div><button class="btn btn-g btn-sm" onclick="openAddFeeModal()">+ Add</button></div>
-      ${feeState.map((f,i)=>`
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)">
-          <div style="${f.paid?'opacity:0.45':''}">
-            <div style="font-size:0.78rem;font-weight:600">${f.label}</div>
-            <div style="font-size:0.65rem;font-family:var(--mono);color:var(--text2)">${fmtCur(Math.round(f.amount),cur,m,y)}</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:7px">
-            ${f.paid?'<span class="badge bg">Paid</span>':''}
-            <div onclick="toggleFeePaid(${i})" style="width:36px;height:20px;border-radius:10px;background:${f.paid?'var(--accent)':'var(--border2)'};position:relative;cursor:pointer;flex-shrink:0"><div style="position:absolute;top:2px;${f.paid?'right:2px':'left:2px'};width:16px;height:16px;border-radius:50%;background:${f.paid?'var(--bg)':'var(--text3)'};transition:all 0.2s"></div></div>
-            <button class="btn btn-g btn-sm" onclick="editFeeEntry(${i})" style="padding:2px 7px;font-size:0.62rem">Edit</button>
-            <button class="txi-del" onclick="removeFeeEntry(${i})">×</button>
-          </div>
-        </div>`).join('')}
-    </div>
-    <div class="card" id="fee-edit-card" style="display:none">
-      <div class="clabel" style="margin-bottom:10px" id="fee-edit-title">Add Fee</div>
-      <div class="ig"><label class="ilabel">Label</label><input class="ifield" id="fee-lbl" type="text" placeholder="e.g. Term 3 – Jun '26"></div>
-      <div class="ig"><label class="ilabel">Amount (₦)</label><input class="ifield" id="fee-amt" type="text" placeholder="0"></div>
-      <div style="display:flex;gap:8px;margin-top:4px">
-        <button class="btn btn-p btn-sm" onclick="saveFeeEntry()">Save</button>
-        <button class="btn btn-g btn-sm" onclick="document.getElementById('fee-edit-card').style.display='none'">Cancel</button>
-      </div>
-      <input type="hidden" id="fee-edit-idx" value="-1">
-    </div>
-  `;
-}
-function toggleFeePaid(idx){
-  const fs=cGet(CK.schoolFees)||SCHOOL_FEES_DEFAULT.map((f,i)=>({...f,id:i}));
-  fs[idx].paid=!fs[idx].paid;cSet(CK.schoolFees,fs);renderProjFees();
-}
-function openAddFeeModal(){
-  document.getElementById('fee-edit-card').style.display='block';
-  document.getElementById('fee-edit-title').textContent='Add Fee Entry';
-  document.getElementById('fee-lbl').value='';
-  document.getElementById('fee-amt').value='';
-  document.getElementById('fee-edit-idx').value='-1';
-}
-function editFeeEntry(idx){
-  const fs=cGet(CK.schoolFees)||SCHOOL_FEES_DEFAULT.map((f,i)=>({...f,id:i}));
-  const f=fs[idx];if(!f) return;
-  document.getElementById('fee-edit-card').style.display='block';
-  document.getElementById('fee-edit-title').textContent='Edit Fee Entry';
-  document.getElementById('fee-lbl').value=f.label;
-  document.getElementById('fee-amt').value=f.amount;
-  document.getElementById('fee-edit-idx').value=idx;
-}
-function saveFeeEntry(){
-  const lbl=document.getElementById('fee-lbl').value.trim();
-  const amt=numVal('fee-amt');
-  if(!lbl||!amt){toast('Enter label and amount');return;}
-  const idx=parseInt(document.getElementById('fee-edit-idx').value);
-  const fs=cGet(CK.schoolFees)||SCHOOL_FEES_DEFAULT.map((f,i)=>({...f,id:i}));
-  if(idx>=0){fs[idx].label=lbl;fs[idx].amount=amt;}
-  else{fs.push({label:lbl,amount:amt,paid:false,id:Date.now()});}
-  cSet(CK.schoolFees,fs);
-  document.getElementById('fee-edit-card').style.display='none';
-  renderProjFees();toast(idx>=0?'Fee updated':'Fee added');
-}
-function removeFeeEntry(idx){
-  const fs=cGet(CK.schoolFees)||SCHOOL_FEES_DEFAULT.map((f,i)=>({...f,id:i}));
-  fs.splice(idx,1);cSet(CK.schoolFees,fs);renderProjFees();toast('Removed');
-}
 function renderProjHistory(){
   const el=document.getElementById('proj-history');if(!el)return;
   el.innerHTML=`
@@ -7716,7 +7704,6 @@ async function _loadHistDetail(d, el){
 }
 function _renderHistDetail(el,txns,inc,invData,cashData,m,y,sid_){
   const cur=S.dashCurrency==='NATIVE'?'NATIVE':S.dashCurrency||'NGN';
-  const USD_PLATS=['Risevest','Trove','Bamboo'];
   const totalExp=txns.reduce((s,t)=>s+txNGN(t),0);
   const totalInc=inc.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
   const cats={};txns.forEach(t=>{cats[t.category]=(cats[t.category]||0)+txNGN(t);});
@@ -7734,7 +7721,7 @@ function _renderHistDetail(el,txns,inc,invData,cashData,m,y,sid_){
       <span style="font-size:0.7rem;color:var(--text2)">${c}</span>
       <span style="font-family:var(--mono);font-size:0.7rem;color:var(--accent)">${fmtCur(v,cur,m,y)}</span>
     </div>`).join('');
-  const cashAccounts=getCashAccounts().concat(['Union']).filter((a,i,arr)=>arr.indexOf(a)===i);
+  const cashAccounts=getCashAccounts();
   const cashRows=cashAccounts.filter(a=>cashData[a]!==undefined).map(a=>`
     <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border)">
       <span style="font-size:0.7rem;color:var(--text2)">${a}</span>
@@ -7747,12 +7734,11 @@ function _renderHistDetail(el,txns,inc,invData,cashData,m,y,sid_){
     </div>`).join('');
   const cashInputs=cashAccounts.map(a=>`
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
-      <label style="font-size:0.62rem;color:var(--text2);width:68px;flex-shrink:0">${a}</label>
+      <label style="font-size:0.62rem;color:var(--text2);width:68px;flex-shrink:0">${esc(a)}${isUSDCashAccount(a)?' ($)':''}</label>
       <input class="ifield" type="text" id="hd-cash-${sid_}-${a}" placeholder="0" value="${cashData[a]!==undefined?cashData[a]:''}" style="padding:4px 8px;font-size:0.72rem;font-family:var(--mono)">
     </div>`).join('');
   const invInputs=PLATFORMS.map(p=>{
-    const isUSD=USD_PLATS.includes(p.key);
-    const dispCur=isUSD?'USD':'₦';
+    const dispCur='₦'; // investment balances are stored in naira
     return`<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
       <label style="font-size:0.62rem;color:var(--text2);width:88px;flex-shrink:0">${p.label} <span style="color:var(--text3)">(${dispCur})</span></label>
       <input class="ifield" type="text" id="hd-inv-${sid_}-${p.key}" placeholder="0" value="${invData[p.key]!==undefined?invData[p.key]:''}" style="padding:4px 8px;font-size:0.72rem;font-family:var(--mono)">
@@ -7796,15 +7782,15 @@ function _toggleHistBalEdit(editId){
   el.style.display=el.style.display==='none'?'block':'none';
 }
 async function _saveHistBalances(sid_,m,y){
-  const cashAccounts=getCashAccounts().concat(['Union']).filter((a,i,arr)=>arr.indexOf(a)===i);
-  const USD_PLATS=['Risevest','Trove','Bamboo'];
+  const cashAccounts=getCashAccounts();
+  const before=cGet(CK.cash(m,y))||{};
   // Build cash doc
   const cashDoc={month:m,year:y};
   cashAccounts.forEach(a=>{
     const el=document.getElementById(`hd-cash-${sid_}-${a}`);
     if(!el) return;
     const v=el.value.trim();
-    if(v!=='') cashDoc[a]=parseFloat(v)||0;
+    if(v!=='') cashDoc[a]=numVal(el)||0;
   });
   // Build inv doc
   const invDoc={month:m,year:y};
@@ -7812,15 +7798,18 @@ async function _saveHistBalances(sid_,m,y){
     const el=document.getElementById(`hd-inv-${sid_}-${p.key}`);
     if(!el) return;
     const v=el.value.trim();
-    if(v!=='') invDoc[p.key]=parseFloat(v)||0;
+    if(v!=='') invDoc[p.key]=numVal(el)||0;
   });
   try{
     await Promise.all([
       db.collection('cashBalances').doc(sid_).set(cashDoc,{merge:true}),
       db.collection('investments').doc(sid_).set(invDoc,{merge:true})
     ]);
-    cSet(CK.cash(m,y),cashDoc);
-    cSet(CK.inv(m,y),invDoc);
+    cSet(CK.cash(m,y),{...before,...cashDoc});
+    cSet(CK.inv(m,y),{...(cGet(CK.inv(m,y))||{}),...invDoc});
+    // A corrected closing balance carries into every later month (as on the
+    // Cash page).
+    cashAccounts.forEach(a=>{if(cashDoc[a]==null)return;const d=cashDoc[a]-(before[a]||0);if(d)_rippleCashForward(a,d,m,y);});
     toast('Balances saved');
     setSyncStatus('synced');
     // Refresh current month if it matches
@@ -7858,8 +7847,8 @@ function renderSettGuide(){
     </div>
     ${sec('Quick start',`
       <ol>
-        <li><b>Add your accounts.</b> Go to <b>Accounts → Cash → ✎ Edit Balances</b>, add your banks and cash from the logo list, and enter what's in each one today.</li>
-        <li><b>Set a budget.</b> In <b>Settings → Budget</b>, enter a monthly amount for each category you care about.</li>
+        <li><b>Add your accounts.</b> Go to <b>Accounts → Cash → ✎ Edit balances &amp; accounts</b>, add your banks and cash from the logo list, and enter what's in each one today.</li>
+        <li><b>Set a budget.</b> In <b>Settings → Budget</b>, enter a monthly amount for each category you care about and tap <b>Save for every month</b>. It applies to every month until you change it.</li>
         <li><b>Record spending as it happens.</b> Tap the round <b>+</b> button, enter the amount, pick a category, what you spent it on, and the bank it came from. The balance of that bank goes down automatically.</li>
         <li><b>Record income</b> the same way, using the <b>Income</b> button at the top of the + form.</li>
         <li><b>Check Home</b> to see where your money is going and how you're doing against your budget.</li>
@@ -7880,6 +7869,7 @@ function renderSettGuide(){
     ${sec('Recording money (the + button)',`
       <p>The round <b>+</b> button is on every page. Tap it for three shortcuts: <b>Quick add</b>, <b>Say it</b> (speak the transaction) and <b>Ask AI</b>. If it's covering something, <b>drag it</b> anywhere on the screen; it stays where you leave it.</p>
       <p><b>Quick add</b> (the box at the top of the form) is the fastest way: type or tap 🎤 and say something like <i>"5k lunch from GTB yesterday"</i>, <i>"received 250k salary into Access"</i> or <i>"moved 20k from Opay to Kuda"</i>. The form fills itself in; check it and tap Save. Nothing is saved until you do.</p>
+      <p><b>Bank alerts:</b> copy a debit or credit alert from your SMS or email and paste it into Quick add (or tap 📋). The amount, date, type and what it was for are read from the alert; the balance in it is ignored.</p>
       <p>Or fill in the form yourself. Choose what you're recording:</p>
       <ul>
         <li><b>Paid in dollars or pounds from a naira account?</b> (e.g. a $6.93 subscription on your naira card) Switch the currency next to Amount to $ or £. It's converted at that month's rate and your account is charged in naira.</li>
@@ -7887,43 +7877,45 @@ function renderSettGuide(){
         <li><b>Income.</b> Choose the category and the bank it was received into.</li>
         <li><b>Transfer.</b> Moves money between your own accounts: <b>Cash → Cash</b>, <b>Cash → Invest</b> or <b>Invest → Cash</b>. It isn't counted as spending.</li>
       </ul>
-      <p>Set the date if it didn't happen today; the right month's balances are updated. Set <b>Recurring transaction</b> (weekly, monthly…) for bills that repeat (rent, subscriptions); they show up on Home as <b>Upcoming Bills</b> when due.</p>
-      <p><b>To fix a mistake:</b> on the Expenses page, tap ✎ on an entry to edit it, or swipe it sideways (or tap ×) to delete it. Tap <b>Undo</b> within a few seconds if you deleted the wrong one.</p>`)}
+      <p>Set the date if it didn't happen today; it's filed under the right month and that month's balances are updated. Set <b>Repeats</b> (weekly, monthly…) for bills and income that repeat (rent, subscriptions, salary). Tick <b>Post it automatically</b> and it's recorded by itself on its date; otherwise it shows on Home under <b>Upcoming Bills</b> for you to post or skip.</p>
+      <p><b>To fix a mistake:</b> on the Expenses page, tap an entry (or ✎) to edit it, or tap × to delete it. Tap <b>Undo</b> within a few seconds if you deleted the wrong one.</p>`)}
     ${sec('Home',`
       <ul>
         <li><b>Net Worth</b>: everything you have (cash + investments + money owed to you), minus loans if you choose. Tap it for the breakdown, and tap the 👁 to hide amounts when others can see your screen.</li>
-        <li><b>Year / month / currency</b> selectors change the period and currency you're looking at. <b>Effective</b> shows each account in its own currency.</li>
+        <li><b>Search</b> (top right) finds any entry in any month by item, category, bank, note or amount.</li>
+        <li><b>Year / month / currency</b> selectors change the period and currency you're looking at (the currency is also in Settings → Preferences).</li>
+        <li>In the first week of a month, a <b>month in review</b> card sums up the month before. You can share it or hide it.</li>
         <li><b>Spend vs Budget</b>: how much of each category's budget you've used this month.</li>
         <li><b>Calendar</b> shows what you spent on each day. <b>Charts</b> cover breakdown, 6-month trend, net worth and cash flow.</li>
-        <li>Tap <b>Edit</b> (top right) to reorder or hide cards.</li>
+        <li>Tap <b>Edit</b> (top right) to reorder the cards.</li>
         <li>The 🔔 bell shows alerts, like a category on track to go over budget.</li>
       </ul>`)}
     ${sec('Expenses page',`
       <ul>
-        <li>Tap a month in the strip at the top to switch months.</li>
-        <li><b>Search</b> finds entries in the month you're on; <b>All months</b> searches everything. <b>Filter</b> narrows to categories. Sort <b>By date</b> or <b>By expense</b>.</li>
+        <li>Tap a month in the strip at the top to switch months; the ends of the strip go to the year before or after.</li>
+        <li>The box filters the month you're on (use <b>Search</b> on Home for every month). <b>Filter</b> narrows to categories. Sort <b>By date</b> or <b>By expense</b>.</li>
         <li><b>Income</b> tab: everything you received that month.</li>
         <li><b>Special Budget</b> tab: plan a trip or event separately from your monthly budget. Add items, compare options (e.g. two airlines or hotels) and switch currency.</li>
       </ul>`)}
     ${sec('Accounts page',`
       <ul>
-        <li><b>Cash</b>: your bank and cash balances. Tap an account to see every movement in and out of it. <b>✎ Edit Balances</b> lets you correct balances, add or remove accounts, and transfer between accounts. <b>⇄ Transfer History</b> lists past transfers.</li>
-        <li><b>Investments</b>: balances on savings and investment platforms. You can record money going in, interest earned, or cashing out back to a bank. <b>Trend</b> shows growth over time. Past months are read-only.</li>
+        <li><b>Cash</b>: your bank and cash balances. Tap an account to see every movement in and out of it. <b>⇄ Transfer</b> moves money between your accounts or to and from investments; <b>Transfer history</b> lists (and can reverse) past transfers. <b>✎ Edit balances &amp; accounts</b> lets you correct balances, set interest rates, add or remove accounts and change logos.</li>
+        <li><b>Investments</b>: balances on savings and investment platforms. You can record money going in, gains or losses, or cash out all or part of an investment back to a bank. <b>Trend</b> shows growth over time. Past months are read-only.</li>
         <li><b>Debtors</b>: money people owe you. Add a person and record repayments as they come in.</li>
         <li><b>Loans</b>: money you owe. Record repayments to see what's left.</li>
       </ul>`)}
     ${sec('Analytics page',`
       <ul>
         <li><b>Insights</b>: a forecast of how the month will end and which categories are running hot.</li>
-        <li><b>Treasury</b>: your <b>runway</b> (how many months your cash would last at your usual spending), savings rate and projections.</li>
+        <li><b>Treasury</b>: your <b>runway</b> (how many months your cash would last at your usual spending), savings rate, your fixed monthly bills (from Recurring) and a 3-month cash projection. It uses completed months only.</li>
         <li><b>History</b>: income and expenses month by month. Tap a column heading to sort.</li>
         <li><b>AI ✦</b>: ask questions about your money in plain English ("Where did most of my money go last month?"). It can draw charts too. Tap 🎤 to speak your question instead of typing. Chats sync across your devices.</li>
       </ul>
       <p class="gd-tip">When you use the AI Analyst, your question and the relevant figures are sent to Google's Gemini service to produce the answer. Nothing is sent unless you ask it something.</p>`)}
     ${sec('Settings page',`
       <ul>
-        <li><b>Data</b>: your account (sign in, sign out, password, recovery code, delete account), <b>app lock</b>, savings <b>goals</b>, recurring transactions, and <b>Help</b> (this guide and <b>Report a problem</b>). Rarely needed tools (your own AI key, what counts in net worth, exchange rates, balance audit) are under <b>Advanced</b>.</li>
-        <li><b>Budget</b>: set each category's monthly budget, and manage categories and items. Built-in categories can't be deleted, but any category can be merged into another.</li>
+        <li><b>Data</b>: your account (sign in, sign out, password, recovery code, delete account), <b>app lock</b>, savings <b>goals</b>, <b>recurring</b> items, <b>preferences</b> (currency, the + button) and <b>Help</b> (this guide and <b>Report a problem</b>). Rarely needed tools (your own AI key, what counts in net worth, exchange rates, balance audit) are under <b>Advanced</b>. Dollar and pound rates are fetched automatically each day; you can set your own for any month.</li>
+        <li><b>Budget</b>: one budget for every month (<b>Save for every month</b>), or a different one for a single month (<b>Only this month</b>). Also manage categories and items here. Built-in categories can't be deleted, but any category can be merged into another.</li>
         <li><b>Export</b>: download your data as Excel (a monthly budget workbook), CSV, or a full JSON backup.</li>
         <li><b>Guide</b>: this page.</li>
       </ul>`)}
@@ -7931,13 +7923,13 @@ function renderSettGuide(){
       <ul>
         <li><b>Install it like an app.</b> On iPhone, open the site in Safari, tap Share → <b>Add to Home Screen</b>. On Android, open it in Chrome, tap ⋮ → <b>Add to Home screen</b> / <b>Install app</b>.</li>
         <li><b>Works offline.</b> Entries made without internet sync when you're back online.</li>
-        <li><b>Pull down</b> on the Home page to refresh.</li>
+        <li><b>Pull down</b> on the Home page to reload your data.</li>
         <li>If a bar says <b>Update available</b>, tap <b>Update now</b> to get the latest version.</li>
         <li><b>Balance looks wrong?</b> Check that the entry used the right bank and date. You can also correct a balance directly in Accounts → Cash → ✎ Edit Balances.</li>
         <li><b>Forgot your password?</b> On the sign-in screen, tap <b>Forgot password? Use your recovery code</b>, then set a new password.</li>
         <li><b>Lock the app</b> with your fingerprint, face or phone PIN: Settings → Data → <b>App lock</b> (needs an account; your password always works as a backup).</li>
         <li><b>Something not working?</b> Settings → Data → Help → <b>Report a problem</b> opens an email to the developer with the details needed to fix it.</li>
-        <li><b>Using a shared or borrowed device?</b> Sign out when you're done (Settings → Data → Account). This removes your data from that device; it stays safe in your account.</li>
+        <li><b>Using a shared or borrowed device?</b> Sign out when you're done (Settings → Data → Account). This removes your data from that device; it stays safe in your account. On your own phone, the copy of your data kept for offline use is protected by the phone's lock, so keep one set.</li>
       </ul>`)}
   `;
   // One section open at a time: opening a section closes the others.
@@ -7948,23 +7940,23 @@ function renderSettGuide(){
 function renderSettBudget(){
   const total=Object.values(S.budgets).reduce((s,v)=>s+(v||0),0);
   const prevM=S.expMonth===1?12:S.expMonth-1,prevY=S.expMonth===1?S.expYear-1:S.expYear;
-  const hasPrevBudget=!!cGet(CK.budgets(prevM,prevY));
   const prevTxnsList=cGet(CK.txns(prevM,prevY))||[];
   const prevCatSpend={};prevTxnsList.forEach(t=>{prevCatSpend[t.category]=(prevCatSpend[t.category]||0)+txNGN(t);});
+  const monName=`${MONTHS[S.expMonth-1]} ${S.expYear}`;
+  const custom=!!budgetOverride(S.expMonth,S.expYear);
   document.getElementById('sett-budget').innerHTML=`
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <div style="font-size:0.68rem;color:var(--text2)">Budget for ${MONTHS[S.expMonth-1]} ${S.expYear}</div>
-      ${hasPrevBudget?`<button class="btn btn-g btn-sm" onclick="copyLastBudget()">↩ Copy budget ${MS[prevM-1]}</button>`:''}
+    <div class="exp-card" style="margin-top:10px;padding:10px 12px">
+      <div style="font-size:0.76rem;font-weight:700">${custom?`Custom budget for ${monName}`:'Your monthly budget'}</div>
+      <div style="font-size:0.66rem;color:var(--text2);margin-top:3px;line-height:1.5">${custom
+        ?`${monName} has its own budget, so changes to your standard budget don't affect it. <span class="sh-link" style="font-size:0.66rem" onclick="resetMonthBudget()">Use the standard budget for ${MONTHS[S.expMonth-1]}</span>`
+        :`Applies to every month. To budget one month differently, change the amounts and tap "Only ${MS[S.expMonth-1]} ${S.expYear}".`}</div>
     </div>
-    <label style="display:flex;align-items:center;gap:6px;font-size:0.66rem;color:var(--text2);margin-bottom:12px;cursor:pointer">
-      <input type="checkbox" id="budget-rollover-toggle" ${getBudgetRollover()?'checked':''} onchange="setBudgetRollover(this.checked)">
-      Auto-carry this month's categories into new months with no budget set yet
-    </label>
     ${getAllCats().map(c=>{const k=ck(c);const prevSpend=prevCatSpend[c]||0;return`<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:0.72rem;color:var(--text2)">${CAT_ICONS[c]||''} ${c}</span>${prevSpend?`<span style="font-size:0.58rem;color:var(--text3);font-family:var(--mono);cursor:pointer;white-space:nowrap" onclick="document.getElementById('b-${k}').value=${prevSpend};updateBudgetTotal()" title="Copy last month actual">↩${fN(prevSpend).replace('₦','')}</span>`:'<span style="width:32px"></span>'}<input class="ifield" type="text" id="b-${k}" placeholder="0" value="${S.budgets[k]||''}" style="width:100px;flex-shrink:0;font-size:0.76rem;padding:5px 8px" oninput="updateBudgetTotal()"></div>`;}).join('')}
     <div style="display:flex;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);margin-bottom:12px;font-weight:700;font-size:0.84rem"><span>Total</span><span id="budget-total-display" style="font-family:var(--mono);color:var(--accent)">${fN(total)}</span></div>
+    <button class="btn btn-g btn-sm" style="margin-bottom:8px" onclick="copyActualSpend()">↩ Fill in last month's actual spend</button>
     <div style="display:flex;gap:8px;margin-bottom:16px">
-      <button class="btn btn-g btn-sm" onclick="copyActualSpend()">↩ Copy all actual spend</button>
-      <button class="btn btn-p" style="flex:1" onclick="saveBudget()">Save Budget</button>
+      <button class="btn btn-p" style="flex:2" onclick="saveBudget('std')">Save for every month</button>
+      <button class="btn btn-g" style="flex:1" onclick="saveBudget('month')">Only ${MS[S.expMonth-1]} ${S.expYear}</button>
     </div>
     <div style="border-top:1px solid var(--border);padding-top:14px">
       <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Manage Categories &amp; Items</div>
@@ -8032,7 +8024,7 @@ function renderSettBudget(){
     </div>
     <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:14px">
       <div style="font-size:0.7rem;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.06em">Auto-Categorization Rules</div>
-      <div class="csub" style="margin-bottom:10px">When an expense name contains the text below, its category is filled in automatically (first match wins, overrides the built-in suggestions). Applies everywhere, in both design modes.</div>
+      <div class="csub" style="margin-bottom:10px">When an expense name contains the text below, its category is filled in automatically (first match wins, overrides the built-in suggestions).</div>
       ${getRules().map((r,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
         <span style="flex:1;font-size:0.74rem">"${esc(r.match)}" <span style="color:var(--text3)">→</span> ${CAT_ICONS[r.category]||''} ${esc(r.category)}</span>
         <button class="txi-del" onclick="deleteRule(${i})">×</button>
@@ -8046,13 +8038,6 @@ function renderSettBudget(){
   setTimeout(()=>{initNumInputs(document.getElementById('sett-budget'));
     const pi=document.getElementById('pmerge-into');if(pi&&pi.options.length>1)pi.selectedIndex=1;},0);
 }
-function copyLastBudget(){
-  const prevM=S.expMonth===1?12:S.expMonth-1,prevY=S.expMonth===1?S.expYear-1:S.expYear;
-  const prev=cGet(CK.budgets(prevM,prevY));
-  if(!prev){toast('No budget found for last month');return;}
-  getAllCats().forEach(c=>{const k=ck(c);const el=document.getElementById('b-'+k);if(el)el.value=prev[k]||'';});
-  toast(`Copied from ${MONTHS[prevM-1]} — remember to save`);
-}
 function addCustomCat(){
   const input=document.getElementById('new-cat-input');
   if(!input) return;
@@ -8062,9 +8047,8 @@ function addCustomCat(){
   // Store chosen emoji in CAT_ICONS
   const emojiBtn=document.getElementById('new-cat-emoji');
   const emoji=emojiBtn?emojiBtn.textContent.trim():'📦';
-  CAT_ICONS[name]=emoji;
   if(emojiBtn) emojiBtn.textContent='📦'; // reset
-  const cats=getCustomCats();cats.push(name);saveCustomCats(cats);
+  const cats=getCustomCats();cats.push(name);saveCustomCats(cats,{...getCustomIcons(),[name]:emoji});
   input.value='';
   // Refresh expense modal cat select if open
   const catSel=document.getElementById('e-cat');
@@ -8073,7 +8057,7 @@ function addCustomCat(){
 }
 function removeCustomCat(name){
   // Check if this category has any transactions in any cached month
-  const allKeys=Object.keys(localStorage).filter(k=>k.startsWith('sw3_txns_'));
+  const allKeys=cKeys('sw3_txns_');
   let txnCount=0;
   allKeys.forEach(k=>{const arr=cGet(k)||[];txnCount+=arr.filter(t=>t.category===name).length;});
   if(txnCount>0){
@@ -8151,12 +8135,12 @@ function startEditPayee(cat,payee){
 // locally-updated transactions for the toast.
 function _rewritePayeeHistory(cat, oldPayee, newPayee){
   let n=0;
-  Object.keys(localStorage).filter(k=>/^sw3_txns_/.test(k)).forEach(k=>{
-    let arr; try{arr=JSON.parse(localStorage.getItem(k));}catch(e){return;}
+  cKeys('sw3_txns_').forEach(k=>{
+    let arr; try{arr=cGet(k);}catch(e){return;}
     if(!Array.isArray(arr))return;
     let changed=false;
     arr.forEach(t=>{ if(t.category===cat && t.payee===oldPayee){ t.payee=newPayee; changed=true; n++; } });
-    if(changed) localStorage.setItem(k, JSON.stringify(arr));
+    if(changed) cSet(k,arr);
   });
   if(Array.isArray(S.txns)) S.txns.forEach(t=>{ if(t.category===cat && t.payee===oldPayee) t.payee=newPayee; });
   if(db){
@@ -8176,8 +8160,8 @@ function commitEditPayee(cat,oldPayee,newPayee,src){
   if(newPayee===oldPayee){renderSettBudget();return;}
   // Count how many past transactions this touches so the confirm is informed.
   let hist=0;
-  Object.keys(localStorage).filter(k=>/^sw3_txns_/.test(k)).forEach(k=>{
-    let arr; try{arr=JSON.parse(localStorage.getItem(k));}catch(e){return;}
+  cKeys('sw3_txns_').forEach(k=>{
+    let arr; try{arr=cGet(k);}catch(e){return;}
     if(Array.isArray(arr)) hist+=arr.filter(t=>t.category===cat&&t.payee===oldPayee).length;
   });
   const merging=[...(CAT_LINES[cat]||[]),...((S.customExpLines[cat]||[]))].includes(newPayee);
@@ -8206,24 +8190,23 @@ function commitEditPayee(cat,oldPayee,newPayee,src){
   setTimeout(()=>{ const el=document.getElementById('cat-acc-'+key); if(el&&!el.classList.contains('open')) toggleCatAcc(cat); },0);
   toast(updated?`Renamed to "${newPayee}" · ${updated} transaction${updated===1?'':'s'} updated`:`Renamed to "${newPayee}"`);
 }
-function renderPayeeLines(){} // kept as no-op for any stale call sites
-function addPayeeLine(){} // kept as no-op
 function removePayeeLine(cat,payee,src){
+  if(!confirm(`Remove "${payee}" from ${cat}? Past entries keep it.`))return;
   if(src==='builtin'){
-    // Remove from CAT_LINES in memory
+    // Built-in items are hidden via the synced __removed__ map
     CAT_LINES[cat]=(CAT_LINES[cat]||[]).filter(p=>p!==payee);
-    // Also persist the removal so it survives re-renders
     if(!S.customExpLines['__removed__']) S.customExpLines['__removed__']={};
     if(!S.customExpLines['__removed__'][cat]) S.customExpLines['__removed__'][cat]=[];
     if(!S.customExpLines['__removed__'][cat].includes(payee)) S.customExpLines['__removed__'][cat].push(payee);
-    saveCustomLines();
   } else {
     if(!S.customExpLines[cat]) return;
     S.customExpLines[cat]=S.customExpLines[cat].filter(p=>p!==payee);
     if(!S.customExpLines[cat].length) delete S.customExpLines[cat];
-    saveCustomLines();
   }
-  renderPayeeLines();
+  saveCustomLines();
+  // Redraw and keep this category open (the list used to stay unchanged).
+  renderSettBudget();
+  setTimeout(()=>{const el=document.getElementById('cat-acc-'+cat.replace(/[^a-z0-9]/gi,'_'));if(el&&!el.classList.contains('open'))toggleCatAcc(cat);},0);
   toast(`Removed "${payee}"`);
 }
 // ── Merge two expense lines (payees) within a category ─────────────────────
@@ -8264,12 +8247,12 @@ function _mergePayeeCore(cat,from,into){
 // whole-category merge. Also moves the payee's line into the target category.
 function movePayeeCategory(payee,fromCat,toCat){
   let n=0;
-  Object.keys(localStorage).filter(k=>/^sw3_txns_/.test(k)).forEach(k=>{
-    let arr;try{arr=JSON.parse(localStorage.getItem(k));}catch(e){return;}
+  cKeys('sw3_txns_').forEach(k=>{
+    let arr;try{arr=cGet(k);}catch(e){return;}
     if(!Array.isArray(arr))return;
     let changed=false;
     arr.forEach(t=>{ if(t.category===fromCat&&t.payee===payee){ t.category=toCat; changed=true; n++; } });
-    if(changed) localStorage.setItem(k,JSON.stringify(arr));
+    if(changed) cSet(k,arr);
   });
   if(Array.isArray(S.txns)) S.txns.forEach(t=>{ if(t.category===fromCat&&t.payee===payee) t.category=toCat; });
   // Move the line definition across too
@@ -8297,8 +8280,8 @@ function mergePayeeLines(){
   if(!cat||!from||!into){toast('Pick a category and two lines');return;}
   if(from===into){toast('Pick two different lines to merge');return;}
   let hist=0;
-  Object.keys(localStorage).filter(k=>/^sw3_txns_/.test(k)).forEach(k=>{
-    let a;try{a=JSON.parse(localStorage.getItem(k));}catch(e){return;}
+  cKeys('sw3_txns_').forEach(k=>{
+    let a;try{a=cGet(k);}catch(e){return;}
     if(Array.isArray(a)) hist+=a.filter(t=>t.category===cat&&t.payee===from).length;
   });
   if(!confirm(`Merge "${from}" into "${into}" in ${cat}${hist?` and update ${hist} past transaction${hist===1?'':'s'}`:''}?`))return;
@@ -8321,10 +8304,31 @@ function copyActualSpend(){
   updateBudgetTotal();
   toast('Copied actual spend from '+MS[prevM-1]);
 }
-async function saveBudget(){
-  const cats={};getAllCats().forEach(c=>{const k=ck(c);const el=document.getElementById('b-'+k);const v=el?numVal(el):NaN;cats[k]=isNaN(v)?0:v;});setSyncStatus('syncing');
-  try{await db.collection('budgets').doc(sid(S.expMonth,S.expYear)).set({month:S.expMonth,year:S.expYear,categories:cats},{merge:true});S.budgets={...DEF_BUDGETS,...cats};cSet(CK.budgets(S.expMonth,S.expYear),S.budgets);toast('Budget saved');setSyncStatus('synced');renderDashboard();}
-  catch(e){toast('Error saving budget');setSyncStatus('error');}
+// scope 'std': the standard budget for every month (and this month drops any
+// custom budget of its own). scope 'month': a budget for this month only.
+async function saveBudget(scope){
+  const cats={};getAllCats().forEach(c=>{const k=ck(c);const el=document.getElementById('b-'+k);const v=el?numVal(el):NaN;cats[k]=isNaN(v)?0:v;});
+  const m=S.expMonth,y=S.expYear;
+  try{
+    if(scope==='month'){
+      await db.collection('budgets').doc(sid(m,y)).set({month:m,year:y,categories:cats});
+      cSet(CK.budgets(m,y),{categories:cats});
+      toast(`Budget saved for ${MONTHS[m-1]} ${y} only`);
+    }else{
+      saveProfile({defBudgets:cats});
+      if(budgetOverride(m,y)){await db.collection('budgets').doc(sid(m,y)).delete();cSet(CK.budgets(m,y),{none:true});}
+      toast('Budget saved for every month');
+    }
+    S.budgets=budgetFor(m,y);
+    renderDashboard();renderSettBudget();
+  }catch(e){console.warn('budget save failed',e);toast('Error saving budget');}
+}
+async function resetMonthBudget(){
+  const m=S.expMonth,y=S.expYear;
+  if(!confirm(`Use your standard budget for ${MONTHS[m-1]} ${y} instead of its own?`))return;
+  try{await db.collection('budgets').doc(sid(m,y)).delete();}catch(e){console.warn('budget reset failed',e);toast('Could not reset. Try again.');return;}
+  cSet(CK.budgets(m,y),{none:true});S.budgets=budgetFor(m,y);
+  renderDashboard();renderSettBudget();toast('Using your standard budget');
 }
 
 function renderSettExport(){
@@ -8333,8 +8337,8 @@ function renderSettExport(){
     <div class="exp-card"><div class="exp-card-title">Export All Data</div><div class="exp-card-sub">Excel: one budget-workbook sheet per month — day-by-day expense matrix with totals &amp; budget, cash accounts, investments and summaries. CSV: flat transaction list.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-exp btn-sm" onclick="exportAll('csv')">↓ CSV</button><button class="btn btn-exp btn-sm" onclick="exportAll('xlsx')">↓ Excel</button></div></div>
     <div class="exp-card"><div class="exp-card-title">Export by Month</div><div class="exp-card-sub">Select a month and export just that month — Excel uses the budget-workbook layout (expenses × days, cash, investments, summaries).</div>
     <div class="gform" style="margin-bottom:10px">
-      <div class="ig"><label class="ilabel">Month</label><select class="sfield" id="exp-mo-sel">${Array.from({length:12},(_,i)=>i+1).reverse().map(m=>`<option value="${m}">${MONTHS[m-1]}</option>`).join('')}</select></div>
-      <div class="ig"><label class="ilabel">Year</label><select class="sfield" id="exp-yr-sel"><option value="2026">2026</option><option value="2025">2025</option><option value="2024">2024</option></select></div>
+      <div class="ig"><label class="ilabel">Month</label><select class="sfield" id="exp-mo-sel">${Array.from({length:12},(_,i)=>i+1).reverse().map(m=>`<option value="${m}"${m===curM()?' selected':''}>${MONTHS[m-1]}</option>`).join('')}</select></div>
+      <div class="ig"><label class="ilabel">Year</label><select class="sfield" id="exp-yr-sel">${_dataYears().map(y=>`<option value="${y}">${y}</option>`).join('')}</select></div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-exp btn-sm" onclick="exportMonth('csv')">↓ CSV</button><button class="btn btn-exp btn-sm" onclick="exportMonth('xlsx')">↓ Excel</button></div></div>
   `;
@@ -8378,11 +8382,16 @@ async function runBalanceAudit(){
   // Only loan/debtor/investment sources are added from the ledger; income,
   // expense and transfers are already counted via the collections above, so
   // including them here would double-count.
-  const LEDGER_ONLY_SRC=new Set(['loan-proceeds','loan-repayment','loan-edit-adjust','debt-add','debt-edit-adjust','investment-liquidation']);
+  // Debtor repayments only exist in the ledger, so they belong here too.
+  // (Interest and top-ups funded from a bank already have an income or
+  // transfer record, so they're counted there instead.)
+  const LEDGER_ONLY_SRC=new Set(['loan-proceeds','loan-repayment','loan-edit-adjust','loan-remove-reverse','debt-add','debt-edit-adjust','debt-payment','debt-remove-reverse','investment-liquidation']);
   const accounts=getCashAccounts();
   const rows=accounts.map(b=>{
     const open=prevCash[b]||0;
-    const incSum=incs.filter(i=>i.bank===b).reduce((s,i)=>s+(i.amount||0),0);
+    // The interest part of a cash-out is also in the ledger's liquidation
+    // entry (the whole payout), so its income record is skipped here.
+    const incSum=incs.filter(i=>i.bank===b&&i.source!=='liquidation-interest').reduce((s,i)=>s+(i.amount||0),0);
     const expSum=txns.filter(t=>t.bank===b).reduce((s,t)=>s+(t.amount||0),0);
     const xfrOut=xfrs.filter(x=>x.from===b).reduce((s,x)=>s+(x.amount||0),0);
     const xfrIn=xfrs.filter(x=>x.to===b).reduce((s,x)=>s+((x.toAmt!=null?x.toAmt:x.amount)||0),0);
@@ -8406,7 +8415,7 @@ async function runBalanceAudit(){
       </div>
       ${ok?'':`<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-g btn-sm" onclick="auditFix('${r.b}',${r.expected},${m},${y})">Set to computed ${fmt(r.b,r.expected)}</button><button class="btn btn-g btn-sm" onclick="showCashLedger('${r.b}',${m},${y})">View ledger</button></div>`}
     </div>`;}).join('')+
-    '<div class="csub" style="margin-top:8px">Loan, debtor and investment-liquidation flows are now included (via the cash ledger). Remaining differences are usually manual balance edits, or loan/debtor/investment activity from before the ledger existed (pre-v3.14.79).</div>';
+    '<div class="csub" style="margin-top:8px">Loan, debtor and investment flows are included. Remaining differences are usually balances you corrected by hand, or very old activity recorded before this check existed.</div>';
 }
 function auditFix(b,val,m,y){
   if(!confirm(`Set ${b} balance to the computed value?`))return;
@@ -8540,7 +8549,7 @@ async function importFullBackup(ev){
     }
     // Bust monthly localStorage caches so onSnapshot listeners refetch fresh data.
     // Match only sw3_{txns|inc|cash|inv|budgets}_{year}_{month} — NOT sw3_inv_subs / sw3_inv_meta etc.
-    Object.keys(localStorage).forEach(k=>{if(/^sw3_(txns|inc|cash|inv|budgets)_\d{4}_\d{1,2}$/.test(k))localStorage.removeItem(k);});
+    cKeys('sw3_').forEach(k=>{if(/^sw3_(txns|inc|cash|inv|bud)_\d{4}_\d{1,2}$/.test(k))cDel(k);});
     setSyncStatus('synced');toast(`Restored ${ops.length} records ✓ — reloading…`);haptic([8,40,8]);
     setTimeout(()=>location.reload(),1200);
   }catch(e){
@@ -8778,15 +8787,6 @@ async function exportMonth(fmt){
   }catch(e){console.error(e);toast('Error exporting');}
 }
 
-function doExport(rows,filename,fmt){
-  // Legacy fallback — single sheet
-  if(fmt==='csv'){const csv=rows.map(r=>r.map(c=>typeof c==='string'&&c.includes(',')?`"${c}"`:String(c)).join(',')).join('\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename+'.csv';a.click();URL.revokeObjectURL(url);toast('CSV downloaded');}
-  else{if(typeof XLSX==='undefined'){toast('Excel library not loaded');return;}const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=[{wch:12},{wch:18},{wch:28},{wch:12},{wch:28},{wch:14}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Transactions');XLSX.writeFile(wb,filename+'.xlsx');toast('Excel file downloaded');}
-}
-function doExport(rows,filename,fmt){
-  if(fmt==='csv'){const csv=rows.map(r=>r.map(c=>typeof c==='string'&&c.includes(',')?`"${c}"`:String(c)).join(',')).join('\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename+'.csv';a.click();URL.revokeObjectURL(url);toast('CSV downloaded');}
-  else{if(typeof XLSX==='undefined'){toast('Excel library not loaded');return;}const ws=XLSX.utils.aoa_to_sheet(rows);ws['!cols']=[{wch:12},{wch:18},{wch:28},{wch:12},{wch:28},{wch:14}];const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Transactions');XLSX.writeFile(wb,filename+'.xlsx');toast('Excel file downloaded');}
-}
 
 function renderSettData(){
   const fbVer=cGet(CK.fbSyncVer)||null;
@@ -8807,9 +8807,19 @@ function renderSettData(){
       <button class="btn btn-p btn-sm btn-full" style="margin-top:10px" onclick="openGoalModal()">+ New Goal</button>
     </div>
     <div class="exp-card" style="margin-top:10px">
-      <div class="exp-card-title" style="margin-bottom:6px">Recurring Transactions</div>
-      <div class="exp-card-sub" style="margin-bottom:10px">Bills and income that repeat. Due items appear on the dashboard as Upcoming Bills. Add one via the expense form's recurring option.</div>
-      <button class="btn btn-g btn-sm btn-full" onclick="openRecurModal()">Manage Recurring (${getRecurring().length})</button>
+      <div class="exp-card-title" style="margin-bottom:6px">Recurring</div>
+      <div class="exp-card-sub" style="margin-bottom:10px">Bills and income that repeat. Each one can post itself when it's due, or wait on Home for a tap. Add one by choosing "Repeats" on the + form.</div>
+      <button class="btn btn-g btn-sm btn-full" onclick="openRecurModal()">Manage recurring (${getRecurring().length})</button>
+    </div>
+    <div class="exp-card" style="margin-top:10px">
+      <div class="exp-card-title" style="margin-bottom:8px">Preferences</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <label class="ilabel" style="margin:0">Show amounts in</label>
+        <select class="sfield" style="width:auto;font-size:0.74rem;padding:5px 8px" onchange="setDisplayCurrency(this.value)">
+          ${[['NGN','₦ Naira'],['USD','$ US dollars'],['GBP','£ Pounds'],['NATIVE','Each account\'s own currency']].map(([v,l])=>`<option value="${v}"${S.dashCurrency===v?' selected':''}>${l}</option>`).join('')}
+        </select>
+      </div>
+      <div style="font-size:0.68rem;color:var(--text2);margin-top:10px">The round <b>+</b> button can be dragged anywhere on the screen. <span class="sh-link" style="font-size:0.68rem" onclick="fabResetPosition()">Put it back in the corner</span></div>
     </div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Help</div>
@@ -8818,8 +8828,7 @@ function renderSettData(){
         <button class="btn btn-g btn-sm" style="flex:1" onclick="openGuide()">Open the guide</button>
         <button class="btn btn-g btn-sm" style="flex:1" onclick="reportProblem()">Report a problem</button>
       </div>
-      <div style="font-size:0.68rem;color:var(--text2);margin-top:10px">The round <b>+</b> button can be dragged anywhere on the screen. <span class="sh-link" style="font-size:0.68rem" onclick="fabResetPosition()">Put it back in the corner</span></div>
-      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.6.2</div><div style="color:var(--text3);margin-top:4px">v4.6.2: The + button now opens Quick add, Say it and Ask AI on every tab and can be dragged anywhere. Speak to the AI. Dollar and pound prices convert to naira correctly. Pull down to refresh on Home only.</div></div>
+      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.0</div><div style="color:var(--text3);margin-top:4px">v4.7.0: Search from Home, one budget for every month, bills that post themselves, paste bank alerts into Quick add, automatic exchange rates, a month-in-review card, a working Net Worth chart, and many fixes (partial cash-outs, entries dated in another month, investment edits).</div></div>
     </div>
     <details class="sett-adv" id="sett-adv"${_settAdvOpen?' open':''} ontoggle="_settAdvOpen=this.open">
       <summary>Advanced<span>AI keys, net worth, exchange rates, balance audit</span></summary>
@@ -8940,14 +8949,16 @@ function renderFxCard(){
   const m=S.dashMonth,y=S.dashYear;
   const cur=getFxRates(m,y);
   const rows=allKeys.map(k=>{
-    const base=FX_RATES[k]||{};
+    const _a=getFxAuto()[k];
+    const base=FX_RATES[k]||(_a&&_a.USD?{USD:_a.USD,GBP:_a.GBP}:{});
+    const isAuto=!FX_RATES[k]&&!!(_a&&_a.USD);
     const override=ovr[k]||{};
     const usd=override.USD??base.USD??'';
     const gbp=override.GBP??base.GBP??'';
     const isOverridden=!!(override.USD||override.GBP);
     const isCurrentMonth=(k===fxKey(m,y));
     return`<div style="display:grid;grid-template-columns:80px 1fr 1fr auto;gap:6px;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);${isCurrentMonth?'background:var(--bg2);border-radius:6px':''}">
-      <span style="font-family:var(--mono);font-size:0.72rem;color:${isOverridden?'var(--accent)':isCurrentMonth?'var(--blue)':'var(--text2)'};font-weight:${isCurrentMonth?'700':'400'}">${k}${isCurrentMonth?' ●':''}${isOverridden?' ✎':''}</span>
+      <span style="font-family:var(--mono);font-size:0.72rem;color:${isOverridden?'var(--accent)':isCurrentMonth?'var(--blue)':'var(--text2)'};font-weight:${isCurrentMonth?'700':'400'}">${k}${isCurrentMonth?' ●':''}${isOverridden?' ✎':isAuto?' ⟳':''}</span>
       <input class="ifield" type="text" id="fx-usd-${k}" value="${usd}" placeholder="USD→₦" style="font-size:0.74rem;padding:4px 7px">
       <input class="ifield" type="text" id="fx-gbp-${k}" value="${gbp}" placeholder="GBP→₦" style="font-size:0.74rem;padding:4px 7px">
       ${isOverridden?`<button class="btn btn-g btn-sm" style="padding:2px 6px;font-size:0.64rem" onclick="clearFxOverride('${k}')">✕</button>`:`<span></span>`}
@@ -8956,7 +8967,7 @@ function renderFxCard(){
   return`
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:4px">Exchange Rates (₦ per 1 foreign unit)</div>
-      <div class="exp-card-sub" style="margin-bottom:10px">Current month (${String(m).padStart(2,'0')}/${y}): $1 = ₦${cur.USD} &nbsp;|&nbsp; £1 = ₦${cur.GBP}. Edit any row and tap Save to override built-in rates. Overridden rows are marked ✎.</div>
+      <div class="exp-card-sub" style="margin-bottom:10px">Current month (${String(m).padStart(2,'0')}/${y}): $1 = ₦${cur.USD} &nbsp;|&nbsp; £1 = ₦${cur.GBP}. Rates marked ⟳ are fetched automatically each day for the current month. Edit any row and tap Save to use your own rate instead (marked ✎).</div>
       <div style="display:grid;grid-template-columns:80px 1fr 1fr auto;gap:6px;margin-bottom:4px">
         <span style="font-size:0.64rem;color:var(--text3);text-transform:uppercase">Month</span>
         <span style="font-size:0.64rem;color:var(--text3);text-transform:uppercase">USD → ₦</span>
@@ -8984,8 +8995,9 @@ function saveAllFxOverrides(){
     const gbpEl=document.getElementById('fx-gbp-'+k);
     const usd=usdEl?numVal(usdEl):NaN;
     const gbp=gbpEl?numVal(gbpEl):NaN;
-    const base=FX_RATES[k]||{};
-    // Only store as override if the value differs from the built-in
+    const _a=getFxAuto()[k];
+    const base=FX_RATES[k]||(_a&&_a.USD?{USD:_a.USD,GBP:_a.GBP}:{});
+    // Only store as override if the value differs from the built-in or automatic rate
     const usdChanged=!isNaN(usd)&&usd>0&&usd!==(base.USD||0);
     const gbpChanged=!isNaN(gbp)&&gbp>0&&gbp!==(base.GBP||0);
     if(usdChanged||gbpChanged){
@@ -9025,27 +9037,26 @@ async function forceHardRefresh(){
   }catch(e){console.warn("forceHardRefresh failed",e);}
   window.location.reload();
 }
+// Pull-to-refresh (Home): reload the data, not the app. Until v4.7 this wiped
+// the service worker and its offline copy, so the app wouldn't open offline
+// until the next visit online. "Update now" and tapping the version label
+// still do the full refresh.
 async function forceSyncNow(){
-  if(!_dbReady()){toast('Not connected');return;}
-  setSyncStatus('syncing');toast('Pulling from Firebase…');
-  // Force-sync: clear local cache first so loadX functions fetch from Firebase
+  if(!_dbReady()){toast("You're offline. Showing what's saved on this device.");return;}
+  if(DATA_MODE==='cloud')setSyncStatus('syncing');
   const m=S.expMonth,y=S.expYear;
   try{
-    // Pull fresh data by temporarily clearing local cache for current month
-    localStorage.removeItem(CK.txns(m,y));
-    localStorage.removeItem(CK.inc(m,y));
-    localStorage.removeItem(CK.inv(m,y));
-    localStorage.removeItem(CK.cash(m,y));
-    localStorage.removeItem(CK.debtors);
-    localStorage.removeItem('sw3_history');
     await syncAll();
     S.txns=cGet(CK.txns(m,y))||S.txns;
     S.income=cGet(CK.inc(m,y))||S.income;
     S.investments=cGet(CK.inv(m,y))||S.investments;
     S.cash=cGet(CK.cash(m,y))||S.cash;
     S.debtors=cGet(CK.debtors)||S.debtors;
-    cSet(CK.lastSync,Date.now());setSyncStatus('synced');renderAll();toast('Sync complete');renderSettData();
-  }catch(e){setSyncStatus('error');toast('Sync failed');}
+    S.budgets=budgetFor(m,y);
+    cSet(CK.lastSync,Date.now());setSyncStatus(DATA_MODE==='local'?'local':'synced');renderAll();startRealtimeListeners();
+    runAutoRecurring();fxAutoUpdate();
+    toast('Up to date');
+  }catch(e){console.warn('refresh failed',e);setSyncStatus('error');toast("Couldn't refresh. Try again.");}
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -9071,32 +9082,13 @@ function drillDown(type){
     body=sorted.map(i=>fmtRow(i.category||i.payee||'Income',fmtCur(txNGN(i),cur,m,y),'var(--accent)')).join('');
     body+=`<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700"><span>Total</span><span style="font-family:var(--mono);color:var(--accent)">${fmtCur(total,cur,m,y)}</span></div>`;
   }
-  else if(type==='savings'){
-    title=`Net Savings — ${MONTHS[m-1]} ${y}`;
-    const totalInc=S.income.reduce((s,i)=>s+(i.amtNGN||i.amount||0),0);
-    const totalExp=S.txns.reduce((s,t)=>s+txNGN(t),0);
-    const net=totalInc-totalExp;
-    body=fmtRow('Total Income',fmtCur(totalInc,cur,m,y),'var(--accent)')+
-         fmtRow('Total Expenses',fmtCur(totalExp,cur,m,y),'var(--red)')+
-         `<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700"><span>Net</span><span style="font-family:var(--mono);color:${net>=0?'var(--accent)':'var(--red)'}">${fmtCur(Math.abs(net),cur,m,y)}</span></div>`;
-    const rate=totalInc>0?Math.round((net/totalInc)*100):0;
-    body+=`<div style="margin-top:8px;padding:10px;background:var(--bg2);border-radius:var(--rsm);font-size:0.72rem;color:var(--text2)">Savings rate: <strong style="color:${rate>20?'var(--accent)':rate>0?'var(--gold)':'var(--red)'}">${rate}%</strong></div>`;
-  }
+
   else if(type==='networth'){
     title=`Net Worth — ${MONTHS[m-1]} ${y}`;
-    const inv=S.investments,cash=S.cash;
-    const _nwCfg=getNWConfig();
-    const _nwAccts=_nwCfg.cashAccounts||getCashAccounts();
+    const NW=netWorthFor(m,y);
+    const inv=NW.invDoc,cash=NW.cashDoc,_nwCfg=NW.cfg,_nwAccts=NW.accts;
     const _fxRNW=getFxRates(m,y);
-    const invTotal=_nwCfg.includeInvestments!==false?platformsFor(inv).reduce((s,p)=>{
-      const meta=getInvPlatformMeta(p.key);
-      const isFI=meta.assetClass==='fixed_income';
-      if(isFI&&_nwCfg.includeFixedIncome===false) return s;
-      if(!isFI&&_nwCfg.includeEquities===false) return s;
-      return s+invBalanceFor(p.key,m,y,inv);
-    },0):0;
-    const cashTotal=_nwAccts.reduce((s,b)=>{const v=cash[b]||0;return s+(isUSDCashAccount(b)?v*(_fxRNW.USD||1650):v);},0);
-    const debtOwed=_nwCfg.includeDebtors!==false?nwDebtorsExpected():0;
+    const debtOwed=NW.debt;
     body='';
     if(_nwCfg.includeInvestments!==false){
       const visiblePlats=platformsFor(inv).filter(p=>{
@@ -9140,7 +9132,7 @@ function drillDown(type){
         return out?fmtRow(l.lender,'−'+fmtCur(out,cur,m,y),'var(--red)'):'';
       }).join('');
     }
-    body+=`<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700;border-top:1px solid var(--border);margin-top:4px"><span>Total Net Worth</span><span style="font-family:var(--mono);color:var(--accent)">${fmtCur(invTotal+cashTotal+debtOwed-loanOwed,cur,m,y)}</span></div>`;
+    body+=`<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700;border-top:1px solid var(--border);margin-top:4px"><span>Total Net Worth</span><span style="font-family:var(--mono);color:var(--accent)">${fmtCur(NW.total,cur,m,y)}</span></div>`;
   }
   else if(type==='cash'){
     title=`Cash — ${MONTHS[m-1]} ${y}`;
@@ -9204,7 +9196,9 @@ const LEDGER_SRC_LABELS={
   'debt-add':'Debt disbursed','debt-edit-adjust':'Debt edit adjustment',
   'debt-payment':'Debt repayment received',
   'loan-proceeds':'Loan received','loan-repayment':'Loan repayment',
-  'loan-edit-adjust':'Loan edit adjustment','interest':'Interest posted',
+  'loan-edit-adjust':'Loan edit adjustment',
+  'investment-liquidation':'Investment cashed out',
+  'debt-remove-reverse':'Debt removed (reversed)','loan-remove-reverse':'Loan removed (reversed)',
 };
 function drillDownAccount(bankName){
   const m=S.dashMonth,y=S.dashYear,cur=S.dashCurrency;
@@ -9229,7 +9223,8 @@ function drillDownAccount(bankName){
     .map(e=>({...e,_type:'led'}));
   const txns=[
     ...S.txns.filter(t=>t.bank===bankName).map(t=>({...t,_type:'exp'})),
-    ...S.income.filter(i=>i.bank===bankName).map(i=>({...i,_type:'inc'})),
+    // (a cash-out's interest is already inside its "Investment cashed out" row)
+    ...S.income.filter(i=>i.bank===bankName&&i.source!=='liquidation-interest').map(i=>({...i,_type:'inc'})),
     ...mine.map(x=>({...x,_type:'xfr'})),
     ...ledger
   ].sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:txnTs(b.createdAt)-txnTs(a.createdAt));
@@ -9345,7 +9340,9 @@ function drillDownInvPlatform(pKey){
         const x=item.data;
         const isOut=x.from===pKey;
         const counterpart=isOut?x.to:x.from;
-        const amt=`${isOut?'−':'+'}${fmtCur(x.amount,cur,m,y)}`;
+        // The platform's side of the transfer is always naira (toAmt for money
+        // in; for money out, `amount` is the platform side).
+        const amt=`${isOut?'−':'+'}${fmtCur(isOut?x.amount:(x.toAmt!=null?x.toAmt:x.amount),cur,m,y)}`;
         const badge=`<span style="font-size:0.55rem;font-weight:700;color:var(--gold);background:rgba(250,204,21,0.12);border-radius:3px;padding:1px 4px;margin-left:4px">XFR</span>`;
         return`<div class="txi" style="padding:7px 0;border-bottom:1px solid var(--border)">
           <div style="min-width:0;flex:1">
@@ -9418,7 +9415,7 @@ function drillDownDebtor(id){
   const adds=(d.addLog||[]).map(a=>({date:a.date,amount:a.amount,note:a.note||'',acct:a.disbursedFrom||'',_k:'add'}));
   const openingLogged=adds.reduce((s,a)=>s+(a.amount||0),0);
   const opening=(d.amount||0)-openingLogged;
-  if(opening>0.005) adds.push({date:d.date||'',amount:opening,note:'Original loan',acct:d.acct||'',_k:'add'});
+  if(opening>0.005) adds.push({date:d.date||'',amount:opening,note:'Original loan',acct:d.disbursedFrom||d.acct||'',_k:'add'});
   const pmts=(d.pmtLog||[]).map(p=>({date:p.date,amount:p.amount,note:'',acct:p.creditedTo||'',_k:'pmt'}));
   // Payments recorded before pmtLog existed live only in the aggregate `paid`
   // field. Synthesise one entry for the untracked remainder so the running
@@ -9469,7 +9466,7 @@ function drillDownLoan(id){
 
   const rows=[
     ...(l.repayLog||[]).map(r=>({date:r.date,amount:r.amount,note:r.notes||'',acct:r.account||'',_k:'rp'})),
-    {date:l.startDate||'',amount:principal,note:'Loan received',acct:l.acct||'',_k:'orig'}
+    {date:l.startDate||'',amount:principal,note:'Loan received',acct:l.disbursedTo||l.acct||'',_k:'orig'}
   ].sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:0);
 
   const body='<div class="txlist">'+rows.map(e=>{
@@ -9581,12 +9578,12 @@ window.addEventListener('online',()=>{
 });
 window.addEventListener('offline',()=>{if(DATA_MODE!=='cloud')return;document.getElementById('offl').style.display='block';setSyncStatus('offline');});
 if(!navigator.onLine&&!localStorage.getItem(LOCAL_MODE_LS)) document.getElementById('offl').style.display='block';
-['exp-modal','deb-modal','inc-modal','move-modal','merge-cat-modal'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('click',function(e){if(e.target===this)closeMod(id);});});
+['exp-modal','deb-modal','merge-cat-modal'].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener('click',function(e){if(e.target===this)closeMod(id);});});
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 
 
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.6.2';
+const APP_VERSION='v4.7.0';
 async function checkForUpdate(){
   try{
     const res=await fetch(location.origin+location.pathname+'?_='+Date.now(),{cache:'no-store'});
@@ -9603,19 +9600,13 @@ async function checkForUpdate(){
     }
   }catch(e){_warnLoad("checkForUpdate",e);}
 }
-// BOOT
-initFirebase();
-_requestNotifPermission();
+// BOOT — this device's data copy loads from IndexedDB first (a few ms), then
+// the app starts. Notification permission is only asked from the 🔔 panel.
+cacheInit().then(initFirebase);
 setTimeout(checkForUpdate, 3000); // check after initial load settles
 
 // ══════════════════════════════════════════════════════════════════════════
 // ══════════════════════════════════════════════════════════════════════════
-function getInvWithdrawals(){return cGet(INV_WD_KEY)||[];}
-function addInvWithdrawal(pKey,amtNGN,date,notes){
-  const list=getInvWithdrawals();
-  list.push({platformKey:pKey,amountNGN:amtNGN,date:date||todayStr(),notes:notes||''});
-  cSet(INV_WD_KEY,list);
-}
 // ── Withdrawal-aware accrual movements ──────────────────────────────────
 // delta: positive = deposit, negative = withdrawal
 function getInvMovements(){return cGet(INV_MOVE_KEY)||[];}
@@ -9623,42 +9614,16 @@ function addInvMovement(pKey,delta,date,notes){
   if(!delta) return;
   const list=getInvMovements();
   list.push({platformKey:pKey,delta:Math.round(delta),date:date||todayStr(),notes:notes||''});
-  cSet(INV_MOVE_KEY,list);
-}
-function getMovementsForPlatform(pKey){
-  return getInvMovements().filter(m=>m.platformKey===pKey).map(m=>({date:m.date,delta:m.delta}));
-}
-function getRealisedGain(pKey){
-  const cost=cGet('sw3_inv_cost_'+pKey)||0;if(!cost)return null;
-  const totalWd=getInvWithdrawals().filter(w=>w.platformKey===pKey).reduce((s,w)=>s+(w.amountNGN||0),0);
-  return(S.investments[pKey]||0)+totalWd-cost;
-}
-function _renderWithdrawalSummary(suffix){
-  const s=suffix||'';
-  const elId='inv-wd-summary'+s;
-  let el=document.getElementById(elId);
-  if(!el){
-    const currentDiv=document.getElementById('inv-current'+s);if(!currentDiv)return;
-    el=document.createElement('div');el.id=elId;el.className='card';currentDiv.appendChild(el);
-  }
-  const wds=getInvWithdrawals();
-  if(!wds.length){el.style.display='none';return;}
-  el.style.display='block';
-  const byPlat={};
-  wds.forEach(w=>{byPlat[w.platformKey]=(byPlat[w.platformKey]||0)+(w.amountNGN||0);});
-  const rows=Object.entries(byPlat).map(([k,total])=>{
-    const p=PLATFORMS.find(pl=>pl.key===k);
-    const rg=getRealisedGain(k);
-    return`<div class="pjrow"><span class="pjlabel">${p?p.label:k} withdrawals</span><span class="pjval" style="color:var(--text2)">${fN(Math.round(total))}${rg!==null?`<span style="font-size:0.62rem;color:${rg>=0?'var(--accent)':'var(--red)'};margin-left:4px">${rg>=0?'+':''}${fN(Math.round(rg))}</span>`:''}</span></div>`;
-  }).join('');
-  el.innerHTML=`<div class="sh" style="margin-bottom:8px"><div class="sh-title" style="font-size:0.78rem">Withdrawal History & Realised Gains</div></div>${rows}<div class="csub" style="margin-top:6px">Realised gain = current value + total withdrawn − cost basis</div>`;
+  cSet(INV_MOVE_KEY,list.slice(-500));
+  _syncInvConfig(); // synced with the investment settings (v4.7)
 }
 
 // ══════════════════════════════════════════════════════════════════════════
 // MONTHLY SAVINGS TARGET
 // ══════════════════════════════════════════════════════════════════════════
-function getSavingsTarget(){return parseFloat(cGet(SAVINGS_TARGET_KEY))||0;}
-function saveSavingsTarget(pct){cSet(SAVINGS_TARGET_KEY,pct);}
+// Kept in the synced profile since v4.7 (it used to stay on one device).
+function getSavingsTarget(){const p=getProfile()||{};return parseFloat(p.savingsTargetPct!=null?p.savingsTargetPct:cGet(SAVINGS_TARGET_KEY))||0;}
+function saveSavingsTarget(pct){saveProfile({savingsTargetPct:pct});}
 function saveSavingsTargetUI(){
   const el=document.getElementById('st-pct');
   const pct=parseFloat(el?.value)||0;
@@ -9687,13 +9652,10 @@ function _getOverdueDebtors(){
 function _getNWDeltaBadge(m,y){
   if(m===0)return'';
   const prevM=m===1?12:m-1,prevY=m===1?y-1:y;
-  const prevInv=cGet(CK.inv(prevM,prevY))||{};
-  const prevCash=cGet(CK.cash(prevM,prevY))||{};
-  const prevNW=PLATFORMS.reduce((s,p)=>s+(prevInv[p.key]||0),0)+cashTotalNGN(prevCash);
-  if(!prevNW)return'';
-  const curNW=PLATFORMS.reduce((s,p)=>s+(S.investments[p.key]||0),0)+cashTotalNGN(S.cash);
-  const delta=curNW-prevNW;if(!delta)return'';
-  const pct=Math.round(Math.abs(delta)/prevNW*100);
+  const prev=netWorthFor(prevM,prevY);
+  if(!prev.hasData||!prev.total)return'';
+  const delta=netWorthFor(m,y).total-prev.total;if(!Math.round(delta))return'';
+  const pct=Math.round(Math.abs(delta)/Math.abs(prev.total)*100);
   const up=delta>0;
   return`<span class="mom-badge ${up?'mom-dn':'mom-up'}" style="vertical-align:middle"> ${up?'▲':'▼'} ${fN(Math.abs(delta))} (${pct}%)</span>`;
 }
@@ -9736,9 +9698,11 @@ async function renderInvAllocChart(suffix){
 // ══════════════════════════════════════════════════════════════════════════
 // CASH FLOW PROJECTION + BREAK-EVEN helper
 // ══════════════════════════════════════════════════════════════════════════
+// History without the month in progress (averages and projections).
+function _completedHistory(){const n=new Date(),k=n.getFullYear()*100+n.getMonth()+1;return getHistory().filter(h=>h.year*100+h.month<k);}
 function renderCashFlowProjection(containerEl){
   if(!containerEl)return;
-  const hist=getHistory().filter(h=>h.income>0||h.expenses>0).slice(-6);
+  const hist=_completedHistory().filter(h=>h.income>0||h.expenses>0).slice(-6);
   if(hist.length<2){containerEl.innerHTML='<div class="csub" style="padding:8px 0">Need more history for projection</div>';return;}
   const avgInc=hist.reduce((s,h)=>s+(h.income||0),0)/hist.length;
   const avgExp=hist.reduce((s,h)=>s+(h.expenses||0),0)/hist.length;
@@ -9781,7 +9745,7 @@ function openMergeCatModal(){
   if(_mergeFrom===_mergeInto){toast('Source and target must differ');return;}
   // Count affected transactions across all cached months
   let txnCount=0;
-  const allKeys=Object.keys(localStorage).filter(k=>k.startsWith('sw3_txns_'));
+  const allKeys=cKeys('sw3_txns_');
   allKeys.forEach(k=>{
     const arr=cGet(k)||[];
     txnCount+=arr.filter(t=>t.category===_mergeFrom).length;
@@ -9835,7 +9799,7 @@ async function execMergeCat(){
     }
 
     // ── 2. Reassign transactions in all local caches ───────────────────
-    const allTxnKeys=Object.keys(localStorage).filter(k=>k.startsWith('sw3_txns_'));
+    const allTxnKeys=cKeys('sw3_txns_');
     allTxnKeys.forEach(lsKey=>{
       const arr=cGet(lsKey);
       if(!arr) return;
@@ -9880,24 +9844,11 @@ async function execMergeCat(){
       await batch.commit();
     }
 
-    // ── 4. Merge budgets in all local budget caches ────────────────────
-    const allBudgetKeys=Object.keys(localStorage).filter(k=>k.startsWith('sw3_budgets_'));
-    allBudgetKeys.forEach(lsKey=>{
-      const cacheKey=lsKey.replace(/^sw3_/,'');
-      const budg=cGet(cacheKey);
-      if(!budg) return;
-      const fromAmt=budg[fromKey]||0;
-      if(fromAmt>0){
-        budg[intoKey]=(budg[intoKey]||0)+fromAmt;
-        budg[fromKey]=0;
-        cSet(cacheKey,budg);
-      }
-    });
-    // Update current in-memory budget
-    const curFromAmt=S.budgets[fromKey]||0;
-    S.budgets[intoKey]=(S.budgets[intoKey]||0)+curFromAmt;
-    S.budgets[fromKey]=0;
-    cSet(CK.budgets(S.expMonth,S.expYear),S.budgets);
+    // ── 4. Merge the standard budget and every cached month budget ─────
+    const _mergeCats=c=>{const f=+c[fromKey]||0;if(!f)return false;c[intoKey]=(+c[intoKey]||0)+f;c[fromKey]=0;return true;};
+    const std={...DEF_BUDGETS};if(_mergeCats(std))saveProfile({defBudgets:std});
+    cKeys('sw3_bud_').forEach(k=>{const o=cGet(k);if(o&&o.categories&&_mergeCats(o.categories))cSet(k,o);});
+    S.budgets=budgetFor(S.expMonth,S.expYear);
 
     // ── 5. Remove source from custom cats list (if custom) ─────────────
     if(!_BASE_CATS.includes(_mergeFrom)){
@@ -9909,7 +9860,7 @@ async function execMergeCat(){
     // Bust all transaction localStorage caches — the Firestore docs were just
     // updated in batch, so every month loaded after this will come from the
     // correct (renamed) Firestore data via the snapshot listener.
-    Object.keys(localStorage).filter(k=>k.startsWith('sw3_txns_')||k.startsWith('sw3_inc_')).forEach(k=>localStorage.removeItem(k));
+    cKeys('sw3_txns_').concat(cKeys('sw3_inc_')).forEach(cDel);
     toast(`Merged: ${_mergeFrom} → ${_mergeInto}`);haptic([8,40,8]);setSyncStatus('synced');
     renderExpenses();renderDashboard();renderSettBudget();
   }catch(e){
@@ -9967,7 +9918,7 @@ async function execMergeCat(){
       indicator.style.height='44px';
       const spin=document.createElement('span');spin.className='ptr-spinner';
       indicator.insertBefore(spin,label);
-      setTimeout(()=>forceHardRefresh(), 400);
+      setTimeout(()=>{forceSyncNow().finally(()=>{spin.remove();_resetPtr();});}, 300);
     } else {
       _resetPtr();
     }
@@ -9984,17 +9935,12 @@ async function execMergeCat(){
 
 // ══════════════════════════════════════════════════════════════════════════
 // AI ANALYST (Analytics → AI) — Gemini-powered analysis and chat grounded in
-// the user's complete financial history. The API key is pasted by the user,
-// cached in this device's localStorage AND mirrored to appConfig/aiKeys so it
-// follows the user across devices. The repo and the Firestore project are both
-// publicly readable, so that key is effectively shared - use a free-tier key
-// and rotate it if abused. (This comment used to claim the key never left the
-// device; _aiSyncKeys() has written it to Firestore since multi-key support
-// landed, so that claim was false.)
+// the user's complete financial history. Uses the user's own Gemini key if
+// they added one (appConfig/aiKeys, encrypted like all their data), otherwise
+// the shared key the owner publishes at publicConfig/aiKeys.
 // ══════════════════════════════════════════════════════════════════════════
 // var + function declarations (not const/let): renderAll() runs during init,
 // before this end-of-file module body executes — hoisting keeps that safe.
-var AI_KEY_LS='sw3_gemini_key', AI_CHAT_LS='sw3_ai_chat', AI_MODEL_LS='sw3_gemini_model';
 var AI_CHATS_LS='sw3_ai_chats', AI_ACTIVE_LS='sw3_ai_active';
 var AI_KEYS_LS='sw3_gemini_keys', AI_ACTIVE_KEY_LS='sw3_gemini_active_key';
 // Tried in order until one answers. gemini-flash-latest is Google's
@@ -10028,7 +9974,7 @@ function _aiDestroyCharts(){
   for(const k in _aiCharts){try{_aiCharts[k].destroy();}catch(e){}}
   _aiCharts={};
 }
-// Returns a normalised spec or null. NEVER throws - a hallucinated chart must
+// Returns a normalised spec or null. NEVER throws: a hallucinated chart must
 // not break the reply around it.
 function _aiChartValidate(raw){
   if(!raw||typeof raw!=='object') return null;
@@ -10122,17 +10068,7 @@ var _aiNewMode=false;
 // storage eviction because they're reloaded from Firestore on every boot.
 function _aiNewKeyId(){return 'k'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
 function _aiKeys(){
-  if(!Array.isArray(S.aiKeys)){
-    let keys=cGet(AI_KEYS_LS);
-    if(!Array.isArray(keys)){
-      // One-time migration from the old single-key slot.
-      const legacy=cGet(AI_KEY_LS);
-      keys=legacy?[{id:_aiNewKeyId(),label:'Default',key:legacy}]:[];
-      if(keys.length) cSet(AI_ACTIVE_KEY_LS,keys[0].id);
-      cSet(AI_KEYS_LS,keys);
-    }
-    S.aiKeys=keys;
-  }
+  if(!Array.isArray(S.aiKeys)){const keys=cGet(AI_KEYS_LS);S.aiKeys=Array.isArray(keys)?keys:[];}
   return S.aiKeys;
 }
 // Write-through: cache locally, then push the whole list + active pointer to
@@ -10335,23 +10271,11 @@ function _aiPush(cid,msg){
   _aiSaveChatDoc(c);
 }
 // Pull every conversation into this device on startup (called from syncAll).
-// One-time migration: fold the old single-doc conversation into a chat.
 async function loadAiChats(){
   if(!db)return;
   try{
     const snap=await db.collection('aiChats').get();
-    let chats=snap.docs.map(d=>({id:d.id,...d.data()}));
-    if(!chats.length){
-      const old=await db.collection('appConfig').doc('aiChat').get();
-      const list=old.exists?old.data()?.list:null;
-      if(Array.isArray(list)&&list.length){
-        const first=list.find(m=>m.r==='u');
-        const c={id:_aiNewId(),title:_aiTitleFrom(first&&first.t),msgs:list,createdAt:Date.now(),updatedAt:Date.now()};
-        chats=[c];
-        db.collection('aiChats').doc(c.id).set({title:c.title,msgs:c.msgs,createdAt:c.createdAt,updatedAt:c.updatedAt}).catch(e=>console.warn("aiChats migration write failed",e));
-        db.collection('appConfig').doc('aiChat').set({list:[],migrated:true},{merge:true}).catch(e=>console.warn("aiChat migration flag write failed",e)); // mark migrated so we don't re-import
-      }
-    }
+    const chats=snap.docs.map(d=>({id:d.id,...d.data()}));
     _aiSortChats(chats);
     S.aiChats=chats;cSet(AI_CHATS_LS,chats);
   }catch(e){_warnLoad('loadAiChats',e);}
@@ -10369,7 +10293,7 @@ function renderProjAI(){
     el.innerHTML=`<div class="card">
       <div class="clabel">AI Analyst — Setup</div>
       <div class="csub" style="margin-bottom:6px">Ask anything about your money — a Gemini-powered analyst reads your entire history (every expense, income, transfer, balance, loan, debtor and investment) and answers with your real numbers.</div>
-      <div class="csub" style="margin-bottom:10px">Add a free Gemini API key to get started — stored in your browser and synced across your devices via your Firestore project - use a free-tier key. Get one at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--accent)">aistudio.google.com/apikey</a>.</div>
+      <div class="csub" style="margin-bottom:10px">Add a free Gemini API key to get started. It's saved in your account (encrypted like the rest of your data) so it works on all your devices. Get one at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--accent)">aistudio.google.com/apikey</a>.</div>
       <button class="btn btn-p btn-sm" onclick="goToApiKeys()">Add API Key</button>
     </div>`;
     return;
@@ -10635,7 +10559,9 @@ async function _aiBuildContext(force){
     +inc.slice().sort(byDate).map(t=>[t.date,t.category||'Income',t.bank,num(t.amtNGN||t.amount),(t.notes||'').replace(/[|\n]/g,' ').slice(0,48)].join('|')).join('\n'));
   sect.push('TRANSFERS between own accounts — not income or spending (date|from|to|amount_from_side|amount_to_side):\n'
     +xfr.slice().sort(byDate).map(t=>[t.date,t.from,t.to,num(t.amount),num(t.toAmt!=null?t.toAmt:t.amount)].join('|')).join('\n'));
-  sect.push('MONTH-END ACCOUNT BALANCES (one JSON per month; keys are account names; "USD Cash" is in dollars, the rest NGN):\n'
+  const usdAccts=getCashAccounts().filter(isUSDCashAccount);
+  const usdNote=usdAccts.length?`${usdAccts.map(a=>'"'+a+'"').join(', ')} ${usdAccts.length>1?'are':'is'} in US dollars; every other account is in NGN`:'all accounts are in NGN';
+  sect.push(`MONTH-END ACCOUNT BALANCES (one JSON per month; keys are account names; ${usdNote}):\n`
     +cashB.slice().sort(byYm).map(c=>ym(c)+' '+JSON.stringify(strip(c))).join('\n'));
   sect.push('INVESTMENTS (one JSON per month; NGN values per platform):\n'
     +invB.slice().sort(byYm).map(c=>ym(c)+' '+JSON.stringify(strip(c))).join('\n'));
@@ -10649,8 +10575,14 @@ async function _aiBuildContext(force){
     +budgets.slice().sort(byYm).map(b=>ym(b)+' '+JSON.stringify(strip(b))).join('\n'));
   const nw=new Date();
   const fx=getFxRates(nw.getMonth()+1,nw.getFullYear());
-  const head=`You are SpendWise AI, the financial analyst built into the owner's personal finance app. Today is ${todayStr()}.
-All amounts are Nigerian Naira (NGN, ₦) unless marked USD; "USD Cash" is a dollar account. Working FX assumption: 1 USD ≈ ₦${fx.USD}, 1 GBP ≈ ₦${fx.GBP}.
+  const std=Object.entries(DEF_BUDGETS).filter(([,v])=>+v>0);
+  if(std.length)sect.push('STANDARD MONTHLY BUDGET (applies to every month that has no budget of its own below; NGN per category):\n'+JSON.stringify(Object.fromEntries(std)));
+  const recur=getRecurring();
+  if(recur.length)sect.push('RECURRING ITEMS (bills and income that repeat):\n'+recur.map(r=>[r.type,r.payee,num(r.amount),r.frequency,'next '+r.nextRun].join('|')).join('\n'));
+  const goals=getGoals();
+  if(goals.length)sect.push('SAVINGS GOALS (name|target|saved so far|deadline):\n'+goals.map(g=>[g.name,num(g.target),num(g.current),g.deadline||''].join('|')).join('\n'));
+  const head=`You are SpendWise AI, the financial analyst built into this user's personal finance app. Today is ${todayStr()}.
+All amounts are Nigerian Naira (NGN, ₦) unless marked otherwise. Dollar accounts: ${usdAccts.length?usdAccts.join(', '):'none'} (their balances and expenses are in USD; expense amount_NGN is already converted). Working FX assumption: 1 USD ≈ ₦${fx.USD}, 1 GBP ≈ ₦${fx.GBP}.
 Rules:
 - Ground every statement in the data below. Cite real months and real figures (use ₦ with thousands separators). Never invent or estimate numbers the data doesn't support — say plainly when it can't answer.
 - Transfers move money between the user's own accounts; never count them as income or spending.

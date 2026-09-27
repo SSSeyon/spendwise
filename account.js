@@ -78,12 +78,6 @@ async function _acctBusy(btnId,label,fn){
 }
 function _acctOnEnter(ev,fn){if(ev.key==='Enter'){ev.preventDefault();fn();}}
 
-// "Continue with Google" needs the Google provider enabled in Firebase
-// Authentication. Off by default: Google users still need a separate data
-// password, so it adds little over username + password.
-const GOOGLE_SIGNIN=false;
-function _acctGoogleBtn(){return GOOGLE_SIGNIN?`<div class="acct-or">or</div>
-    <button class="btn btn-g btn-full" onclick="acctGoogle()">Continue with Google</button>`:'';}
 
 // ── 1. Why sign in ────────────────────────────────────────────────────────
 function acctShowWhy(legacy){
@@ -99,7 +93,6 @@ function acctShowWhy(legacy){
     <div class="acct-spacer"></div>
     <button class="btn btn-p btn-full" onclick="acctShowCreate()">Create account</button>
     <button class="btn btn-g btn-full" onclick="acctShowSignIn()">I already have an account</button>
-    ${_acctGoogleBtn()}
   `);
 }
 
@@ -184,7 +177,6 @@ function acctShowSignIn(prefill){
     <div class="acct-err" id="acct-err"></div>
     <button class="btn btn-p btn-full" id="acct-go" onclick="acctDoSignIn()">Sign in</button>
     <div class="acct-link" onclick="acctShowRecover()">Forgot password? Use your recovery code</div>
-    ${_acctGoogleBtn()}
   `);
 }
 function acctDoSignIn(){
@@ -218,81 +210,13 @@ function acctDoRecover(){
   });
 }
 
-// ── 6. Google ─────────────────────────────────────────────────────────────
-function acctGoogle(){
-  _acctErr('');
-  VAULT.googleSignIn().then(r=>{
-    if(r.redirecting) return;
-    if(r.hasKeys) acctShowUnlock();
-    else acctShowGoogleSetPw();
-  }).catch(e=>{
-    if(!document.getElementById('acct-err')) acctShowWhy();
-    _acctErr(e instanceof VAULT.VaultError?e.message:"Couldn't sign in with Google.");
-  });
-}
-function acctShowGoogleSetPw(){
-  _acctShow(`
-    <h2>Set a data password</h2>
-    <div class="acct-sub">Google signs you in, but your data is locked with a password only you know. You'll enter it once on each new device.</div>
-    <div><label class="ilabel">Data password</label><input class="ifield" id="acct-p" type="password" autocomplete="new-password" placeholder="${VAULT.MIN_PASSWORD} or more characters"></div>
-    <div><label class="ilabel">Confirm</label><input class="ifield" id="acct-p2" type="password" autocomplete="new-password" onkeydown="_acctOnEnter(event,acctDoGoogleSetPw)"></div>
-    <div class="acct-err" id="acct-err"></div>
-    <button class="btn btn-p btn-full" id="acct-go" onclick="acctDoGoogleSetPw()">Continue</button>
-    <div class="acct-link" onclick="acctSignOut()">Cancel and sign out</div>
-  `);
-}
-function acctDoGoogleSetPw(){
-  if(_acctVal('acct-p')!==_acctVal('acct-p2')){_acctErr("The passwords don't match.");return;}
-  _acctBusy('acct-go','Setting up…',async()=>{
-    const code=await VAULT.googleSetPassword(_acctVal('acct-p'));
-    acctShowCode(code,()=>_acctAfterAuth({isNew:true}));
-  });
-}
-
-// ── 7. Unlock (signed in, but this device has no key) ─────────────────────
+// ── 6. Unlock (signed in, but this device has no key) ─────────────────────
+// Accounts unlock during sign-in, so if the key was cleared from this device
+// the user simply signs in again (same password). (Google sign-in, which
+// was never switched on, was removed in v4.7.)
 function acctShowUnlock(){
-  const u=firebase.auth().currentUser;
-  const isGoogle=u&&u.providerData.some(p=>p.providerId==='google.com');
-  if(!isGoogle){
-    // Username accounts always unlock during sign-in; if we get here the key
-    // was cleared, so sign in again (same password).
-    const name=VAULT.username;
-    VAULT.signOut().then(()=>acctShowSignIn(name));
-    return;
-  }
-  _acctShow(`
-    <h2>Unlock your data</h2>
-    <div class="acct-sub">Signed in as ${_acctEsc(u.email||'')}. Enter your data password to unlock SpendWise on this device.</div>
-    <div><label class="ilabel">Data password</label><input class="ifield" id="acct-p" type="password" autocomplete="current-password" onkeydown="_acctOnEnter(event,acctDoUnlock)"></div>
-    <div class="acct-err" id="acct-err"></div>
-    <button class="btn btn-p btn-full" id="acct-go" onclick="acctDoUnlock()">Unlock</button>
-    <div class="acct-link" onclick="acctShowGoogleRecover()">Forgot it? Use your recovery code</div>
-    <div class="acct-link" style="color:var(--text2)" onclick="acctSignOut()">Sign out</div>
-  `);
-}
-function acctDoUnlock(){
-  _acctBusy('acct-go','Unlocking…',async()=>{
-    await VAULT.googleUnlock(_acctVal('acct-p'));
-    await _acctAfterAuth({isNew:false});
-  });
-}
-function acctShowGoogleRecover(){
-  _acctShow(`
-    <div class="acct-back" onclick="acctShowUnlock()">‹ Back</div>
-    <h2>Reset your data password</h2>
-    <div><label class="ilabel">Recovery code</label><input class="ifield" id="acct-c" autocapitalize="characters" spellcheck="false" style="font-family:var(--mono)"></div>
-    <div><label class="ilabel">New data password</label><input class="ifield" id="acct-p" type="password" autocomplete="new-password"></div>
-    <div><label class="ilabel">Confirm</label><input class="ifield" id="acct-p2" type="password" autocomplete="new-password"></div>
-    <div class="acct-err" id="acct-err"></div>
-    <button class="btn btn-p btn-full" id="acct-go" onclick="acctDoGoogleRecover()">Reset</button>
-  `);
-}
-function acctDoGoogleRecover(){
-  if(_acctVal('acct-p')!==_acctVal('acct-p2')){_acctErr("The passwords don't match.");return;}
-  _acctBusy('acct-go','Resetting…',async()=>{
-    await VAULT.googleRecover(_acctVal('acct-c'),_acctVal('acct-p'));
-    await _acctAfterAuth({isNew:false});
-  });
+  const name=VAULT.username;
+  VAULT.signOut().then(()=>acctShowSignIn(name));
 }
 
 // ── After sign-in: decide what happens to this device's data ──────────────
