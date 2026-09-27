@@ -1,4 +1,4 @@
-# SpendWise — Handover Note (v4.7.3)
+# SpendWise — Handover Note (v4.7.4)
 
 Personal-finance PWA, shared with the owner's friends since v4.5 (2026-09-26). Works signed out (data stays on the device); optional username/password accounts sync across devices with every document **encrypted on the device** — the project owner cannot read other users' data.
 Live: https://ssseyon.github.io/spendwise/
@@ -44,6 +44,13 @@ Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB l
 - The one-time Fife→Kids / USD Cash / Energy→Fuel repairs no longer run at boot.
 - Tested 2026-09-26 on localhost with two test accounts: sign-up + upload of local data, ciphertext-only storage, restore on sign-in, recovery, password change, concurrent increments from two tabs, live listeners, offline-then-reload, cross-user isolation. Known gap (pre-existing): if the boot sync throws, realtime listeners stay off until a reload.
 
+## v4.7.4 (2026-09-27)
+
+- **How interest is added** is chosen per account: `compoundType` `'daily_compound'` ("Every day (compounds)", e.g. Renmoney) or `'daily_accrual'` ("End of each month", e.g. Piggy). Cash accounts set it in the ✎ editor (`acct-ct`); investments in the sub editor (the select is relabelled). `_intDaily(key)` tells which.
+- **Daily-compounding balances include the interest built up since it was last added**, for this month only; the saved balances are untouched. `_withAccrued(cashDoc,m,y)` returns a copy with it added, marked with a non-enumerable `_accrued` so it's never added twice. It's used by `netWorthFor` (so the Home cash card, net worth and breakdown), `cashTotalNGN`, the Cash page, `drillDown('cash')` and the account history title. Investments: `invBalanceFor` adds `_invDailyAccrued` for the live month, and the Investments page shows "incl. +₦X interest". Month-end accounts show their principal plus "+₦X earned this month, added <last day>".
+- Either way `runAutoInterest` books each month's interest as one Interest Income entry on the month's last day (so it's in that month's Income tab, History and the account's history) and credits the saved balance, and the daily accrual then restarts from the 1st. A transfer from a daily-compounding account larger than the saved balance records the interest to date without asking (`_offerInterestTopUp`), because that money is already in the account.
+- **Cash Flow labels** are plain black text (no tag background), as the owner asked.
+
 ## v4.7.3 (2026-09-27)
 
 **Interest is calculated from balance history** (the "Interest (v4.7.3)" block in app.js). Read this before touching interest.
@@ -58,7 +65,7 @@ Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB l
 
 **Cash tab:** the page-wide "Edit balances & accounts" panel (`toggleCashEdit`, `saveCash`, `saveCashInterest`) is replaced by a ✎ button on each account, also in the account's history title, that opens `acct-modal` (`openAcctEdit(name)` / `saveAcctEdit()`). It covers the balance for the month on screen (a correction, rippled forward), the interest rate, start date and maturity date, the logo, and removal. "+ Add accounts" sits under the list.
 
-**Cash Flow labels** are drawn by the `cfLabels` chart plugin as two-line tags on a card-coloured background, stacked so they don't overlap. The sankey plugin's own labels are hidden (`color:'transparent'`). Don't pass the label arrays to the dataset: Chart.js empties them. Colours come from `document.body`, where the light theme's variables live (`body.light`); reading them from `documentElement` gave light text in light mode.
+**Cash Flow labels** are drawn by the `cfLabels` chart plugin as two-line labels (plain black since v4.7.4), stacked so they don't overlap. The sankey plugin's own labels are hidden (`color:'transparent'`). Don't pass the label arrays to the dataset: Chart.js empties them. Colours come from `document.body`, where the light theme's variables live (`body.light`); reading them from `documentElement` gave light text in light mode.
 
 ## v4.7.2 (2026-09-27)
 

@@ -241,7 +241,7 @@ function platformLogoEl(key,color,size=20){
 // the user marked as USD (appConfig/cashAccounts.usd).
 function getUsdAccounts(){return cGet('sw3_usd_accounts')||[];}
 function isUSDCashAccount(name){return name==='USD Cash'||getUsdAccounts().includes(name);}
-function cashTotalNGN(cashObj,m,y){const r=getFxRates(m||S.expMonth,y||S.expYear);return getCashAccounts().reduce((s,b)=>{const v=(cashObj||S.cash)[b]||0;return s+(isUSDCashAccount(b)?v*(r.USD||1650):v);},0);}
+function cashTotalNGN(cashObj,m,y){const r=getFxRates(m||S.expMonth,y||S.expYear);const c=_withAccrued(cashObj||S.cash,m||S.expMonth,y||S.expYear);return getCashAccounts().reduce((s,b)=>{const v=c[b]||0;return s+(isUSDCashAccount(b)?v*(r.USD||1650):v);},0);}
 function getCashAccounts(){return cGet('sw3_cash_accounts')||[];}
 // Persist the full account list (+ which are USD) locally AND to Firestore.
 function setCashAccounts(allAccounts,usd){
@@ -431,7 +431,7 @@ function invBalanceFor(pKey,m,y,monthData){
   if(_invIsLiveMonth(m,y)){
     const subs=migrateToSubs(pKey);
     const st=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
-    if(st>0) return st;
+    if(st>0) return st+_invDailyAccrued(pKey,subs,st);
   }
   return Number((monthData||{})[pKey])||0;
 }
@@ -3517,7 +3517,7 @@ function _invDocFor(m,y){
 }
 function netWorthFor(m,y){
   const cfg=getNWConfig();
-  const inv=_invDocFor(m,y),cash=_cashDocFor(m,y),fx=getFxRates(m,y);
+  const inv=_invDocFor(m,y),cash=_withAccrued(_cashDocFor(m,y),m,y),fx=getFxRates(m,y);
   const accts=cfg.cashAccounts||getCashAccounts();
   const _cv=b=>{const v=+cash[b]||0;return isUSDCashAccount(b)?v*(fx.USD||1600):v;};
   const cashT=accts.reduce((s,b)=>s+_cv(b),0);
@@ -5508,6 +5508,36 @@ function _unrealisedFor(key){
   return key.startsWith('cash:')?_cashUnrealised(key.slice(5)):_invUnrealised(key.slice(4));
 }
 // Credited automatically each month (no maturity date)?
+// Daily-compounding accounts (e.g. Renmoney): interest joins the balance every
+// day, so what they hold today is the saved balance plus the interest built up
+// since it was last added. Month-end accounts (e.g. Piggy) only grow when the
+// month's interest is added. Either way the month's interest is booked as one
+// Interest Income entry at month end (runAutoInterest).
+function _intDaily(key){
+  if(key.startsWith('cash:'))return _cashIntMeta(key.slice(5)).compoundType==='daily_compound';
+  return getSubsForPlatform(key.slice(4)).some(s=>s.assetClass==='fixed_income'&&_sbNum(s.rate)&&s.compoundType==='daily_compound');
+}
+// A month's cash balances with daily-compounding interest built up so far
+// added (this month only; the saved balances are untouched).
+function _withAccrued(cash,m,y){
+  if(!cash||cash._accrued||!_invIsLiveMonth(m,y))return cash;
+  let out=cash;
+  getCashAccounts().forEach(n=>{
+    const ci=_cashIntMeta(n);
+    if(ci.compoundType!=='daily_compound'||!(_sbNum(ci.interestRate)>0))return;
+    const a=_cashUnrealised(n).amount;
+    if(a){if(out===cash)out={...cash};out[n]=(+cash[n]||0)+a;}
+  });
+  // Marked (not enumerable, so never saved) so it can't be added twice.
+  if(out!==cash)Object.defineProperty(out,'_accrued',{value:true});
+  return out;
+}
+function _invDailyAccrued(pKey,subs,tot){
+  return subs.reduce((s,sb)=>{
+    if(sb.compoundType!=='daily_compound')return s;
+    const r=_subInterest(pKey,sb,null,tot);return s+(r?r.amount:0);
+  },0);
+}
 function _intMonthly(key){
   if(key.startsWith('cash:'))return !_cashIntMeta(key.slice(5)).maturityDate;
   return getSubsForPlatform(key.slice(4)).some(s=>s.assetClass==='fixed_income'&&_sbNum(s.rate)&&!s.maturityDate);
@@ -5726,6 +5756,8 @@ function _offerInterestTopUp(key,bal,amt){
   const u=_unrealisedFor(key);
   if(!(u.amount>0)||bal+u.amount<amt)return false;
   const name=_interestAcctName(key);
+  // Daily-compounding interest is already in the account, so just book it.
+  if(_intDaily(key))return recordInterest(key,u.amount);
   if(!confirm(`${name} holds ${_fmtAcctAmt(key,bal)} plus about ${_fmtAcctAmt(key,u.amount)} of interest that isn't recorded yet.\n\nRecord ${_fmtAcctAmt(key,u.amount)} as interest income (dated today) and make the transfer?`))return false;
   return recordInterest(key,u.amount);
 }
@@ -6147,15 +6179,19 @@ function _renderInvInto(suffix){
     const fxRate=isUSD?(fxRates.USD||1600):isGBP?(fxRates.GBP||2050):1;
 
     // ── Compute platform total (principal + accrued interest across all subs) ──
-    let totalPrincipalNGN=0, totalInterestNGN=0, anyMatured=false;
+    // Daily-compounding interest is part of the balance already; month-end
+    // interest is shown as earned-so-far until it's added.
+    let totalPrincipalNGN=0, totalInterestNGN=0, dailyIntNGN=0, anyMatured=false;
     const subRows=subs.map(sub=>{
       const pNGN=Number(sub.principal)||0;
       totalPrincipalNGN+=pNGN;
       let interest=0,projBal=pNGN,isMatured=false;
       // Unrecorded interest, from the platform's balance history (live month only).
       const _si=live?_subInterest(p.key,sub):null;
-      if(_si){interest=_si.amount;projBal=pNGN+interest;isMatured=_si.matured;}
+      const _daily=sub.compoundType==='daily_compound';
+      if(_si){interest=_si.amount;projBal=pNGN+(_daily?interest:0);isMatured=_si.matured;}
       totalInterestNGN+=interest;
+      if(_daily)dailyIntNGN+=interest;
       if(isMatured) anyMatured=true;
 
       // Use fNum (no ₦ prefix) since dispCcy is prepended separately
@@ -6190,7 +6226,11 @@ function _renderInvInto(suffix){
     const subPrincipalTotal=totalPrincipalNGN;
     // Fall back to flat Firestore total if subs haven't been populated yet
     const effectivePrincipalNGN=subPrincipalTotal>0?subPrincipalTotal:(inv[p.key]||0);
-    const platformNGN=effectivePrincipalNGN+totalInterestNGN;
+    const platformNGN=effectivePrincipalNGN+dailyIntNGN;
+    const _monthIntNGN=totalInterestNGN-dailyIntNGN;
+    const _fmtInt=v=>isUSD?'$'+(v/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(Math.round(v));
+    const _n=new Date(),_lastDay=_ymd(_n.getFullYear(),_n.getMonth()+1,_daysInMonth(_n.getMonth()+1,_n.getFullYear()));
+    const intNote=[dailyIntNGN>0?`incl. +${_fmtInt(dailyIntNGN)} interest`:'',_monthIntNGN>0?`+${_fmtInt(_monthIntNGN)} earned this month, added ${fmtDate(_lastDay)}`:''].filter(Boolean).join(' · ');
     const pct=inv[p.key]&&(PLATFORMS.reduce((a,pp)=>a+(inv[pp.key]||0),0)>0)?((inv[p.key]/(PLATFORMS.reduce((a,pp)=>a+(inv[pp.key]||0),0)))*100).toFixed(1):'0.0';
     const badge=`<span style="font-size:0.56rem;padding:1px 4px;border-radius:3px;background:var(--bg3);color:var(--text3);margin-left:4px">${p.currency}</span>`;
     const fiCount=subs.filter(s=>s.assetClass==='fixed_income'&&s.rate).length;
@@ -6227,9 +6267,9 @@ function _renderInvInto(suffix){
         <div id="inv-sub-fi-${p.key}-${sub.id}${s}" style="${sub.assetClass==='fixed_income'?'':'display:none'}">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
             <div class="ig" style="margin-bottom:0"><label class="ilabel">Annual Rate (%)</label><input class="ifield" type="text" id="inv-sub-rate-${p.key}-${sub.id}${s}" placeholder="e.g. 18" value="${sub.rate||''}" style="font-size:0.8rem;padding:6px 10px"></div>
-            <div class="ig" style="margin-bottom:0"><label class="ilabel">Accrual</label><select class="sfield" id="inv-sub-ct-${p.key}-${sub.id}${s}" style="font-size:0.75rem;padding:6px 8px" onchange="toggleSubFIFields('${p.key}','${sub.id}','${s}')">
-              <option value="daily_accrual"${(sub.compoundType||'daily_accrual')==='daily_accrual'?' selected':''}>Daily Accrual</option>
-              <option value="daily_compound"${sub.compoundType==='daily_compound'?' selected':''}>Daily Compound</option>
+            <div class="ig" style="margin-bottom:0"><label class="ilabel">Interest is added</label><select class="sfield" id="inv-sub-ct-${p.key}-${sub.id}${s}" style="font-size:0.75rem;padding:6px 8px" onchange="toggleSubFIFields('${p.key}','${sub.id}','${s}')">
+              <option value="daily_accrual"${(sub.compoundType||'daily_accrual')==='daily_accrual'?' selected':''}>End of each month</option>
+              <option value="daily_compound"${sub.compoundType==='daily_compound'?' selected':''}>Every day (compounds)</option>
             </select></div>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -6260,7 +6300,7 @@ function _renderInvInto(suffix){
         </div>
         <div style="text-align:right;flex-shrink:0">
           <div class="pval" style="color:${platformNGN?p.color:'var(--text3)'}">${platformNGN?maskIf('inv-page',dispMainVal):'—'}</div>
-          ${totalInterestNGN>0&&!_isHidden('inv-page')?`<div style="font-size:0.58rem;color:var(--gold);font-family:var(--mono)${live?`;cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();openRecordInterest('inv:${jsq(p.key)}')" title="Record this interest`:``}">+${isUSD?'$'+((totalInterestNGN/fxRate)).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(Math.round(totalInterestNGN))} interest${live?` · Record`:``}</div>`:''}
+          ${intNote&&!_isHidden('inv-page')?`<div style="font-size:0.58rem;color:var(--gold);font-family:var(--mono)${live?`;cursor:pointer" onclick="event.stopPropagation();openRecordInterest('inv:${jsq(p.key)}')" title="Record this interest now`:``}">${intNote}</div>`:''}
           <div onclick="event.stopPropagation();drillDownInvPlatform('${p.key}')" style="font-size:0.6rem;color:var(--text3);margin-top:2px;cursor:pointer">Activity ›</div>
         </div>
       </div>
@@ -6750,11 +6790,12 @@ function renderCashPage(){
   const ACCTS=getCashAccounts();
   document.getElementById('cash-months').innerHTML=_monthStrip(m,y,'changeCashMonth');
   setTimeout(()=>{const el=document.querySelector('#cash-months .mpill.active');if(el)el.scrollIntoView({inline:'center',block:'nearest'});},0);
-  const cash=S.cash;
+  const cash=_withAccrued(S.cash,m,y);   // daily-compounding accounts include today's interest
   const fxR=getFxRates(m,y);
   const total=ACCTS.reduce((s,b)=>{const v=cash[b]||0;return s+(isUSDCashAccount(b)?v*(fxR.USD||1650):v);},0);
   const intMeta=getCashInterestMeta();
   const live=_invIsLiveMonth(m,y);
+  const _n=new Date(),_lastDay=_ymd(_n.getFullYear(),_n.getMonth()+1,_daysInMonth(_n.getMonth()+1,_n.getFullYear()));
   if(live)_intPrefetch();
   document.getElementById('cash-summary').innerHTML=`<div class="clabel">Total Cash — ${MONTHS[m-1]} ${y}${eyeBtn('cash-page','renderCashPage')}</div><div class="cval">${total?maskIf('cash-page',fmtCur(Math.round(total),cur,m,y)):'—'}</div><div class="csub">${ACCTS.join(' · ')}</div>`;
   document.getElementById('cash-breakdown').innerHTML=ACCTS.length?ACCTS.map((b,i)=>{
@@ -6763,7 +6804,11 @@ function renderCashPage(){
     const intInfo=ci&&ci.interestRate?`<span class="int-badge">${ci.interestRate}% p.a.</span>`:'';
     // Interest earned and not yet added, from the account's day-by-day balance.
     const projInt=ci&&ci.interestRate&&live?_cashUnrealised(b).amount:0;
-    const intProjection=projInt>0.5?`<div style="font-size:0.6rem;color:var(--gold);margin-top:1px">~${_fmtAcctAmt('cash:'+b,projInt)} interest not added yet · <span style="text-decoration:underline;cursor:pointer" onclick="event.stopPropagation();openRecordInterest('cash:${jsq(b)}')">Record</span></div>`:'';
+    const _daily=ci&&ci.compoundType==='daily_compound';
+    const intProjection=projInt>0.5?`<div style="font-size:0.6rem;color:var(--gold);margin-top:1px;cursor:pointer" onclick="event.stopPropagation();openRecordInterest('cash:${jsq(b)}')" title="Record this interest now">${_daily
+      ?`incl. ~${_fmtAcctAmt('cash:'+b,projInt)} interest this month (compounds daily)`
+      :ci.maturityDate?`~${_fmtAcctAmt('cash:'+b,projInt)} interest so far, paid at maturity (${fmtDate(ci.maturityDate)})`
+      :`+~${_fmtAcctAmt('cash:'+b,projInt)} earned this month, added ${fmtDate(_lastDay)}`}</div>`:'';
     let dispVal;
     if(isUSDCashAccount(b)){
       const ngnEquiv=val*(fxR.USD||1650);
@@ -6806,8 +6851,12 @@ function openAcctEdit(name){
       <div class="ig" style="margin-bottom:8px"><label class="ilabel">Rate (% a year)</label><input class="ifield" type="text" id="acct-rate" inputmode="decimal" placeholder="None" value="${ci.interestRate||''}"></div>
       <div class="ig" style="margin-bottom:8px"><label class="ilabel">Counts from</label><input class="ifield" type="date" id="acct-start" value="${ci.startDate||(ci.interestRate?'':firstOfMonth)}"></div>
     </div>
+    <div class="ig" style="margin-bottom:8px"><label class="ilabel">Interest is added</label><select class="sfield" id="acct-ct">
+      <option value="daily_accrual"${ci.compoundType!=='daily_compound'?' selected':''}>At the end of each month</option>
+      <option value="daily_compound"${ci.compoundType==='daily_compound'?' selected':''}>Every day (compounds)</option>
+    </select></div>
     <div class="ig" style="margin-bottom:6px"><label class="ilabel">Maturity date (optional)</label><input class="ifield" type="date" id="acct-mat" value="${ci.maturityDate||''}"></div>
-    <div style="font-size:0.6rem;color:var(--text3);line-height:1.5;margin-bottom:14px">Interest is worked out on what ${esc(name)} held each day, from its balance and the money moved in and out since the date above. With no maturity date it's added to the balance on the last day of every month (and shows as Interest Income). With a maturity date it keeps building until then, and you record it when it's paid.</div>
+    <div style="font-size:0.6rem;color:var(--text3);line-height:1.5;margin-bottom:14px">Interest is worked out on what ${esc(name)} held each day, from its balance and the money moved in and out since the date above. <b>Every day</b>: the interest joins the balance daily and earns interest itself, so the balance you see grows each day. <b>End of each month</b>: it's added on the last day of the month. Either way each month's interest is saved as one Interest Income entry on the month's last day. With a maturity date it builds until then instead, and you record it when it's paid.</div>
     <button class="btn btn-p btn-full" style="font-weight:700" onclick="saveAcctEdit()">Save</button>
     <button class="btn btn-g btn-full" style="margin-top:8px" onclick="closeMod('acct-modal');drillDownAccount('${jsq(name)}')">View history</button>
     <button class="btn btn-d btn-full" style="margin-top:14px" onclick="removeCashAccount('${jsq(name)}')">Remove ${esc(name)}</button>`;
@@ -6824,7 +6873,7 @@ async function saveAcctEdit(){
   if(mat&&start&&mat<=start){toast('The maturity date must be after the start date');return;}
   const meta=getCashInterestMeta(),old=meta[name]||{};
   const nextMeta=!isNaN(rate)&&rate>0
-    ?{interestRate:rate,compoundType:old.compoundType||'daily_accrual',...(start?{startDate:start}:{}),...(mat?{maturityDate:mat}:{}),...(old.intFrom?{intFrom:old.intFrom}:{})}
+    ?{interestRate:rate,compoundType:document.getElementById('acct-ct').value||'daily_accrual',...(start?{startDate:start}:{}),...(mat?{maturityDate:mat}:{}),...(old.intFrom?{intFrom:old.intFrom}:{})}
     :{};
   if(JSON.stringify(nextMeta)!==JSON.stringify(old)){meta[name]=nextMeta;saveCashInterestMeta(meta);}
   // Balance correction for the month on screen (moves later months too)
@@ -7680,14 +7729,11 @@ function renderCashFlowChart(){
   // Each node is labelled on two lines, name then amount and share of income
   // (of spending when there's no income), e.g. "Food" / "₦44,000 (17%)".
   // The plugin's own labels are hidden (color transparent) and drawn by
-  // cfLabels below on a card-coloured tag, so they read over any band colour
-  // in light or dark mode, and the short two-line Income tag stays on its side.
+  // cfLabels below in black, which reads over the pale bands in light and dark
+  // mode; the short two-line Income label stays on its side.
   const _base=incTotal>0?incTotal:totalExp;
   const labels={Income:['Income',fmtCur(incTotal,cur,m,y)]};
   data.forEach(d=>{labels[d.to]=[d.to,`${fmtCur(Math.round(d.flow),cur,m,y)} (${_base?Math.round(d.flow/_base*100):0}%)`];});
-  const _css=getComputedStyle(document.body);
-  const _txt=_css.getPropertyValue('--text').trim()||'#e8edf5';
-  const _tagBg=_css.getPropertyValue('--bg1').trim()||'#161b25';
   const cfLabels={id:'cfLabels',afterDatasetsDraw(chart){
     const meta=chart.getDatasetMeta(0),ctrl=meta.controller,nodes=ctrl&&ctrl._nodes;
     if(!nodes||!meta.xScale)return;
@@ -7713,11 +7759,9 @@ function renderCashFlowChart(){
       const over=prev-area.bottom;
       if(over>0)for(let i=col.length-1,lim=area.bottom;i>=0;i--){col[i].by=Math.min(col[i].by,lim-col[i].th);lim=col[i].by-2;}
     });
+    c.fillStyle='#000';c.textAlign='left';
     tags.forEach(t=>{
-      c.globalAlpha=0.9;c.fillStyle=_tagBg;
-      if(c.roundRect){c.beginPath();c.roundRect(t.bx,t.by,t.w,t.th,4);c.fill();}else c.fillRect(t.bx,t.by,t.w,t.th);
-      c.globalAlpha=1;c.fillStyle=_txt;c.textAlign='left';
-      t.lines.forEach((l,i)=>{c.font=(i===0?'600 ':'')+'10px "DM Mono", monospace';c.fillText(l,t.bx+5,t.by+2+lh/2+i*lh);});
+      t.lines.forEach((l,i)=>{c.font=(i===0?'700 ':'500 ')+'10px "DM Mono", monospace';c.fillText(l,t.bx+5,t.by+2+lh/2+i*lh);});
     });
     c.restore();
   }};
@@ -8219,7 +8263,7 @@ function renderSettGuide(){
       <ul>
         <li><b>Cash</b>: your bank and cash balances. Tap an account to see every movement in and out of it. <b>⇄ Transfer</b> moves money between your accounts or to and from investments; <b>Transfer history</b> lists (and can reverse) past transfers. <b>✎</b> beside an account edits just that account: correct its balance, set its interest rate and dates, change its logo or remove it. <b>+ Add accounts</b> adds more.</li>
         <li><b>Investments</b>: balances on savings and investment platforms. You can record money going in, gains or losses, or cash out all or part of an investment back to a bank. <b>Trend</b> shows growth over time. Past months are read-only.</li>
-        <li><b>Interest</b>: set a rate on an account (✎ beside it on the Cash page, or on the investment). Interest is worked out on what the account actually held each day, using its balance and the money moved in and out. With no maturity date it's added to the balance on the last day of each month and shows as Interest Income. With a maturity date it builds until then; tap <b>Record</b> when it's paid (you can enter your statement's figure). <b>Record</b> also works any time, and a transfer bigger than the balance offers to record the interest first.</li>
+        <li><b>Interest</b>: set a rate on an account (✎ beside it on the Cash page, or on the investment) and choose how it's added. <b>Every day (compounds)</b>, like Renmoney: the balance you see grows daily and you can spend all of it. <b>End of each month</b>, like Piggy: it shows as earned this month and joins the balance on the last day. Either way it's worked out on what the account actually held each day, and each month's interest is saved as one Interest Income entry (Expenses → Income, and in History). With a maturity date it builds until then; tap <b>Record</b> when it's paid (you can enter your statement's figure).</li>
         <li><b>Debtors</b>: money people owe you. Add a person and record repayments as they come in.</li>
         <li><b>Loans</b>: money you owe. Record repayments to see what's left.</li>
       </ul>`)}
@@ -9151,7 +9195,7 @@ function renderSettData(){
         <button class="btn btn-g btn-sm" style="flex:1" onclick="openGuide()">Open the guide</button>
         <button class="btn btn-g btn-sm" style="flex:1" onclick="reportProblem()">Report a problem</button>
       </div>
-      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.3</div><div style="color:var(--text3);margin-top:4px">v4.7.3: Interest is worked out from each account's day-by-day balance and added automatically at month end (unless it has a maturity date), each cash account has its own edit button, and Cash Flow labels are readable.</div></div>
+      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.4</div><div style="color:var(--text3);margin-top:4px">v4.7.4: Choose whether interest is added every day (compounds, like Renmoney) or at the end of each month (like Piggy); each month's interest is saved as Interest Income; Cash Flow labels are plain black text.</div></div>
     </div>
     <details class="sett-adv" id="sett-adv"${_settAdvOpen?' open':''} ontoggle="_settAdvOpen=this.open">
       <summary>Advanced<span>AI keys, net worth, exchange rates, balance audit</span></summary>
@@ -9460,8 +9504,8 @@ function drillDown(type){
   }
   else if(type==='cash'){
     title=`Cash — ${MONTHS[m-1]} ${y}`;
-    const cash=S.cash;
-    const total=cashTotalNGN(cash,m,y);
+    const cash=_withAccrued(S.cash,m,y);
+    const total=cashTotalNGN(cash,m,y);   // (already includes today's interest; not added twice)
     const _fxRC=getFxRates(m,y);
     body=getCashAccounts().map(b=>{
       const v=cash[b]||0;
@@ -9553,7 +9597,7 @@ function drillDownAccount(bankName){
     ...ledger
   ].sort((a,b)=>a.date>b.date?-1:a.date<b.date?1:txnTs(b.createdAt)-txnTs(a.createdAt));
 
-  const bal=S.cash[bankName];
+  const bal=_withAccrued(S.cash,S.cashMonth,S.cashYear)[bankName];
   const balStr=bal!=null?(isUSD?` · $${bal.toFixed(2)}`:`  · ${fN(Math.round(bal))}`):'' ;
   document.getElementById('drill-title').innerHTML=`${esc(bankName)}${balStr} <button class="acct-edit-btn" style="margin-left:6px;vertical-align:middle" title="Edit this account" onclick="closeMod('drill-modal');openAcctEdit('${jsq(bankName)}')">✎</button>`;
 
@@ -9907,7 +9951,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').cat
 
 
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.7.3';
+const APP_VERSION='v4.7.4';
 async function checkForUpdate(){
   try{
     const res=await fetch(location.origin+location.pathname+'?_='+Date.now(),{cache:'no-store'});
