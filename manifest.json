@@ -9,6 +9,12 @@
   "background_color": "#08080e",
   "theme_color": "#08080e",
   "prefer_related_applications": false,
+  "share_target": {
+    "action": "./share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": { "title": "title", "text": "text", "url": "url" }
+  },
   "icons": [
     {
       "src": "icon-192.png",

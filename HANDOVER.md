@@ -1,4 +1,4 @@
-# SpendWise — Handover Note (v4.7.4)
+# SpendWise — Handover Note (v4.7.5)
 
 Personal-finance PWA, shared with the owner's friends since v4.5 (2026-09-26). Works signed out (data stays on the device); optional username/password accounts sync across devices with every document **encrypted on the device** — the project owner cannot read other users' data.
 Live: https://ssseyon.github.io/spendwise/
@@ -43,6 +43,11 @@ Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB l
 - **Logos:** served from the app's own `Logos/`; `LOGO_CATALOG` in setup.js resolves a logo by account/platform name at render time (20 added from official Play Store icons); users can upload their own (a 64px data URL stored in their settings).
 - The one-time Fife→Kids / USD Cash / Energy→Fuel repairs no longer run at boot.
 - Tested 2026-09-26 on localhost with two test accounts: sign-up + upload of local data, ciphertext-only storage, restore on sign-in, recovery, password change, concurrent increments from two tabs, live listeners, offline-then-reload, cross-user isolation. Known gap (pre-existing): if the boot sync throws, realtime listeners stay off until a reload.
+
+## v4.7.5 (2026-09-27)
+
+- **Share a bank alert to SpendWise (Android, installed app).** `manifest.json` has a `share_target` (POST, multipart, to `./share-target`). `sw.js` catches that POST, stores the shared text in the `spendwise-share` cache under `<scope>__shared`, and redirects (303) to `./?shared=1`. It's POST so the text never goes into a URL, which the shell refresh would send to GitHub Pages. After boot sync, `_handleSharedAlert()` reads and deletes it, strips the query, opens the + form and runs Quick add on it (so `_qaParseAlert` fills it in). `sw.js` CACHE is `spendwise-v22` because `manifest.json` is precached cache-first. Web apps can't read SMS or notifications; Settings → Data → **Bank alerts** explains share and paste to the user. iOS has no share target.
+- **Cash Flow labels**: one line per band ("Food ₦44,000 (17%)"), right-aligned on the band next to its category bar, nudged apart when bands are thin. Income is written under the chart beneath its bar; `layout.padding.bottom:18` makes the room.
 
 ## v4.7.4 (2026-09-27)
 

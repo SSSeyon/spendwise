@@ -1399,6 +1399,7 @@ async function _bootSync(){
       runAutoRecurring();         // fire-and-forget: posts "automatic" recurring items that have come due
       runAutoInterest();          // fire-and-forget: month-end interest on accounts with no maturity date
       fxAutoUpdate();             // fire-and-forget: this month's exchange rates
+      _handleSharedAlert();       // a bank alert shared to SpendWise from another app
       _prefetchHistoryMonths(); // fire-and-forget: pulls prior months so smart insights have history on this device
       _healCashLedgers(); // fire-and-forget: pushes any ledger entries stranded locally on this device up to Firestore
     }catch(e){console.error(e);setSyncStatus('error');}
@@ -4873,6 +4874,26 @@ function quickAddOnPaste(e){
   const q=document.getElementById('qa-text');if(q)q.value=t.replace(/\s*[\r\n]+\s*/g,' ; ').trim();
   setTimeout(quickAddParse,30);
 }
+// Android "Share → SpendWise": sw.js stores the shared text on the device and
+// opens the app at ?shared=1. Open the + form with Quick add filled in and
+// read, so the entry is ready to check and save. (A web app can't read SMS or
+// notifications itself; sharing or pasting the alert is the way in.)
+let _sharedDone=false;
+async function _handleSharedAlert(){
+  if(_sharedDone||!/[?&]shared=1/.test(location.search))return;
+  _sharedDone=true;
+  try{history.replaceState(null,'',location.pathname);}catch(e){}
+  let text='';
+  try{
+    const c=await caches.open('spendwise-share'),k=new URL('__shared',location.href).href;
+    const r=await c.match(k);
+    if(r)text=(await r.text()).trim();
+    await c.delete(k);
+  }catch(e){console.warn('shared alert not read',e);}
+  if(!text){toast('Nothing was shared');return;}
+  openExpModal('expense');
+  setTimeout(()=>{const el=document.getElementById('qa-text');if(el){el.value=text.slice(0,600);quickAddParse();}},200);
+}
 async function quickAddPaste(){
   try{
     const t=await navigator.clipboard.readText();
@@ -7726,43 +7747,40 @@ function renderCashFlowChart(){
   if(savings>0)       data.push({from:'Income',to:'Savings',flow:savings});
   else if(savings<0)  data.push({from:'Income',to:'Deficit',flow:Math.abs(savings)});
 
-  // Each node is labelled on two lines, name then amount and share of income
-  // (of spending when there's no income), e.g. "Food" / "₦44,000 (17%)".
-  // The plugin's own labels are hidden (color transparent) and drawn by
-  // cfLabels below in black, which reads over the pale bands in light and dark
-  // mode; the short two-line Income label stays on its side.
+  // Each band is labelled on one line where it meets its category, e.g.
+  // "Food ₦44,000 (17%)" (share of income, or of spending when there's no
+  // income), in black. Income is written under the chart, beneath its bar.
+  // The plugin's own labels are hidden (color transparent); cfLabels draws them.
   const _base=incTotal>0?incTotal:totalExp;
-  const labels={Income:['Income',fmtCur(incTotal,cur,m,y)]};
-  data.forEach(d=>{labels[d.to]=[d.to,`${fmtCur(Math.round(d.flow),cur,m,y)} (${_base?Math.round(d.flow/_base*100):0}%)`];});
+  const labels={Income:`Income ${fmtCur(incTotal,cur,m,y)}`};
+  data.forEach(d=>{labels[d.to]=`${d.to} ${fmtCur(Math.round(d.flow),cur,m,y)} (${_base?Math.round(d.flow/_base*100):0}%)`;});
   const cfLabels={id:'cfLabels',afterDatasetsDraw(chart){
     const meta=chart.getDatasetMeta(0),ctrl=meta.controller,nodes=ctrl&&ctrl._nodes;
     if(!nodes||!meta.xScale)return;
     const c=chart.ctx,area=chart.chartArea,xs=meta.xScale,ys=meta.yScale;
+    const lh=13,right=[];
     c.save();
-    c.textBaseline='middle';
+    c.textBaseline='middle';c.fillStyle='#000';
     c.font='600 10px "DM Mono", monospace';
-    const lh=12,tags=[];
     for(const node of nodes.values()){
-      const lines=labels[node.key]||[node.key];
       const x=xs.getPixelForValue(node.x),y=ys.getPixelForValue(node.y);
       const h=Math.abs(ys.getPixelForValue(node.y+Math.max(node.in||node.out,node.out||node.in))-y);
-      const left=x<area.width/2;
-      const w=Math.max(...lines.map(l=>c.measureText(l).width))+10,th=lines.length*lh+4;
-      tags.push({lines,left,w,th,bx:left?x+18:x-4-w,by:y+h/2-th/2});
+      const text=labels[node.key]||node.key;
+      if(x<area.width/2){
+        // Income: under the chart, beneath its bar (layout padding makes room).
+        c.textAlign='left';
+        c.fillText(text,x,area.bottom+11);
+      }else right.push({text,x,y:y+h/2});
     }
-    // Stack each side's tags so small neighbouring bands don't overlap, then
-    // keep the stack inside the chart.
-    [true,false].forEach(side=>{
-      const col=tags.filter(t=>t.left===side).sort((a,b)=>a.by-b.by);
-      let prev=area.top-2;
-      col.forEach(t=>{t.by=Math.max(t.by,prev+2);prev=t.by+t.th;});
-      const over=prev-area.bottom;
-      if(over>0)for(let i=col.length-1,lim=area.bottom;i>=0;i--){col[i].by=Math.min(col[i].by,lim-col[i].th);lim=col[i].by-2;}
-    });
-    c.fillStyle='#000';c.textAlign='left';
-    tags.forEach(t=>{
-      t.lines.forEach((l,i)=>{c.font=(i===0?'700 ':'500 ')+'10px "DM Mono", monospace';c.fillText(l,t.bx+5,t.by+2+lh/2+i*lh);});
-    });
+    // Category labels sit on their band, just left of the category's bar;
+    // nudged apart when small bands are too close to fit a line each.
+    right.sort((a,b)=>a.y-b.y);
+    let prev=area.top+lh/2-lh;
+    right.forEach(t=>{t.y=Math.max(t.y,prev+lh);prev=t.y;});
+    const over=prev-(area.bottom-lh/2);
+    if(over>0)for(let i=right.length-1,lim=area.bottom-lh/2;i>=0;i--){right[i].y=Math.min(right[i].y,lim);lim=right[i].y-lh;}
+    c.textAlign='right';
+    right.forEach(t=>c.fillText(t.text,t.x-6,t.y));
     c.restore();
   }};
   // Tapping a flow lists that category's expenses, as the Breakdown chart
@@ -7800,6 +7818,7 @@ function renderCashFlowChart(){
     options:{
       responsive:true,
       maintainAspectRatio:false,
+      layout:{padding:{bottom:18}},
       onClick:(_e,els)=>{if(els.length){const d=data[els[0].index];if(d)_cfOpen(d.to);}},
       onHover:(e,els)=>{if(e.native?.target)e.native.target.style.cursor=els.length?'pointer':'default';},
       plugins:{
@@ -9189,13 +9208,17 @@ function renderSettData(){
       <div style="font-size:0.68rem;color:var(--text2);margin-top:10px">The round <b>+</b> button can be dragged anywhere on the screen. <span class="sh-link" style="font-size:0.68rem" onclick="fabResetPosition()">Put it back in the corner</span></div>
     </div>
     <div class="exp-card" style="margin-top:10px">
+      <div class="exp-card-title" style="margin-bottom:6px">Bank alerts</div>
+      <div class="exp-card-sub" style="line-height:1.6">SpendWise can't read your texts or notifications (phones don't let web apps do that), but it can read an alert you give it:<br>• <b>Share it</b> (Android): long-press the bank SMS or email → Share → <b>SpendWise</b>. The + form opens filled in; check it and tap Save. SpendWise must be installed on your home screen; if it isn't in the Share list, remove the home-screen icon and add it again once.<br>• <b>Paste it</b>: copy the alert, tap <b>+</b>, then 📋 in the Quick add box.</div>
+    </div>
+    <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Help</div>
       <div class="exp-card-sub" style="margin-bottom:10px">New here? The Guide explains every part of the app. Found a bug or have an idea? Send it straight to the developer.</div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-g btn-sm" style="flex:1" onclick="openGuide()">Open the guide</button>
         <button class="btn btn-g btn-sm" style="flex:1" onclick="reportProblem()">Report a problem</button>
       </div>
-      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.4</div><div style="color:var(--text3);margin-top:4px">v4.7.4: Choose whether interest is added every day (compounds, like Renmoney) or at the end of each month (like Piggy); each month's interest is saved as Interest Income; Cash Flow labels are plain black text.</div></div>
+      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.5</div><div style="color:var(--text3);margin-top:4px">v4.7.5: Share a bank SMS or email to SpendWise (Android) to fill in the + form, and Cash Flow labels now sit on their bands on one line with income under its bar.</div></div>
     </div>
     <details class="sett-adv" id="sett-adv"${_settAdvOpen?' open':''} ontoggle="_settAdvOpen=this.open">
       <summary>Advanced<span>AI keys, net worth, exchange rates, balance audit</span></summary>
@@ -9951,7 +9974,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').cat
 
 
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.7.4';
+const APP_VERSION='v4.7.5';
 async function checkForUpdate(){
   try{
     const res=await fetch(location.origin+location.pathname+'?_='+Date.now(),{cache:'no-store'});
