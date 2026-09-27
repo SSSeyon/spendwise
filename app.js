@@ -1399,7 +1399,6 @@ async function _bootSync(){
       runAutoRecurring();         // fire-and-forget: posts "automatic" recurring items that have come due
       runAutoInterest();          // fire-and-forget: month-end interest on accounts with no maturity date
       fxAutoUpdate();             // fire-and-forget: this month's exchange rates
-      _handleSharedAlert();       // a bank alert shared to SpendWise from another app
       _prefetchHistoryMonths(); // fire-and-forget: pulls prior months so smart insights have history on this device
       _healCashLedgers(); // fire-and-forget: pushes any ledger entries stranded locally on this device up to Firestore
     }catch(e){console.error(e);setSyncStatus('error');}
@@ -4728,7 +4727,6 @@ Rules:
 - date is YYYY-MM-DD. Use today if no day is mentioned.
 - notes: anything useful not captured elsewhere, else "".
 - currency is the currency the amount was stated in: "NGN", "USD" or "GBP" (e.g. "$7" or "7 dollars" is USD). Do not convert the amount.
-- The note may be a bank SMS or email alert. Then: DR / Debit / "sent" is an expense and CR / Credit / "received" is income; the amount is the transaction amount, never the balance ("Bal", "Avail Bal"); ignore account numbers, references and times; use the narration ("Desc", "Narration") for what it was for, and the bank named in the alert for bank if it matches one of the user's accounts; use the alert's date.
 JSON shape: {"type":"","amount":0,"currency":"NGN","category":null,"payee":null,"bank":null,"toBank":null,"date":"","notes":""}
 Note: ${JSON.stringify(String(text).slice(0,300))}`;
   const res=await Promise.race([
@@ -4788,127 +4786,13 @@ function _qaFill(r){
   }
   if(r.notes&&!nt.value){nt.value=r.notes;nt.dataset.qa='1';}
 }
-// ── Bank alerts (v4.7) ────────────────────────────────────────────────────
-// Paste a debit/credit SMS or email alert into Quick add and it's read like a
-// typed note: DR/Debit → expense, CR/Credit → income; the amount is the
-// transaction amount (never the balance); the narration becomes what it was
-// for. Works offline; the AI (when available) refines it as usual.
-const _QA_BANK_ALIASES={
-  'GTB':['gtb','gtbank','guaranty trust','gtco'],'Access':['access'],'First Bank':['first bank','firstbank','fbn'],
-  'Zenith':['zenith'],'UBA':['uba','united bank for africa'],'Kuda':['kuda'],'Opay':['opay'],'Moniepoint':['moniepoint'],
-  'PalmPay':['palmpay'],'ALAT by Wema':['wema','alat'],'Stanbic IBTC':['stanbic'],'Fidelity':['fidelity'],'FCMB':['fcmb'],
-  'Sterling':['sterling'],'Union Bank':['union bank','unionbank'],'Ecobank':['ecobank'],'Polaris':['polaris'],'Providus':['providus'],
-  'Renmoney':['renmoney'],'Carbon':['carbon'],
-};
-function _qaIsAlert(t){
-  const n=(t.match(/\b(amt|amount|acct|acc|a\/c|avail(able)?\s*bal|bal(ance)?|desc|narration|debit(ed)?|credit(ed)?|dr|cr|txn|ref|alert|you sent|you received)\b/gi)||[]).length;
-  return n>=2&&/\d/.test(t);
-}
-// Which of the user's accounts an alert is about, from a bank name in it.
-function _qaAlertBank(low){
-  const accts=getCashAccounts();
-  const direct=accts.find(a=>{const n=_qaNorm(a);return n.length>2&&(' '+_qaNorm(low)+' ').includes(' '+n+' ');});
-  if(direct)return direct;
-  for(const [name,aliases] of Object.entries(_QA_BANK_ALIASES)){
-    if(!aliases.some(al=>new RegExp('\\b'+al+'\\b','i').test(low)))continue;
-    const hit=accts.filter(a=>{const an=a.toLowerCase();return an.includes(name.toLowerCase())||aliases.some(al=>an.includes(al));});
-    if(hit.length===1)return hit[0];
-  }
-  return null;
-}
-function _qaParseAlert(text){
-  const raw=String(text||'').replace(/\s*[\r\n]+\s*/g,' ; ');
-  if(!_qaIsAlert(raw))return null;
-  const r={type:'expense',amount:null,currency:'NGN',category:null,payee:null,bank:null,toBank:null,date:toLocalISO(new Date()),notes:'',alert:true};
-  // Drop the balance so its figure can't be taken for the amount.
-  const noBal=raw.replace(/(your\s+)?(avail(able)?\.?\s*)?(bal(ance)?|clr\s*bal|ledger\s*bal)\s*(is|of)?\s*[:=]?\s*(ngn|n|₦|usd|\$)?\s*-?[\d,]+(\.\d+)?/gi,' ; ');
-  const low=noBal.toLowerCase();
-  const dr=/\b(dr|debit(ed)?|withdrawal|you sent|sent to|purchase|paid)\b/i.test(noBal);
-  const cr=/\b(cr|credit(ed)?|received|deposit|inflow)\b/i.test(noBal);
-  // "DR"/"CR" right after the amount decides when both words appear.
-  const tag=noBal.match(/[\d,]+\.\d{2}\s*(dr|cr)\b/i);
-  r.type=tag?(tag[1].toLowerCase()==='cr'?'income':'expense'):(cr&&!dr?'income':'expense');
-  if(/\busd\b|\$/.test(low))r.currency='USD';
-  const amtM=noBal.match(/\b(?:txn\s*)?(?:amt|amount)\s*[:=]?\s*(?:ngn|n|₦|usd|\$)?\s*([\d,]+(?:\.\d{1,2})?)/i)
-    ||noBal.match(/(?:ngn|₦)\s?([\d,]+(?:\.\d{1,2})?)/i)
-    ||noBal.match(/\b([\d]{1,3}(?:,\d{3})+(?:\.\d{2})?|\d+\.\d{2})\b/);
-  if(amtM){const v=parseFloat(amtM[1].replace(/,/g,''));if(v>0)r.amount=Math.round(v*100)/100;}
-  // Date: 2026-09-26, 26/09/2026, 26-Sep-2026, 26-SEP-26
-  const MON={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
-  let dm=noBal.match(/\b(20\d\d)-(\d{2})-(\d{2})\b/);
-  if(dm)r.date=`${dm[1]}-${dm[2]}-${dm[3]}`;
-  else if((dm=noBal.match(/\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/))){
-    const y=+dm[3]<100?2000+ +dm[3]:+dm[3];const d=new Date(y,+dm[2]-1,+dm[1]);if(!isNaN(d)&&+dm[2]<=12)r.date=toLocalISO(d);
-  }else if((dm=noBal.match(/\b(\d{1,2})[\s\-]([A-Za-z]{3})[a-z]*[\s\-,]*(\d{2,4})\b/))&&MON[dm[2].toLowerCase()]){
-    const y=+dm[3]<100?2000+ +dm[3]:+dm[3];r.date=toLocalISO(new Date(y,MON[dm[2].toLowerCase()]-1,+dm[1]));
-  }
-  if(r.date>todayStr())r.date=todayStr();
-  r.bank=_qaAlertBank(low);
-  // What it was for: the narration, cleaned of transfer codes and references.
-  const dM=noBal.match(/\b(?:desc(?:ription)?|narration|des|remarks?|details|purpose)\s*[:=]\s*(.+?)(?=\s*;|\s+\b(?:avail|bal|date|dt|acct|acc|amt|amount|ref|time)\b|$)/i)
-    ||noBal.match(/\b(?:sent\b[^;]*?\bto|paid to|transfer to|from)\s+(.+?)(?=\s*;|\.\s|\s+\b(?:on|at|ref|avail|bal)\b|$)/i);
-  let desc=dM?dM[1]:'';
-  desc=desc.replace(/\.(com|ng|net|org|io)\b/gi,' ').replace(/\b(pos|web|nip|trf|trsf|transfer|fip|mob|ussd|ftn|purchase|payment|txn|ref|pmt|frm|to|from|via|for|by|ng|lag|lagos|abuja|ng\w{0,2})\b/gi,' ')
-    .replace(/[@\/\\|*#_\-:]+/g,' ').replace(/\b[a-z]*\d[\w]*\b/gi,' ').replace(/\s+/g,' ').trim();
-  if(desc){
-    const phrase=_qaNorm(desc).split(' ').filter(w=>w&&!_QA_FILLER.has(w)).slice(0,4).join(' ');
-    if(r.type==='expense'){
-      const items=_qaAllItems();
-      const hit=items.find(x=>{const n=_qaNorm(x.item);return n&&(phrase.includes(n)||n.includes(phrase));});
-      if(hit){r.payee=hit.item;r.category=hit.cat;}
-      else if(phrase){r.payee=phrase.split(' ').slice(0,3).join(' ').replace(/\b\w/g,c=>c.toUpperCase());r.category=applyRules(desc)||smartCat(desc)||null;}
-    }else r.notes=desc.slice(0,60).toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());
-  }
-  if(r.type==='income'){
-    const ic=getIncomeCats().find(c=>/salary/i.test(c)&&/salary|payroll|sal\b/i.test(noBal));
-    r.category=ic||null;
-  }
-  return r;
-}
-// Paste from the clipboard (📋) or into the box: line breaks are kept as
-// separators, since a text box would otherwise run the alert's lines together.
-function quickAddOnPaste(e){
-  const t=(e.clipboardData||window.clipboardData)?.getData('text');
-  if(!t)return;
-  e.preventDefault();
-  const q=document.getElementById('qa-text');if(q)q.value=t.replace(/\s*[\r\n]+\s*/g,' ; ').trim();
-  setTimeout(quickAddParse,30);
-}
-// Android "Share → SpendWise": sw.js stores the shared text on the device and
-// opens the app at ?shared=1. Open the + form with Quick add filled in and
-// read, so the entry is ready to check and save. (A web app can't read SMS or
-// notifications itself; sharing or pasting the alert is the way in.)
-let _sharedDone=false;
-async function _handleSharedAlert(){
-  if(_sharedDone||!/[?&]shared=1/.test(location.search))return;
-  _sharedDone=true;
-  try{history.replaceState(null,'',location.pathname);}catch(e){}
-  let text='';
-  try{
-    const c=await caches.open('spendwise-share'),k=new URL('__shared',location.href).href;
-    const r=await c.match(k);
-    if(r)text=(await r.text()).trim();
-    await c.delete(k);
-  }catch(e){console.warn('shared alert not read',e);}
-  if(!text){toast('Nothing was shared');return;}
-  openExpModal('expense');
-  setTimeout(()=>{const el=document.getElementById('qa-text');if(el){el.value=text.slice(0,600);quickAddParse();}},200);
-}
-async function quickAddPaste(){
-  try{
-    const t=await navigator.clipboard.readText();
-    if(!t||!t.trim()){_qaStatus('The clipboard is empty. Copy the bank alert first.','qa-warn');return;}
-    const q=document.getElementById('qa-text');if(q)q.value=t.replace(/\s*[\r\n]+\s*/g,' ; ').trim();
-    quickAddParse();
-  }catch(e){_qaStatus('Couldn\'t read the clipboard. Long-press the box and choose Paste.','qa-warn');}
-}
 function _qaStatus(msg,cls){const el=document.getElementById('qa-status');if(el){el.textContent=msg||'';el.className='qa-status'+(cls?' '+cls:'');}}
 let _qaBusy=false;
 async function quickAddParse(){
   const text=(document.getElementById('qa-text')?.value||'').trim();
   if(!text){_qaStatus('Type or say something like “5k lunch from GTB yesterday”.');return;}
   if(_qaBusy)return;_qaBusy=true;
-  const local=_qaParseAlert(text)||_qaParseLocal(text);
+  const local=_qaParseLocal(text);
   _qaFill(local);
   let r=local,byAI=false;
   if(navigator.onLine!==false&&_aiKey()){
@@ -8250,7 +8134,6 @@ function renderSettGuide(){
     ${sec('Recording money (the + button)',`
       <p>The round <b>+</b> button is on every page. Tap it for three shortcuts: <b>Quick add</b>, <b>Say it</b> (speak the transaction) and <b>Ask AI</b>. If it's covering something, <b>drag it</b> anywhere on the screen; it stays where you leave it.</p>
       <p><b>Quick add</b> (the box at the top of the form) is the fastest way: type or tap 🎤 and say something like <i>"5k lunch from GTB yesterday"</i>, <i>"received 250k salary into Access"</i> or <i>"moved 20k from Opay to Kuda"</i>. The form fills itself in; check it and tap Save. Nothing is saved until you do.</p>
-      <p><b>Bank alerts:</b> copy a debit or credit alert from your SMS or email and paste it into Quick add (or tap 📋). The amount, date, type and what it was for are read from the alert; the balance in it is ignored.</p>
       <p>Or fill in the form yourself. Choose what you're recording:</p>
       <ul>
         <li><b>Paid in dollars or pounds from a naira account?</b> (e.g. a $6.93 subscription on your naira card) Switch the currency next to Amount to $ or £. It's converted at that month's rate and your account is charged in naira.</li>
@@ -9208,17 +9091,13 @@ function renderSettData(){
       <div style="font-size:0.68rem;color:var(--text2);margin-top:10px">The round <b>+</b> button can be dragged anywhere on the screen. <span class="sh-link" style="font-size:0.68rem" onclick="fabResetPosition()">Put it back in the corner</span></div>
     </div>
     <div class="exp-card" style="margin-top:10px">
-      <div class="exp-card-title" style="margin-bottom:6px">Bank alerts</div>
-      <div class="exp-card-sub" style="line-height:1.6">SpendWise can't read your texts or notifications (phones don't let web apps do that), but it can read an alert you give it:<br>• <b>Share it</b> (Android): long-press the bank SMS or email → Share → <b>SpendWise</b>. The + form opens filled in; check it and tap Save. SpendWise must be installed on your home screen; if it isn't in the Share list, remove the home-screen icon and add it again once.<br>• <b>Paste it</b>: copy the alert, tap <b>+</b>, then 📋 in the Quick add box.</div>
-    </div>
-    <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Help</div>
       <div class="exp-card-sub" style="margin-bottom:10px">New here? The Guide explains every part of the app. Found a bug or have an idea? Send it straight to the developer.</div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-g btn-sm" style="flex:1" onclick="openGuide()">Open the guide</button>
         <button class="btn btn-g btn-sm" style="flex:1" onclick="reportProblem()">Report a problem</button>
       </div>
-      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.5</div><div style="color:var(--text3);margin-top:4px">v4.7.5: Share a bank SMS or email to SpendWise (Android) to fill in the + form, and Cash Flow labels now sit on their bands on one line with income under its bar.</div></div>
+      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.6</div><div style="color:var(--text3);margin-top:4px">v4.7.6: Bank alert reading removed: no Share to SpendWise, no paste button in Quick add. Quick add still reads typed or spoken notes.</div></div>
     </div>
     <details class="sett-adv" id="sett-adv"${_settAdvOpen?' open':''} ontoggle="_settAdvOpen=this.open">
       <summary>Advanced<span>AI keys, net worth, exchange rates, balance audit</span></summary>
@@ -9974,7 +9853,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').cat
 
 
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.7.5';
+const APP_VERSION='v4.7.6';
 async function checkForUpdate(){
   try{
     const res=await fetch(location.origin+location.pathname+'?_='+Date.now(),{cache:'no-store'});

@@ -1,7 +1,7 @@
 // SpendWise Service Worker
 // Stale-while-revalidate for the HTML shell (instant boot, refreshed in the
 // background); cache-first for version-queried assets, fonts and CDN libs.
-const CACHE = 'spendwise-v22';
+const CACHE = 'spendwise-v23';
 
 // Only truly-static, rarely-changing assets are pre-cached. index.html,
 // app.js and styles.css are intentionally NOT pre-cached here: index.html is
@@ -95,24 +95,6 @@ self.addEventListener('fetch', event => {
   // Always go to network for Firebase and other dynamic origins
   if (NETWORK_ONLY.some(origin => url.hostname.includes(origin))) {
     event.respondWith(fetch(req));
-    return;
-  }
-
-  // Android "Share → SpendWise" (manifest share_target, POST). The shared text
-  // (e.g. a bank SMS) is kept on the device: stored in a local cache and the
-  // app is opened at ?shared=1, which reads it and deletes it. A GET share
-  // would have put the text in the URL, which the shell refresh sends to the
-  // host.
-  if (req.method === 'POST' && url.pathname.endsWith('/share-target')) {
-    event.respondWith((async () => {
-      try {
-        const fd = await req.formData();
-        const text = [fd.get('title'), fd.get('text'), fd.get('url')].filter(Boolean).join(' ').trim();
-        const c = await caches.open('spendwise-share');
-        await c.put(new URL('__shared', self.registration.scope).href, new Response(text));
-      } catch (e) {}
-      return Response.redirect(new URL('./?shared=1', self.registration.scope).href, 303);
-    })());
     return;
   }
 

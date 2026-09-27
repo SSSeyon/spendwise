@@ -1,4 +1,4 @@
-# SpendWise — Handover Note (v4.7.5)
+# SpendWise — Handover Note (v4.7.6)
 
 Personal-finance PWA, shared with the owner's friends since v4.5 (2026-09-26). Works signed out (data stays on the device); optional username/password accounts sync across devices with every document **encrypted on the device** — the project owner cannot read other users' data.
 Live: https://ssseyon.github.io/spendwise/
@@ -43,6 +43,10 @@ Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB l
 - **Logos:** served from the app's own `Logos/`; `LOGO_CATALOG` in setup.js resolves a logo by account/platform name at render time (20 added from official Play Store icons); users can upload their own (a 64px data URL stored in their settings).
 - The one-time Fife→Kids / USD Cash / Energy→Fuel repairs no longer run at boot.
 - Tested 2026-09-26 on localhost with two test accounts: sign-up + upload of local data, ciphertext-only storage, restore on sign-in, recovery, password change, concurrent increments from two tabs, live listeners, offline-then-reload, cross-user isolation. Known gap (pre-existing): if the boot sync throws, realtime listeners stay off until a reload.
+
+## v4.7.6 (2026-09-27)
+
+- **Bank alert reading removed** at the owner's request: the Android share target (`manifest.json` `share_target`, the `sw.js` POST handler, `_handleSharedAlert`), the alert parser (`_qaParseAlert`, `_qaIsAlert`, `_qaAlertBank`, `_QA_BANK_ALIASES`), the 📋 paste button (`quickAddPaste`, `quickAddOnPaste`), the alert rule in the Quick add AI prompt, the Guide paragraph and the Settings → Data "Bank alerts" card. Quick add still reads typed or spoken notes (`_qaParseLocal`, then the AI). `sw.js` CACHE is `spendwise-v23` (manifest changed); its activate step deletes the old `spendwise-share` cache.
 
 ## v4.7.5 (2026-09-27)
 
@@ -116,7 +120,7 @@ Read this before changing storage, budgets, recurring, history or net worth; eac
 
 **Other changes:**
 - **Search:** one search for every month, opened from Home (`openGlobalSearch`). It shows cached months first, then the database (once per 10 min). It matches amounts too. The Expenses box only filters the month on screen.
-- **Quick add:** reads pasted bank alerts (`_qaParseAlert`, `quickAddOnPaste`, 📋 `quickAddPaste`), before the typed-phrase parser and the AI.
+- **Quick add:** reading pasted bank alerts was added here and removed in v4.7.6.
 - **Month in review** card on Home, days 1–7 (`renderMonthReview`).
 - **Income is edited in the + form** (`openEditInc`); the separate income window is gone. The type buttons, Repeats and Quick add hide while editing (`_setEditMode`).
 - Removing a debtor or loan can reverse its bank movements (sources `debt-remove-reverse` / `loan-remove-reverse`).
