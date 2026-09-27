@@ -528,3 +528,5 @@ datalist option{background:var(--bg2);color:var(--text)}
 .mr-row{display:flex;justify-content:space-between;gap:10px;font-size:0.68rem;padding:5px 0;border-top:1px solid var(--border)}
 .mr-row span:first-child{color:var(--text3);flex-shrink:0}
 .mr-row span:last-child{text-align:right;color:var(--text2)}
+.acct-edit-btn{background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:6px;width:28px;height:28px;font-size:0.8rem;cursor:pointer;flex-shrink:0}
+.acct-edit-btn:active{background:var(--adim);color:var(--accent)}

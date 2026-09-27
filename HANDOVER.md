@@ -1,4 +1,4 @@
-# SpendWise — Handover Note (v4.7.2)
+# SpendWise — Handover Note (v4.7.3)
 
 Personal-finance PWA, shared with the owner's friends since v4.5 (2026-09-26). Works signed out (data stays on the device); optional username/password accounts sync across devices with every document **encrypted on the device** — the project owner cannot read other users' data.
 Live: https://ssseyon.github.io/spendwise/
@@ -43,6 +43,22 @@ Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB l
 - **Logos:** served from the app's own `Logos/`; `LOGO_CATALOG` in setup.js resolves a logo by account/platform name at render time (20 added from official Play Store icons); users can upload their own (a 64px data URL stored in their settings).
 - The one-time Fife→Kids / USD Cash / Energy→Fuel repairs no longer run at boot.
 - Tested 2026-09-26 on localhost with two test accounts: sign-up + upload of local data, ciphertext-only storage, restore on sign-in, recovery, password change, concurrent increments from two tabs, live listeners, offline-then-reload, cross-user isolation. Known gap (pre-existing): if the boot sync throws, realtime listeners stay off until a reload.
+
+## v4.7.3 (2026-09-27)
+
+**Interest is calculated from balance history** (the "Interest (v4.7.3)" block in app.js). Read this before touching interest.
+- `_dayBalances(key,m,y)`: each day's *opening* balance = the month's closing balance (`_closingBal`: the month doc, or the live balance for this month) minus every movement dated on or after that day (`_movesIn`: cash ledger entries for `cash:<name>`, `invMoves` for `inv:<platformKey>`). A month with no movements uses the average of its opening and closing balance. `_interestRange(key,rate,ct,from,to,share)` sums daily interest over `[from,to)`.
+- The cash ledger has no listener, so `_loadLedgers(months)` fetches the month docs into `_ledgerRemote` (the current month is refetched after 5 min). `_intPrefetch()` loads the ledgers and past balances the estimates need and redraws once; the Cash page and the Income Interest card call it.
+- An investment's interest uses the platform's history, split across its investments by current principal (`_subInterest`). Cash-outs and interest now also write `invMoves` (the interest ones have notes `'Interest'`).
+- **No maturity date → credited automatically at month end.** `runAutoInterest()` runs after boot sync and pull-to-refresh. For each completed month from `INT_AUTO_FROM` ('2026-09') onward, it claims `appConfig/interestPosts[key][YYYY-MM]` in a transaction (`_intClaim`), then `_bookInterest` books one Interest Income entry dated the month's last day (`auto:true`), credits the balance (cash via `_adjustCash`, which ripples forward; investments via subs, `_invBumpDocs` and an `invMoves` entry). Earlier months aren't back-filled one by one: interest earned before `INT_AUTO_FROM` goes into the first credit. A cash rate with no start date is pinned to the 1st of the month first seen (`intFrom`).
+- **With a maturity date** (a new cash field, `maturityDate` in the cash interest settings; investments already had one), nothing is automatic. Accrual runs to maturity and is recorded with Record interest or on cash-out.
+- Accrual starts at the latest of the start date, `intFrom` (the last Record) and, for monthly accounts, the day after the last credited month (`_cashAccrualFrom` / `_subAccrualFrom`).
+- Deleting an automatic entry keeps its month claimed (`skipped:true`), so it isn't added back. `saveInterestPosts` now writes the whole map (no merge), so a removed month really is removed.
+- `calcInterestAccrual` and `interestFor` are gone.
+
+**Cash tab:** the page-wide "Edit balances & accounts" panel (`toggleCashEdit`, `saveCash`, `saveCashInterest`) is replaced by a ✎ button on each account, also in the account's history title, that opens `acct-modal` (`openAcctEdit(name)` / `saveAcctEdit()`). It covers the balance for the month on screen (a correction, rippled forward), the interest rate, start date and maturity date, the logo, and removal. "+ Add accounts" sits under the list.
+
+**Cash Flow labels** are drawn by the `cfLabels` chart plugin as two-line tags on a card-coloured background, stacked so they don't overlap. The sankey plugin's own labels are hidden (`color:'transparent'`). Don't pass the label arrays to the dataset: Chart.js empties them. Colours come from `document.body`, where the light theme's variables live (`body.light`); reading them from `documentElement` gave light text in light mode.
 
 ## v4.7.2 (2026-09-27)
 
