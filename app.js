@@ -855,7 +855,7 @@ function renderRecurringCard(){
     const act=r.auto
       ?`<span style="font-size:0.62rem;color:var(--text3)">Posts itself</span>`
       :`<span style="font-size:0.7rem;color:var(--accent)">Post →</span>`;
-    return`<div class="txi" style="cursor:pointer" onclick="${r.auto?'openRecurModal()':`postRecurring('${r.id}')`}"><div><div class="txi-cat">${esc(r.payee)}</div><div class="txi-meta">${r.type==='income'?'Income':'Expense'} · ${r.frequency} · Due ${fmtDate(r.nextRun)}</div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge ${r.type==='income'?'bg':'br'}">${r.type==='income'?'+':'-'}${fN(r.amount)}</span>${act}</div></div>`;
+    return`<div class="txi" style="cursor:pointer" onclick="${r.auto?'openRecurModal()':`postRecurring('${r.id}')`}"><div><div class="txi-cat">${esc(r.payee)}</div><div class="txi-meta">${r.type==='income'?'Income':'Expense'} · ${r.frequency} · Due ${fmtDate(r.nextRun)}</div></div><div style="display:flex;align-items:center;gap:8px"><span class="badge ${r.type==='income'?'bg':'br'}">${r.type==='income'?'+':'-'}${isUSDCashAccount(r.bank)?'$'+r.amount:fC(r.amount)}</span>${act}</div></div>`;
   }).join('');
 }
 function openRecurModal(){
@@ -1296,6 +1296,9 @@ function fmtCur(ngn, currency, m, y) {
   const sym=currency==='USD'?'$':'£';
   return sym+(ngn/(rates[currency]||1)).toLocaleString('en-NG',{maximumFractionDigits:0});
 }
+// An amount in the display currency picked in any page header ("Effective"
+// shows naira, since these totals mix accounts).
+function fC(ngn){const c=S.dashCurrency;return fmtCur(ngn,c==='NATIVE'?'NGN':c);}
 function fmtPlatformVal(rawVal,platformKey,currency,m,y){
   const p=PLATFORMS.find(x=>x.key===platformKey);
   if(!p) return fmtCur(rawVal,currency,m,y);
@@ -2302,6 +2305,7 @@ function setDisplayCurrency(v){
   S.dashCurrency=v;cSet(CK.currency,v);
   _syncCurrencyPickers(v);
   renderDashboard();renderExpenses();renderIncome();renderForecast();renderInvestments();renderCashPage();renderDebtors();renderLoans();
+  try{renderSettBudget();renderRecurringCard();}catch(e){console.warn("settings re-render failed",e);}
 }
 function dashPeriodChange(){
   const newYear=parseInt(document.getElementById('dash-year').value);
@@ -2434,12 +2438,12 @@ function renderMonthReview(){
       <span class="sh-link" style="font-size:0.66rem" onclick="dismissMonthReview()">Hide</span>
     </div>
     <div class="mr-grid">
-      <div><div class="mr-l">Spent</div><div class="mr-v">${maskIf('review',fN(d.spent))}</div>${chg!=null?`<div class="mr-s" style="color:${chg>0?'var(--red)':'var(--accent)'}">${chg>0?'▲':'▼'} ${Math.abs(chg)}% vs ${MS[(d.pm+10)%12]}</div>`:''}</div>
-      <div><div class="mr-l">Income</div><div class="mr-v" style="color:var(--accent)">${d.income?maskIf('review',fN(d.income)):'—'}</div></div>
-      <div><div class="mr-l">${d.saved>=0?'Saved':'Overspent'}</div><div class="mr-v" style="color:${d.saved>=0?'var(--accent)':'var(--red)'}">${d.income?maskIf('review',fN(Math.abs(d.saved))):'—'}</div>${rate!=null&&d.saved>=0?`<div class="mr-s">${rate}% of income</div>`:''}</div>
+      <div><div class="mr-l">Spent</div><div class="mr-v">${maskIf('review',fC(d.spent))}</div>${chg!=null?`<div class="mr-s" style="color:${chg>0?'var(--red)':'var(--accent)'}">${chg>0?'▲':'▼'} ${Math.abs(chg)}% vs ${MS[(d.pm+10)%12]}</div>`:''}</div>
+      <div><div class="mr-l">Income</div><div class="mr-v" style="color:var(--accent)">${d.income?maskIf('review',fC(d.income)):'—'}</div></div>
+      <div><div class="mr-l">${d.saved>=0?'Saved':'Overspent'}</div><div class="mr-v" style="color:${d.saved>=0?'var(--accent)':'var(--red)'}">${d.income?maskIf('review',fC(Math.abs(d.saved))):'—'}</div>${rate!=null&&d.saved>=0?`<div class="mr-s">${rate}% of income</div>`:''}</div>
     </div>
-    <div class="mr-row"><span>Top spending</span><span>${d.top.map(([c,v])=>`${CAT_ICONS[c]||''} ${esc(c)} ${maskIf('review',fN(v))}`).join(' · ')}</span></div>
-    ${d.biggest?`<div class="mr-row"><span>Biggest expense</span><span>${esc(d.biggest.payee||d.biggest.category||'')} ${maskIf('review',fN(txNGN(d.biggest)))} · ${fmtDate(d.biggest.date)}</span></div>`:''}
+    <div class="mr-row"><span>Top spending</span><span>${d.top.map(([c,v])=>`${CAT_ICONS[c]||''} ${esc(c)} ${maskIf('review',fC(v))}`).join(' · ')}</span></div>
+    ${d.biggest?`<div class="mr-row"><span>Biggest expense</span><span>${esc(d.biggest.payee||d.biggest.category||'')} ${maskIf('review',fC(txNGN(d.biggest)))} · ${fmtDate(d.biggest.date)}</span></div>`:''}
     ${d.budgeted?`<div class="mr-row"><span>Budget</span><span>${d.over.length?`Over in ${d.over.map(esc).join(', ')}`:'Every category within budget ✓'}</span></div>`:''}
     <div style="display:flex;gap:8px;margin-top:10px">
       <button class="btn btn-g btn-sm" style="flex:1" onclick="shareMonthReview()">Share</button>
@@ -3427,18 +3431,18 @@ function computeSmartInsights(){
       :`Less than 2 months of history is cached on this device, so this is a simple pro-rata estimate — it gets smarter as history builds.`;
     if(pct>=110){
       out.alerts.push({type:'danger',icon:'🔴',key:`proj-total-${mk}`,
-        title:`Heading over budget — projected ${fN(out.totalProj)}`,
-        sub:`${fN(spentTotal)} spent by day ${day} · budget ${fN(out.totalBudget)} · ${daysLeft}d left`,
+        title:`Heading over budget — projected ${fC(out.totalProj)}`,
+        sub:`${fC(spentTotal)} spent by day ${day} · budget ${fC(out.totalBudget)} · ${daysLeft}d left`,
         why:histNote});
     }else if(pct>=90){
       out.alerts.push({type:'warn',icon:'⚠️',key:`proj-total-${mk}`,
         title:`Cutting it close — projected ${pct}% of budget`,
-        sub:`Projected ${fN(out.totalProj)} vs ${fN(out.totalBudget)} · ${daysLeft}d left`,
+        sub:`Projected ${fC(out.totalProj)} vs ${fC(out.totalBudget)} · ${daysLeft}d left`,
         why:histNote});
     }else{
       out.insights.push({type:'good',icon:'✅',key:`proj-total-${mk}`,
         title:`On track — projected ${pct}% of budget`,
-        sub:`Projected ${fN(out.totalProj)} vs ${fN(out.totalBudget)} · ${fN(Math.max(0,out.totalBudget-out.totalProj))} headroom`,
+        sub:`Projected ${fC(out.totalProj)} vs ${fC(out.totalBudget)} · ${fC(Math.max(0,out.totalBudget-out.totalProj))} headroom`,
         why:histNote});
     }
   }
@@ -3451,20 +3455,20 @@ function computeSmartInsights(){
     if(p.budget>0&&p.spent>p.budget){
       out.alerts.push({type:'danger',icon,key,
         title:`${cat} is over budget`,
-        sub:`${fN(p.spent)} spent vs ${fN(p.budget)} budget`,
-        why:p.typTotal>0?`Your typical ${cat} month is ${fN(p.typTotal)}. With ${daysLeft} days left, expect roughly ${fN(Math.max(0,p.proj-p.spent))} more based on your usual pattern.`:`No history yet for ${cat} — the overage is measured against this month's budget only.`});
+        sub:`${fC(p.spent)} spent vs ${fC(p.budget)} budget`,
+        why:p.typTotal>0?`Your typical ${cat} month is ${fC(p.typTotal)}. With ${daysLeft} days left, expect roughly ${fC(Math.max(0,p.proj-p.spent))} more based on your usual pattern.`:`No history yet for ${cat} — the overage is measured against this month's budget only.`});
       return;
     }
     // Projected overspend — only when the method has something to stand on.
     if(p.budget>0&&p.proj>p.budget*1.1&&p.spent>0&&(p.method!=='linear'||day>=7)){
       const why=p.method==='episodic'
-        ?`You've made ${p.count} ${cat} purchase${p.count===1?'':'s'} this month; historically you make ~${Math.round(p.typCount)}/month totalling ${fN(p.typTotal)}. This is NOT extrapolated daily — the projection assumes your normal purchase rhythm, and it still lands over budget.`
+        ?`You've made ${p.count} ${cat} purchase${p.count===1?'':'s'} this month; historically you make ~${Math.round(p.typCount)}/month totalling ${fC(p.typTotal)}. This is NOT extrapolated daily — the projection assumes your normal purchase rhythm, and it still lands over budget.`
         :p.method==='paced'
-        ?`By day ${day} you've usually spent ${Math.round(p.frac*100)}% of your monthly ${cat} total. Scaling this month's ${fN(p.spent)} by that curve projects ${fN(p.proj)} vs ${fN(p.budget)} budget.`
-        :`Simple pro-rata (limited history for ${cat}): ${fN(p.spent)} over ${day} days extends to ${fN(p.proj)}.`;
+        ?`By day ${day} you've usually spent ${Math.round(p.frac*100)}% of your monthly ${cat} total. Scaling this month's ${fC(p.spent)} by that curve projects ${fC(p.proj)} vs ${fC(p.budget)} budget.`
+        :`Simple pro-rata (limited history for ${cat}): ${fC(p.spent)} over ${day} days extends to ${fC(p.proj)}.`;
       out.alerts.push({type:'warn',icon,key,
         title:`${cat} pacing over budget`,
-        sub:`Projected ${fN(p.proj)} vs ${fN(p.budget)} (${Math.round(p.proj/p.budget*100)}%)`,
+        sub:`Projected ${fC(p.proj)} vs ${fC(p.budget)} (${Math.round(p.proj/p.budget*100)}%)`,
         why});
       return;
     }
@@ -3472,21 +3476,21 @@ function computeSmartInsights(){
     if(p.method==='episodic'&&p.typTotal>0&&p.spent>p.typTotal*1.3&&(p.spent-p.typTotal)>Math.max(5000,p.typTotal*0.3)){
       out.alerts.push({type:'warn',icon,key:`anom-${ck(cat)}-${mk}`,
         title:`${cat} unusually high this month`,
-        sub:`${fN(p.spent)} so far vs typical ${fN(p.typTotal)}/month`,
-        why:`Over the last ${nMonths} months your median ${cat} month was ${fN(p.typTotal)} across ~${Math.round(p.typCount)} purchase${Math.round(p.typCount)===1?'':'s'}. This month is already ${Math.round((p.spent/p.typTotal-1)*100)}% above that — worth a look, though it may be a known one-off.`});
+        sub:`${fC(p.spent)} so far vs typical ${fC(p.typTotal)}/month`,
+        why:`Over the last ${nMonths} months your median ${cat} month was ${fC(p.typTotal)} across ~${Math.round(p.typCount)} purchase${Math.round(p.typCount)===1?'':'s'}. This month is already ${Math.round((p.spent/p.typTotal-1)*100)}% above that — worth a look, though it may be a known one-off.`});
       return;
     }
     // Positive / contextual reads → Analytics insights only (no alert noise).
     if(p.method==='episodic'&&p.spent>0&&p.typTotal>0&&p.spent<=p.typTotal*1.15&&p.count<=Math.ceil(p.typCount)){
       out.insights.push({type:'info',icon,key,
         title:`${cat}: normal rhythm`,
-        sub:`${p.count} purchase${p.count===1?'':'s'} (${fN(p.spent)}) · typical month: ~${Math.round(p.typCount)} totalling ${fN(p.typTotal)}`,
-        why:`${cat} isn't a daily expense for you — history shows ~${Math.round(p.typCount)} purchase${Math.round(p.typCount)===1?'':'s'}/month. Expect roughly ${fN(Math.max(0,p.typTotal-p.spent))} more this month if the pattern holds.`});
+        sub:`${p.count} purchase${p.count===1?'':'s'} (${fC(p.spent)}) · typical month: ~${Math.round(p.typCount)} totalling ${fC(p.typTotal)}`,
+        why:`${cat} isn't a daily expense for you — history shows ~${Math.round(p.typCount)} purchase${Math.round(p.typCount)===1?'':'s'}/month. Expect roughly ${fC(Math.max(0,p.typTotal-p.spent))} more this month if the pattern holds.`});
     }else if(p.method==='paced'&&p.budget>0&&day>=10&&p.proj<=p.budget*0.85&&p.spent>0){
       out.insights.push({type:'good',icon,key,
         title:`${cat} running under budget`,
-        sub:`Projected ${fN(p.proj)} vs ${fN(p.budget)} — about ${fN(p.budget-p.proj)} headroom`,
-        why:`You've spent ${fN(p.spent)} by day ${day}; historically that's ${Math.round(p.frac*100)}% of the month done, so finishing near ${fN(p.proj)} would beat your ${fN(p.budget)} budget.`});
+        sub:`Projected ${fC(p.proj)} vs ${fC(p.budget)} — about ${fC(p.budget-p.proj)} headroom`,
+        why:`You've spent ${fC(p.spent)} by day ${day}; historically that's ${Math.round(p.frac*100)}% of the month done, so finishing near ${fC(p.proj)} would beat your ${fC(p.budget)} budget.`});
     }
   });
 
@@ -3500,7 +3504,7 @@ function computeSmartInsights(){
           out.insights.push({type:'info',icon:CAT_ICONS[cat]||'📊',key:`share-${ck(cat)}-${mk}`,
             title:`${cat} is dominating this month`,
             sub:`${Math.round(shareNow*100)}% of spend so far — usually ~${Math.round(shareTyp*100)}%`,
-            why:`Historically ${cat} takes about ${Math.round(shareTyp*100)}% of your monthly spending; this month it's at ${Math.round(shareNow*100)}% (${fN(p.spent)} of ${fN(spentTotal)}).`});
+            why:`Historically ${cat} takes about ${Math.round(shareTyp*100)}% of your monthly spending; this month it's at ${Math.round(shareNow*100)}% (${fC(p.spent)} of ${fC(spentTotal)}).`});
         }
       });
     }
@@ -3528,7 +3532,7 @@ function renderDashAlerts(){
       type:'info',
       icon:'🔁',
       title:`${recurring.length} recurring payment${recurring.length>1?'s':''} due this month`,
-      sub:recurring.map(r=>`${r.payee} (${fN(r.amount)})`).join(' · ')+(total?` · Total: ${fN(total)}`:''),
+      sub:recurring.map(r=>`${r.payee} (${fN(r.amount)})`).join(' · ')+(total?` · Total: ${fC(total)}`:''),
       link:{label:'Post now →',fn:"openRecurModal()"}
     });
   }
@@ -3555,7 +3559,7 @@ function renderDashAlerts(){
         const actualPct=Math.round(savedAmt/incTotal*100);
         const targetAmt=Math.round(incTotal*targetPct/100);
         if(actualPct<targetPct*0.8){
-          alerts.push({type:'warn',icon:'🎯',title:`Savings target: ${actualPct}% of ${targetPct}% goal`,sub:`Targeting ${fN(targetAmt)} saved · actual ${fN(Math.max(0,savedAmt))} · ${fN(Math.max(0,targetAmt-savedAmt))} short`});
+          alerts.push({type:'warn',icon:'🎯',title:`Savings target: ${actualPct}% of ${targetPct}% goal`,sub:`Targeting ${fC(targetAmt)} saved · actual ${fC(Math.max(0,savedAmt))} · ${fC(Math.max(0,targetAmt-savedAmt))} short`});
         }
       }
     }
@@ -3564,7 +3568,7 @@ function renderDashAlerts(){
   // 4) Overdue debtors (no activity > 60 days)
   const overdue=_getOverdueDebtors();
   if(overdue.length){
-    alerts.push({type:'warn',icon:'⏰',title:`${overdue.length} debtor${overdue.length>1?'s':''} — no activity > 60 days`,sub:overdue.map(d=>d.name+' ('+fN(d.ngnBalance||0)+' due)').join(' · ')});
+    alerts.push({type:'warn',icon:'⏰',title:`${overdue.length} debtor${overdue.length>1?'s':''} — no activity > 60 days`,sub:overdue.map(d=>d.name+' ('+fC(d.ngnBalance||0)+' due)').join(' · ')});
   }
 
   // Feed notification bell (always, even when el is hidden)
@@ -4328,6 +4332,7 @@ function delIncome(id){
       catch(e){toast('Delete failed — restored');rollback();return;}
       // A deleted interest posting can be posted again.
       if(inc.source==='interest'&&inc.intAcct){
+        _unrecordInterest(inc);
         const posts=getInterestPosts(),p=posts[inc.intAcct]||{};
         const k=Object.keys(p).find(s=>p[s]&&p[s].incomeId===id);
         if(k){delete p[k];saveInterestPosts(posts);renderIncome();}
@@ -5276,9 +5281,12 @@ function _doTransfer({kind,from,to,amt,date,notes}){
   const {m,y}=_ymOf(date);
   const fx=getFxRates(m,y).USD||1650;
 
+  // Interest earned but not yet recorded can cover a shortfall (current month
+  // only, because recorded interest is dated today).
+  const _topUp=()=>_invIsLiveMonth(m,y)&&_offerInterestTopUp('cash:'+from,_cashBalFor(from,m,y),amt);
   if(kind==='cash-cash'){
     if(from===to) return {ok:false,msg:'Select different accounts'};
-    if(_cashBalFor(from,m,y)<amt) return {ok:false,msg:`Insufficient funds in ${from}`};
+    if(_cashBalFor(from,m,y)<amt&&!_topUp()) return {ok:false,msg:`Insufficient funds in ${from}`};
     const fU=isUSDCashAccount(from),tU=isUSDCashAccount(to);
     // Amount is entered in the FROM account's currency; convert when they differ.
     const toAmt=fU===tU?amt:(fU?Math.round(amt*fx):+(amt/fx).toFixed(2));
@@ -5301,7 +5309,7 @@ function _doTransfer({kind,from,to,amt,date,notes}){
   }
 
   if(kind==='cash-inv'){
-    if(_cashBalFor(from,m,y)<amt) return {ok:false,msg:`Insufficient funds in ${from}`};
+    if(_cashBalFor(from,m,y)<amt&&!_topUp()) return {ok:false,msg:`Insufficient funds in ${from}`};
     const ngnAmt=isUSDCashAccount(from)?Math.round(amt*fx):amt;
     const platLabel=PLATFORMS.find(p=>p.key===to)?.label||to;
     const ref=_saveXfrRecord(from,to,amt,date,m,y,notes,ngnAmt,'cash-inv');
@@ -5315,7 +5323,11 @@ function _doTransfer({kind,from,to,amt,date,notes}){
     const platLabel=PLATFORMS.find(p=>p.key===from)?.label||from;
     // Withdraw FIRST — it returns false on insufficient balance, so nothing is
     // credited before we know the debit can succeed.
-    if(!_invWithdraw(from,amt,m,y)) return {ok:false,msg:`Insufficient balance in ${platLabel}`};
+    if(!_invWithdraw(from,amt,m,y)){
+      const bal=getSubsForPlatform(from).reduce((s,sb)=>s+(Number(sb.principal)||0),0)||Number(S.investments[from])||0;
+      if(!_offerInterestTopUp('inv:'+from,bal,amt)||!_invWithdraw(from,amt,m,y))
+        return {ok:false,msg:`Insufficient balance in ${platLabel}`};
+    }
     const toAmt=isUSDCashAccount(to)?+(amt/fx).toFixed(2):amt;
     const ref=_saveXfrRecord(from,to,amt,date,m,y,notes,toAmt,'inv-cash');
     _adjustCash(to,toAmt,m,y,'Transfer ← '+platLabel,ref,date);
@@ -5355,14 +5367,10 @@ function _invWithdraw(pKey, ngnAmt, m, y){
 // INTEREST INCOME POSTING
 // ══════════════════════════════════════════════════════════════════════════
 // Interest-bearing accounts (Renmoney = cash, Piggy = investment, and any other
-// account you've set a rate on) accrue daily. SpendWise has no server, so it
-// can't post while closed — instead, when a calendar month completes, the
-// Income tab offers a one-tap "Post" (confirm-gated: nothing posts on its own).
-// Posting creates ONE income entry ("Interest Income") for the month it's
-// credited (the current month), and credits the account's balance. A synced
-// ledger (sw3_interest_posts) records which earned-months have been posted so
-// the same month can't be double-posted. Amounts are estimates from the rate;
-// the created entry is a normal, editable income record.
+// account you've set a rate on) accrue daily. The interest is recorded when
+// you choose (see "Recording interest" below). sw3_interest_posts is the
+// ledger of the old month-by-month posts (before v4.7.2); accrual starts after
+// the last of them.
 const INT_POSTS_KEY='sw3_interest_posts';
 function getInterestPosts(){return cGet(INT_POSTS_KEY)||{};}
 function saveInterestPosts(obj){
@@ -5380,8 +5388,6 @@ async function loadInterestPosts(){
   }catch(e){_warnLoad('loadInterestPosts',e);}
 }
 function _daysInMonth(m,y){return new Date(y,m,0).getDate();}
-// Simple daily accrual (or daily compounding) over `days` on a flat balance.
-function _interestOnBalance(bal,ratePct,ct,days){return Math.round(interestFor(bal,ratePct,ct,days));}
 // Candidate accounts: cash accounts with an interest rate set, plus investment
 // platforms whose subs carry a rate.
 function _interestAccounts(){
@@ -5400,88 +5406,188 @@ function _interestAccounts(){
   });
   return list;
 }
-function _acctBalanceFor(acct,m,y){
-  if(acct.kind==='cash'){
-    const c=cGet(CK.cash(m,y))||((m===S.cashMonth&&y===S.cashYear)?(S.cash||{}):{});
-    return _sbNum(c[acct.name]);
-  }
-  const iv=cGet(CK.inv(m,y))||(S.investments||{});
-  return _sbNum(iv[acct.pKey]);
+// ── Recording interest (v4.7.2) ──────────────────────────────────────────
+// The interest shown on Renmoney, Piggy etc. is an estimate on top of the
+// stored balance, so a transfer of the full balance used to be refused.
+// "Record interest" makes it real: one Interest Income entry, the balance
+// credited, and the accrual restarted from that day (`intFrom`, kept in the
+// cash interest settings or on the investment). It replaces the old
+// month-by-month "Post", which could only post the last completed month.
+// Earlier monthly posts still count: accrual starts after the last one.
+function _laterDate(a,b){return !a?(b||''):!b?a:(a>b?a:b);}
+function _lastPostedFrom(key){
+  const p=getInterestPosts()[key]||{};
+  const ks=Object.keys(p).filter(k=>/^\d{4}-\d{2}$/.test(k)).sort();
+  if(!ks.length)return '';
+  const [y,m]=ks[ks.length-1].split('-').map(Number);
+  return m===12?`${y+1}-01-01`:`${y}-${String(m+1).padStart(2,'0')}-01`;
 }
-// Running interest for the in-progress (current) month — display only.
-function _accruedSoFar(acct){
-  const now=new Date();const cm=now.getMonth()+1,cy=now.getFullYear();
-  let elapsed=now.getDate();
-  if(acct.startDate){
-    const sd=new Date(acct.startDate);
-    if(sd>now)elapsed=0;
-    else if(sd.getFullYear()===cy&&sd.getMonth()+1===cm)elapsed=Math.max(0,now.getDate()-sd.getDate());
-  }
-  return {amount:_interestOnBalance(_acctBalanceFor(acct,cm,cy),acct.rate,acct.compoundType,elapsed),cm,cy};
+function _daysBetween(a,b){return Math.max(0,Math.round((new Date(b+'T00:00:00')-new Date(a+'T00:00:00'))/86400000));}
+// Where an investment's accrual starts: the latest of its start date, its
+// last recorded interest and the platform's last monthly post.
+function _subAccrualFrom(pKey,sub){
+  return _laterDate(_laterDate(sub.startDate||'',sub.intFrom||''),_lastPostedFrom('inv:'+pKey));
 }
-// The most recent COMPLETED month, if it's on/after the interest start date.
-// Returns {pMonth,pYear,amount,sid,posted} or null.
-function _postableMonth(acct){
-  const now=new Date();
-  let pMonth=now.getMonth(),pYear=now.getFullYear();   // getMonth() is prev month in 1-based terms
-  if(pMonth===0){pMonth=12;pYear--;}
-  if(acct.startDate){
-    const lastDay=`${pYear}-${String(pMonth).padStart(2,'0')}-${String(_daysInMonth(pMonth,pYear)).padStart(2,'0')}`;
-    if(lastDay<acct.startDate)return null;             // month ended before interest began
+// Interest a cash account has earned and not yet recorded, in the account's
+// own currency. Each month uses that month's saved balance where known.
+function _cashUnrealised(name){
+  const ci=getCashInterestMeta()[name]||{};
+  const rate=_sbNum(ci.interestRate);
+  const today=todayStr();
+  let from=_laterDate(_laterDate(ci.startDate||'',ci.intFrom||''),_lastPostedFrom('cash:'+name));
+  if(!from)from=today.slice(0,8)+'01';
+  if(!rate||from>=today)return {amount:0,from,rate};
+  const now=new Date(),cm=now.getMonth()+1,cy=now.getFullYear();
+  const liveBal=_sbNum((S.cashMonth===cm&&S.cashYear===cy?S.cash:cGet(CK.cash(cm,cy)))?.[name]);
+  let [y,m,d]=from.split('-').map(Number),amt=0;
+  while(y<cy||(y===cy&&m<=cm)){
+    const endDay=(y===cy&&m===cm)?now.getDate():_daysInMonth(m,y)+1;
+    const days=Math.max(0,endDay-d);
+    const bal=_sbNum((cGet(CK.cash(m,y))||{})[name])||liveBal;
+    amt+=interestFor(bal,rate,ci.compoundType||'daily_accrual',days);
+    d=1;if(++m>12){m=1;y++;}
   }
-  const sidP=`${pYear}-${String(pMonth).padStart(2,'0')}`;
-  const posts=getInterestPosts()[acct.key]||{};
-  if(posts[sidP])return {pMonth,pYear,amount:_sbNum(posts[sidP].amount),sid:sidP,posted:true};
-  const amount=_interestOnBalance(_acctBalanceFor(acct,pMonth,pYear),acct.rate,acct.compoundType,_daysInMonth(pMonth,pYear));
-  if(amount<=0)return null;
-  return {pMonth,pYear,amount,sid:sidP,posted:false};
+  amt=isUSDCashAccount(name)?Math.round(amt*100)/100:Math.round(amt);
+  return {amount:amt,from,rate};
 }
-function postInterest(acctKey){
-  const acct=_interestAccounts().find(a=>a.key===acctKey);
-  if(!acct){toast('Account not found');return;}
-  const pm=_postableMonth(acct);
-  if(!pm||pm.posted||pm.amount<=0){toast('Nothing to post');renderIncome();return;}
-  const now=new Date();const cm=now.getMonth()+1,cy=now.getFullYear();
-  const monName=MONTHS[pm.pMonth-1];
-  if(!confirm(`Post ${fN(pm.amount)} as ${acct.name} interest income for ${monName} ${pm.pYear}, and credit ${acct.name}?`))return;
-  const dateStr=`${cy}-${String(cm).padStart(2,'0')}-01`;
+// Interest a platform's fixed-income investments have earned and not yet
+// recorded (₦), with each investment's share.
+function _invUnrealised(pKey){
+  const per=[];let amount=0,from='',rate=0;
+  getSubsForPlatform(pKey).forEach(sb=>{
+    if(sb.assetClass!=='fixed_income'||!_sbNum(sb.rate))return;
+    const f=_subAccrualFrom(pKey,sb);if(!f)return;
+    const r=calcInterestAccrual(Number(sb.principal)||0,Number(sb.rate),sb.compoundType||'daily_accrual',f,sb.maturityDate||null,[]);
+    const a=Math.round(r.interest);
+    if(!from||f<from)from=f;rate=rate||_sbNum(sb.rate);
+    if(a>0){per.push({id:sb.id,amount:a});amount+=a;}
+  });
+  return {amount,from,rate,per};
+}
+function _unrealisedFor(key){
+  return key.startsWith('cash:')?_cashUnrealised(key.slice(5)):_invUnrealised(key.slice(4));
+}
+function _interestAcctName(key){
+  return key.startsWith('cash:')?key.slice(5):(PLATFORMS.find(p=>p.key===key.slice(4))?.label||key.slice(4));
+}
+function _fmtAcctAmt(key,v){return key.startsWith('cash:')&&isUSDCashAccount(key.slice(5))?'$'+(+v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(Math.round(v));}
+// Books `amount` (account currency) of interest on `key` dated today.
+function recordInterest(key,amount){
+  amount=+amount;
+  if(!(amount>0))return false;
+  const now=new Date(),cm=now.getMonth()+1,cy=now.getFullYear(),date=todayStr();
+  const name=_interestAcctName(key),isCash=key.startsWith('cash:');
+  const est=_unrealisedFor(key);
+  const usd=isCash&&isUSDCashAccount(name);
   const ref=db.collection('income').doc(),id=ref.id;
-  // A dollar account's interest is in dollars (its balance is).
-  const usd=acct.kind==='cash'&&isUSDCashAccount(acct.name);
-  const entry={amount:pm.amount,amtNGN:usd?Math.round(pm.amount*(getFxRates(cm,cy).USD||1600)):pm.amount,currency:usd?'USD':'NGN',category:'Interest Income',
-    bank:acct.name,notes:`${monName} ${pm.pYear} interest`,date:dateStr,month:cm,year:cy,
-    type:'income',source:'interest',intAcct:acctKey};
+  const entry={amount,amtNGN:usd?Math.round(amount*(getFxRates(cm,cy).USD||1600)):Math.round(amount),currency:usd?'USD':'NGN',
+    category:'Interest Income',bank:name,notes:`Interest ${est.from?fmtDate(est.from)+' – ':'to '}${fmtDate(date)}`,
+    date,month:cm,year:cy,type:'income',source:'interest',intAcct:key,realised:true,intPrevFrom:est.from||''};
+  if(isCash){
+    const meta=getCashInterestMeta();meta[name]={...(meta[name]||{}),intFrom:date};
+    saveCashInterestMeta(meta);
+    _adjustCash(name,amount,cm,cy,'interest','',date);
+  }else{
+    // Share the amount across the investments by their estimates (all of it to
+    // the first one when there's no estimate), and restart their accrual.
+    const pKey=key.slice(4),subs=getSubsForPlatform(pKey);
+    const tot=est.amount||0,shares=[];
+    let left=Math.round(amount);
+    const targets=est.per.length?est.per:[{id:subs[0]?.id,amount:1}];
+    targets.forEach((t,i)=>{
+      const share=i===targets.length-1?left:Math.round(amount*(t.amount/(tot||1)));
+      left-=share;shares.push({id:t.id,amount:share});
+    });
+    const prev={};
+    const updated=subs.map(sb=>{
+      const sh=shares.find(s=>s.id===sb.id);
+      if(!sh&&!(sb.assetClass==='fixed_income'&&_sbNum(sb.rate)))return sb;
+      prev[sb.id]=sb.intFrom||'';
+      return {...sb,principal:(Number(sb.principal)||0)+(sh?sh.amount:0),intFrom:date};
+    });
+    entry.intSubs=shares;entry.intPrev=prev;
+    saveSubsForPlatform(pKey,updated);
+    const inv={...S.investments,month:cm,year:cy};
+    inv[pKey]=updated.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
+    S.investments=inv;cSet(CK.inv(cm,cy),inv);
+    if(db)db.collection('investments').doc(sid(cm,cy)).set(inv,{merge:true}).catch(e=>console.warn('investments write failed (interest)',e));
+  }
   _placeRecord('inc',{...entry,id},null);
   ref.set({...entry,createdAt:FV.serverTimestamp()}).catch(e=>{console.warn('interest income sync failed — queued',e);oqAdd('income',id,entry,true);});
-  // Credit the account balance
-  if(acct.kind==='cash')_adjustCash(acct.name,pm.amount,cm,cy,'interest','',dateStr);
-  else _invDeposit(acct.pKey,pm.amount,cm,cy);
-  // Record so this earned-month can't be posted twice
-  const posts=getInterestPosts();posts[acctKey]=posts[acctKey]||{};
-  posts[acctKey][pm.sid]={amount:pm.amount,incomeId:id,month:pm.pMonth,year:pm.pYear,postedAt:Date.now()};
-  saveInterestPosts(posts);
-  toast(`${acct.name} interest posted · ${fN(pm.amount)}`);
-  renderIncome();renderDashboard();
+  _histTouch(cm,cy);
+  return true;
+}
+// Undo the balance side of a recorded interest entry that was deleted (cash
+// accounts are already reversed by the income delete itself).
+function _unrecordInterest(inc){
+  if(!inc||!inc.realised||!inc.intAcct)return;
+  if(inc.intAcct.startsWith('cash:')){
+    const name=inc.intAcct.slice(5),meta=getCashInterestMeta();
+    if(meta[name]){meta[name]={...meta[name],intFrom:inc.intPrevFrom||''};saveCashInterestMeta(meta);}
+    return;
+  }
+  const pKey=inc.intAcct.slice(4),n=new Date(),cm=n.getMonth()+1,cy=n.getFullYear();
+  const subs=getSubsForPlatform(pKey).map(sb=>{
+    const sh=(inc.intSubs||[]).find(s=>s.id===sb.id);
+    const out={...sb};
+    if(sh)out.principal=Math.max(0,(Number(sb.principal)||0)-sh.amount);
+    if(inc.intPrev&&sb.id in inc.intPrev)out.intFrom=inc.intPrev[sb.id];
+    return out;
+  });
+  saveSubsForPlatform(pKey,subs);
+  const inv={...S.investments,month:cm,year:cy};inv[pKey]=subs.reduce((s,sb)=>s+(Number(sb.principal)||0),0);
+  S.investments=inv;cSet(CK.inv(cm,cy),inv);
+  if(db)db.collection('investments').doc(sid(cm,cy)).set(inv,{merge:true}).catch(e=>console.warn('investments write failed (interest undo)',e));
+  renderInvestments();renderDashboard();
+}
+let _intKey=null;
+function openRecordInterest(key){
+  const u=_unrealisedFor(key),name=_interestAcctName(key);
+  _intKey=key;
+  const usd=key.startsWith('cash:')&&isUSDCashAccount(name);
+  document.getElementById('int-title').textContent=`Record interest — ${name}`;
+  document.getElementById('int-desc').innerHTML=u.amount>0
+    ?`At ${u.rate}% a year, ${esc(name)} has earned about <b>${_fmtAcctAmt(key,u.amount)}</b> since ${fmtDate(u.from)}. If your statement shows a different figure, enter that instead.<br><br>This adds it to ${esc(name)}'s balance and records it as Interest Income for today.`
+    :`No interest is estimated since ${u.from?fmtDate(u.from):'the start date'}. You can still enter the amount from your statement.`;
+  document.getElementById('int-amt-lbl').textContent=`Interest earned (${usd?'$':'₦'})`;
+  const el=document.getElementById('int-amount');
+  el.value=u.amount>0?(usd?u.amount.toFixed(2):Math.round(u.amount).toLocaleString()):'';
+  openMod('int-modal');
+  setTimeout(()=>initNumInputs(document.getElementById('int-modal')),50);
+}
+function confirmRecordInterest(){
+  if(!_intKey){closeMod('int-modal');return;}
+  const amt=parseFloat(_evalExpr(document.getElementById('int-amount').value));
+  if(!(amt>0)){toast('Enter the interest amount');return;}
+  const key=_intKey;
+  if(!recordInterest(key,amt)){toast('Could not record interest');return;}
+  closeMod('int-modal');_intKey=null;
+  haptic([10]);
+  toast(`${_interestAcctName(key)} interest recorded · ${_fmtAcctAmt(key,amt)}`);
+  renderIncome();renderDashboard();renderCashPage();renderInvestments();
+}
+// Used by transfers: when the stored balance is short but recorded interest
+// would cover it, offer to record the interest first. Returns true if done.
+function _offerInterestTopUp(key,bal,amt){
+  const u=_unrealisedFor(key);
+  if(!(u.amount>0)||bal+u.amount<amt)return false;
+  const name=_interestAcctName(key);
+  if(!confirm(`${name} holds ${_fmtAcctAmt(key,bal)} plus about ${_fmtAcctAmt(key,u.amount)} of interest that isn't recorded yet.\n\nRecord ${_fmtAcctAmt(key,u.amount)} as interest income (dated today) and make the transfer?`))return false;
+  return recordInterest(key,u.amount);
 }
 function _renderInterestCard(){
   const el=document.getElementById('inc-interest');if(!el)return;
   const accts=_interestAccounts();
   if(!accts.length){el.innerHTML='';return;}
   const rows=accts.map(a=>{
-    const acc=_accruedSoFar(a);
-    const pm=_postableMonth(a);
-    const monName=pm?MONTHS[pm.pMonth-1]:'';
-    let action;
-    if(pm&&!pm.posted&&pm.amount>0)
-      action=`<button class="btn btn-p btn-sm" style="padding:5px 11px;font-size:0.62rem" onclick="postInterest('${a.key}')">Post ${fN(pm.amount)} · ${monName}</button>`;
-    else if(pm&&pm.posted)
-      action=`<span style="font-size:0.6rem;color:var(--text3)">✓ ${monName} posted</span>`;
-    else
-      action=`<span style="font-size:0.6rem;color:var(--text3)">—</span>`;
+    const u=_unrealisedFor(a.key);
+    const action=u.amount>0
+      ?`<button class="btn btn-p btn-sm" style="padding:5px 11px;font-size:0.62rem" onclick="openRecordInterest('${jsq(a.key)}')">Record ${_fmtAcctAmt(a.key,u.amount)}</button>`
+      :`<button class="btn btn-g btn-sm" style="padding:5px 11px;font-size:0.62rem" onclick="openRecordInterest('${jsq(a.key)}')">Record</button>`;
     return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);gap:8px">
       <div style="min-width:0">
         <div style="font-size:0.74rem;font-weight:600">${esc(a.name)} <span style="font-size:0.54rem;color:var(--text3);text-transform:uppercase;letter-spacing:0.04em">${a.kind==='cash'?'cash':'invest'} · ${a.rate}%/yr</span></div>
-        <div style="font-size:0.6rem;color:var(--gold);font-family:var(--mono)">≈${fN(acc.amount)} accruing this month</div>
+        <div style="font-size:0.6rem;color:var(--gold);font-family:var(--mono)">${u.amount>0?`≈${_fmtAcctAmt(a.key,u.amount)} earned since ${fmtDate(u.from)}`:'Nothing earned since last recorded'}</div>
       </div>
       <div style="flex-shrink:0;text-align:right">${action}</div>
     </div>`;
@@ -5489,7 +5595,7 @@ function _renderInterestCard(){
   el.innerHTML=`<div class="card" style="margin-bottom:10px">
     <div class="clabel" style="margin-bottom:2px">Interest</div>
     ${rows}
-    <div style="font-size:0.58rem;color:var(--text3);margin-top:8px;line-height:1.5">Posts one income entry for the completed month and credits the account. Figures are estimates from your rate — edit the income entry if your statement differs.</div>
+    <div style="font-size:0.58rem;color:var(--text3);margin-top:8px;line-height:1.5">Record interest adds what an account has earned to its balance and saves it as Interest Income. Figures are estimates from your rate; you can enter your statement's figure instead.</div>
   </div>`;
 }
 
@@ -5892,7 +5998,7 @@ function _renderInvInto(suffix){
       if(sub.assetClass==='fixed_income'&&sub.rate){
         // Pass empty movements — sub principals are tracked directly; platform-level
         // movements (no subId) would incorrectly reconstruct a doubled historical principal
-        const r=calcInterestAccrual(pNGN,Number(sub.rate),sub.compoundType||'daily_accrual',sub.startDate||null,sub.maturityDate||null,[]);
+        const r=calcInterestAccrual(pNGN,Number(sub.rate),sub.compoundType||'daily_accrual',_subAccrualFrom(p.key,sub)||null,sub.maturityDate||null,[]);
         interest=r.interest; projBal=r.projectedBalance; isMatured=r.isMatured;
       }
       totalInterestNGN+=interest;
@@ -5906,8 +6012,11 @@ function _renderInvInto(suffix){
       const matTag=sub.maturityDate?`<span style="font-size:0.58rem;color:${isMatured?'var(--red)':'var(--text3)'}"> · ${isMatured?'Matured':'Matures'} ${fmtDate(sub.maturityDate)}</span>`:'';
       const intLine=interest>0?`<span style="font-size:0.6rem;color:var(--gold);font-family:var(--mono);margin-left:4px">(+${dispCcy}${isUSD?(interest/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fNum(Math.round(interest))})</span>`:'';
 
+      const recBtn=live&&interest>=1
+        ?`<button onclick="event.stopPropagation();openRecordInterest('inv:${jsq(p.key)}')" style="font-size:0.6rem;padding:2px 8px;border-radius:3px;background:rgba(245,180,40,0.12);border:1px solid rgba(245,180,40,0.35);color:var(--gold);cursor:pointer;margin-right:6px">Record interest</button>`
+        :'';
       const liqBtn=sub.assetClass==='fixed_income'&&pNGN>0
-        ?`<div style="margin-top:5px;text-align:right"><button onclick="event.stopPropagation();openLiqModal('${p.key}','${sub.id}')" style="font-size:0.6rem;padding:2px 8px;border-radius:3px;background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.3);color:var(--red);cursor:pointer">Liquidate</button></div>`
+        ?`<div style="margin-top:5px;text-align:right">${recBtn}<button onclick="event.stopPropagation();openLiqModal('${p.key}','${sub.id}')" style="font-size:0.6rem;padding:2px 8px;border-radius:3px;background:rgba(255,80,80,0.12);border:1px solid rgba(255,80,80,0.3);color:var(--red);cursor:pointer">Liquidate</button></div>`
         :'';
 
       return{sub,pNGN,projBal,interest,isMatured,html:`
@@ -5997,7 +6106,7 @@ function _renderInvInto(suffix){
         </div>
         <div style="text-align:right;flex-shrink:0">
           <div class="pval" style="color:${platformNGN?p.color:'var(--text3)'}">${platformNGN?maskIf('inv-page',dispMainVal):'—'}</div>
-          ${totalInterestNGN>0&&!_isHidden('inv-page')?`<div style="font-size:0.58rem;color:var(--gold);font-family:var(--mono)">+${isUSD?'$'+((totalInterestNGN/fxRate)).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(Math.round(totalInterestNGN))} interest</div>`:''}
+          ${totalInterestNGN>0&&!_isHidden('inv-page')?`<div style="font-size:0.58rem;color:var(--gold);font-family:var(--mono)${live?`;cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();openRecordInterest('inv:${jsq(p.key)}')" title="Record this interest`:``}">+${isUSD?'$'+((totalInterestNGN/fxRate)).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(Math.round(totalInterestNGN))} interest${live?` · Record`:``}</div>`:''}
           <div onclick="event.stopPropagation();drillDownInvPlatform('${p.key}')" style="font-size:0.6rem;color:var(--text3);margin-top:2px;cursor:pointer">Activity ›</div>
         </div>
       </div>
@@ -6252,7 +6361,7 @@ function openLiqModal(pKey, subId){
   const pNGN=Number(sub.principal)||0;
   let projBalNGN=pNGN;
   if(sub.assetClass==='fixed_income'&&sub.rate){
-    const r=calcInterestAccrual(pNGN,Number(sub.rate),sub.compoundType||'daily_accrual',sub.startDate||null,sub.maturityDate||null,[]);
+    const r=calcInterestAccrual(pNGN,Number(sub.rate),sub.compoundType||'daily_accrual',_subAccrualFrom(pKey,sub)||null,sub.maturityDate||null,[]);
     projBalNGN=r.projectedBalance;
   }
   const dispCcy=isUSD?'$':isGBP?'£':'₦';
@@ -6500,8 +6609,8 @@ function renderCashPage(){
     // Interest so far this month on today's balance (the same figure the
     // Income tab offers to post). It used to multiply today's balance by the
     // whole time since the start date, which overstated it.
-    const projInt=ci&&ci.interestRate&&val?_accruedSoFar({kind:'cash',name:b,rate:+ci.interestRate,compoundType:ci.compoundType||'daily_accrual',startDate:ci.startDate||''}).amount:0;
-    const intProjection=projInt>0.5?`<div style="font-size:0.6rem;color:var(--gold);margin-top:1px">~${isUSDCashAccount(b)?'$'+projInt.toFixed(2):fN(Math.round(projInt))} interest so far this month</div>`:'';
+    const projInt=ci&&ci.interestRate&&val&&_invIsLiveMonth(m,y)?_cashUnrealised(b).amount:0;
+    const intProjection=projInt>0.5?`<div style="font-size:0.6rem;color:var(--gold);margin-top:1px">~${_fmtAcctAmt('cash:'+b,projInt)} interest not recorded yet · <span style="text-decoration:underline;cursor:pointer" onclick="event.stopPropagation();openRecordInterest('cash:${jsq(b)}')">Record</span></div>`:'';
     const _fxR2=getFxRates(m,y);
     let dispVal;
     if(isUSDCashAccount(b)){
@@ -6553,6 +6662,8 @@ function saveCashInterest(){
     const rate=rateEl?numVal(rateEl):NaN;
     if(!isNaN(rate)&&rate>0){
       meta[b]={interestRate:rate,compoundType:'daily_accrual'};
+      const _old=getCashInterestMeta()[b];
+      if(_old&&_old.intFrom)meta[b].intFrom=_old.intFrom;   // keep the last "Record interest" date
       if(sdEl&&sdEl.value) meta[b].startDate=sdEl.value;
     } else {meta[b]={};}
   });
@@ -7420,8 +7531,13 @@ function renderCashFlowChart(){
   if(savings>0)       data.push({from:'Income',to:'Savings',flow:savings});
   else if(savings<0)  data.push({from:'Income',to:'Deficit',flow:Math.abs(savings)});
 
-  // Tapping a flow (or a category below the chart) lists that category's
-  // expenses, as the Breakdown chart does. "Others" lists the smaller ones.
+  // Each node is labelled with its amount and share of income (of spending
+  // when there's no income), e.g. "Food ₦44,000 (17%)".
+  const _base=incTotal>0?incTotal:totalExp;
+  const labels={Income:`Income ${fmtCur(incTotal,cur,m,y)}`};
+  data.forEach(d=>{labels[d.to]=`${d.to} ${fmtCur(Math.round(d.flow),cur,m,y)} (${_base?Math.round(d.flow/_base*100):0}%)`;});
+  // Tapping a flow lists that category's expenses, as the Breakdown chart
+  // does. "Others" lists the smaller ones.
   const _top=new Set(cats.map(([c])=>c).filter(c=>c!=='Others'));
   const _cfOpen=to=>{
     if(to==='Income'){drillDown('income');return;}
@@ -7443,6 +7559,10 @@ function renderCashFlowChart(){
         colorFrom:(c)=>colorMap[c.dataset.data[c.dataIndex].from]||'#60a5fa',
         colorTo:  (c)=>colorMap[c.dataset.data[c.dataIndex].to]  ||'#60a5fa',
         colorMode:'gradient',
+        labels,
+        size:'max',
+        color:getComputedStyle(document.documentElement).getPropertyValue('--text').trim()||'#e8edf5',
+        font:{family:'DM Mono, monospace',size:10},
         borderWidth:0,
         nodePadding:14,
         nodeWidth:14,
@@ -7475,22 +7595,6 @@ function renderCashFlowChart(){
       }
     }
   });
-
-  // Legend
-  const legEl=document.getElementById('cashflow-legend');
-  if(legEl){
-    const items=[
-      {color:colorMap['Income'],label:`Income ${fmtCur(incTotal,cur,m,y)} ›`,to:'Income'},
-      {color:'#f87171',label:`Expenses ${fmtCur(totalExp,cur,m,y)} ›`,to:'Expenses'},
-      savings>=0
-        ?{color:colorMap['Savings'],label:`Savings ${fmtCur(savings,cur,m,y)}`}
-        :{color:colorMap['Deficit'],label:`Deficit ${fmtCur(Math.abs(savings),cur,m,y)}`},
-    ];
-    const _chip=(color,label,to)=>`<span class="cf-chip"${to?` onclick="S._cfOpen('${jsq(to)}')"`:''}><span style="display:inline-block;width:7px;height:7px;border-radius:1px;background:${color}"></span>${label}</span>`;
-    legEl.innerHTML=items.map(it=>_chip(it.color,it.label,it.to)).join('')
-      +`<div style="flex-basis:100%;height:0"></div>`
-      +cats.map(([c,v])=>_chip(colorMap[c],`${esc(c)} ${fmtCur(v,cur,m,y)} ›`,c)).join('');
-  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -7530,7 +7634,7 @@ function renderProjInsights(){
       <div class="clabel" style="margin:0">Month Outlook — ${MONTHS[m-1]} ${y} · Day ${day}/${daysInMonth}</div>
       <button class="btn btn-g btn-sm" onclick="refreshInsights()" title="Recompute insights with the latest data" style="padding:2px 8px;font-size:0.68rem">↻ Refresh</button>
     </div>
-    <div class="cval" style="color:${barColor}">${R.totalProj?fN(R.totalProj):'—'}<span style="font-size:0.7rem;color:var(--text2);font-weight:400"> projected${R.totalBudget?` · ${pct}% of ${fN(R.totalBudget)} budget`:''}</span></div>
+    <div class="cval" style="color:${barColor}">${R.totalProj?fC(R.totalProj):'—'}<span style="font-size:0.7rem;color:var(--text2);font-weight:400"> projected${R.totalBudget?` · ${pct}% of ${fC(R.totalBudget)} budget`:''}</span></div>
     ${R.totalBudget?`<div class="prog" style="margin-top:8px"><div class="pf ${pct>=110?'over':pct>=90?'warn':'ok'}" style="width:${Math.min(100,pct)}%"></div></div>`:''}
     <div class="csub" style="margin-top:8px">${R.monthsUsed>=2
       ?`Projections learn from ${R.monthsUsed} months of your history: categories you buy a few times a month (fuel, fees) are held at their typical total — never multiplied per day — while routine spending is paced against your usual curve for day ${day}.`
@@ -7561,7 +7665,7 @@ function renderProjInsights(){
       const st=p.budget>0?(p.proj>p.budget*1.1?'var(--red)':p.proj>p.budget*0.9?'var(--gold)':'var(--accent)'):'var(--text)';
       return`<div class="pjrow">
         <span class="pjlabel" style="min-width:0"><span style="margin-right:5px">${CAT_ICONS[cat]||'📊'}</span>${cat}<span class="ins-method">${METHOD_LABEL[p.method]||''}</span></span>
-        <span class="pjval" style="text-align:right"><span style="color:var(--text2)">${fN(p.spent)}</span> → <span style="color:${st}">${fN(p.proj)}</span>${p.budget?`<span style="color:var(--text3);font-size:0.66rem"> / ${fN(p.budget)}</span>`:''}</span>
+        <span class="pjval" style="text-align:right"><span style="color:var(--text2)">${fC(p.spent)}</span> → <span style="color:${st}">${fC(p.proj)}</span>${p.budget?`<span style="color:var(--text3);font-size:0.66rem"> / ${fC(p.budget)}</span>`:''}</span>
       </div>`;}).join('')+`<div class="csub" style="margin-top:8px">spent → projected / budget. "Typical total" = median of your last ${R.monthsUsed} months for categories bought ≤4×/month; "pace curve" = scaled by how much of the month's spend usually lands by day ${day}.</div></div>`;
   }
   el.innerHTML=html;
@@ -7930,6 +8034,7 @@ function renderSettGuide(){
       <ul>
         <li><b>Cash</b>: your bank and cash balances. Tap an account to see every movement in and out of it. <b>⇄ Transfer</b> moves money between your accounts or to and from investments; <b>Transfer history</b> lists (and can reverse) past transfers. <b>✎ Edit balances &amp; accounts</b> lets you correct balances, set interest rates, add or remove accounts and change logos.</li>
         <li><b>Investments</b>: balances on savings and investment platforms. You can record money going in, gains or losses, or cash out all or part of an investment back to a bank. <b>Trend</b> shows growth over time. Past months are read-only.</li>
+        <li><b>Interest</b>: accounts with an interest rate (e.g. Renmoney, Piggy) show the interest earned so far as an estimate. Tap <b>Record</b> (on the account, or in Expenses → Income) to add it to the balance and save it as Interest Income; you can enter the figure from your statement instead. If you transfer more than the recorded balance, SpendWise offers to record the interest first.</li>
         <li><b>Debtors</b>: money people owe you. Add a person and record repayments as they come in.</li>
         <li><b>Loans</b>: money you owe. Record repayments to see what's left.</li>
       </ul>`)}
@@ -7981,7 +8086,8 @@ function renderSettBudget(){
         :`Applies to every month. To budget one month differently, change the amounts and tap "Only ${MS[S.expMonth-1]} ${S.expYear}".`}</div>
     </div>
     ${getAllCats().map(c=>{const k=ck(c);const prevSpend=prevCatSpend[c]||0;return`<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="flex:1;font-size:0.72rem;color:var(--text2)">${CAT_ICONS[c]||''} ${c}</span>${prevSpend?`<span style="font-size:0.58rem;color:var(--text3);font-family:var(--mono);cursor:pointer;white-space:nowrap" onclick="document.getElementById('b-${k}').value=${prevSpend};updateBudgetTotal()" title="Copy last month actual">↩${fN(prevSpend).replace('₦','')}</span>`:'<span style="width:32px"></span>'}<input class="ifield" type="text" id="b-${k}" placeholder="0" value="${S.budgets[k]||''}" style="width:100px;flex-shrink:0;font-size:0.76rem;padding:5px 8px" oninput="updateBudgetTotal()"></div>`;}).join('')}
-    <div style="display:flex;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);margin-bottom:12px;font-weight:700;font-size:0.84rem"><span>Total</span><span id="budget-total-display" style="font-family:var(--mono);color:var(--accent)">${fN(total)}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:10px 0;border-top:1px solid var(--border);margin-bottom:12px;font-weight:700;font-size:0.84rem"><span>Total</span><span id="budget-total-display" style="font-family:var(--mono);color:var(--accent)">${_budgetTotalText(total)}</span></div>
+    ${['USD','GBP'].includes(S.dashCurrency)?`<div style="font-size:0.62rem;color:var(--text3);margin:-6px 0 12px">Budgets are entered in naira; the total is also shown in ${S.dashCurrency==='USD'?'dollars':'pounds'} at this month's rate.</div>`:''}
     <button class="btn btn-g btn-sm" style="margin-bottom:8px" onclick="copyActualSpend()">↩ Fill in last month's actual spend</button>
     <div style="display:flex;gap:8px;margin-bottom:16px">
       <button class="btn btn-p" style="flex:2" onclick="saveBudget('std')">Save for every month</button>
@@ -8323,7 +8429,10 @@ function mergePayeeLines(){
 function updateBudgetTotal(){
   const total=getAllCats().reduce((s,c)=>{const v=numVal('b-'+ck(c))||0;return s+v;},0);
   const el=document.getElementById('budget-total-display');
-  if(el) el.textContent=fN(total);
+  if(el) el.textContent=_budgetTotalText(total);
+}
+function _budgetTotalText(total){
+  return ['USD','GBP'].includes(S.dashCurrency)?`${fN(total)} · ${fC(total)}`:fN(total);
 }
 function copyActualSpend(){
   const prevM=S.expMonth===1?12:S.expMonth-1,prevY=S.expMonth===1?S.expYear-1:S.expYear;
@@ -8857,7 +8966,7 @@ function renderSettData(){
         <button class="btn btn-g btn-sm" style="flex:1" onclick="openGuide()">Open the guide</button>
         <button class="btn btn-g btn-sm" style="flex:1" onclick="reportProblem()">Report a problem</button>
       </div>
-      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.1</div><div style="color:var(--text3);margin-top:4px">v4.7.1: Cash total counts every account again, USD Holdings is gone from Investments, Cash Flow is the first chart and its categories open their expenses, and every page has the linked currency picker.</div></div>
+      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.2</div><div style="color:var(--text3);margin-top:4px">v4.7.2: Record interest on Renmoney, Piggy and other interest-earning accounts (transfers offer it when the balance is short), Cash Flow labels show amount and share, and Analytics and Budget follow the chosen currency.</div></div>
     </div>
     <details class="sett-adv" id="sett-adv"${_settAdvOpen?' open':''} ontoggle="_settAdvOpen=this.open">
       <summary>Advanced<span>AI keys, net worth, exchange rates, balance audit</span></summary>
@@ -9613,7 +9722,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').cat
 
 
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.7.1';
+const APP_VERSION='v4.7.2';
 async function checkForUpdate(){
   try{
     const res=await fetch(location.origin+location.pathname+'?_='+Date.now(),{cache:'no-store'});
@@ -9748,13 +9857,13 @@ function renderCashFlowProjection(containerEl){
   const breakEven=avgExp>avgInc+monthlyInt&&cashNow>0?Math.ceil(cashNow/(avgExp-avgInc-monthlyInt)):null;
   containerEl.innerHTML=`
     <div class="sh" style="margin-bottom:10px"><div class="sh-title">3-Month Cash Projection</div></div>
-    <div class="pjrow"><span class="pjlabel">Avg. monthly income (6m)</span><span class="pjval" style="color:var(--accent)">${fN(Math.round(avgInc))}</span></div>
-    ${monthlyInt>500?`<div class="pjrow"><span class="pjlabel">Est. monthly interest</span><span class="pjval" style="color:var(--gold)">+${fN(Math.round(monthlyInt))}</span></div>`:''}
-    <div class="pjrow"><span class="pjlabel">Avg. monthly spend (6m)</span><span class="pjval" style="color:var(--red)">${fN(Math.round(avgExp))}</span></div>
-    <div class="pjrow" style="font-weight:700;border-top:1px solid var(--border);padding-top:6px;margin-top:4px"><span>Monthly net</span><span class="pjval" style="color:${netPerMonth>=0?'var(--accent)':'var(--red)'}">${fN(Math.round(Math.abs(netPerMonth)))} ${netPerMonth>=0?'saved':'deficit'}</span></div>
+    <div class="pjrow"><span class="pjlabel">Avg. monthly income (6m)</span><span class="pjval" style="color:var(--accent)">${fC(Math.round(avgInc))}</span></div>
+    ${monthlyInt>500?`<div class="pjrow"><span class="pjlabel">Est. monthly interest</span><span class="pjval" style="color:var(--gold)">+${fC(Math.round(monthlyInt))}</span></div>`:''}
+    <div class="pjrow"><span class="pjlabel">Avg. monthly spend (6m)</span><span class="pjval" style="color:var(--red)">${fC(Math.round(avgExp))}</span></div>
+    <div class="pjrow" style="font-weight:700;border-top:1px solid var(--border);padding-top:6px;margin-top:4px"><span>Monthly net</span><span class="pjval" style="color:${netPerMonth>=0?'var(--accent)':'var(--red)'}">${fC(Math.round(Math.abs(netPerMonth)))} ${netPerMonth>=0?'saved':'deficit'}</span></div>
     <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
       <div style="font-size:0.6rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:var(--text3);margin-bottom:6px">Projected Cash Balance</div>
-      ${months.map(mo=>`<div class="pjrow"><span class="pjlabel">${mo.label}</span><span class="pjval" style="color:${mo.cash>0?'var(--blue)':'var(--red)'}">${fN(mo.cash)}</span></div>`).join('')}
+      ${months.map(mo=>`<div class="pjrow"><span class="pjlabel">${mo.label}</span><span class="pjval" style="color:${mo.cash>0?'var(--blue)':'var(--red)'}">${fC(mo.cash)}</span></div>`).join('')}
     </div>
     ${breakEven?`<div style="margin-top:10px;padding:8px 10px;border-radius:var(--rsm);background:var(--rdim);font-size:0.72rem;color:var(--red)">⚠ Break-even: cash exhausted in ~${breakEven} month${breakEven!==1?'s':''} at current burn rate</div>`:'<div style="margin-top:6px;font-size:0.68rem;color:var(--accent)">✓ Cash trajectory is positive over next 3 months</div>'}
   `;

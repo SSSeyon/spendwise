@@ -1,4 +1,4 @@
-# SpendWise — Handover Note (v4.7.1)
+# SpendWise — Handover Note (v4.7.2)
 
 Personal-finance PWA, shared with the owner's friends since v4.5 (2026-09-26). Works signed out (data stays on the device); optional username/password accounts sync across devices with every document **encrypted on the device** — the project owner cannot read other users' data.
 Live: https://ssseyon.github.io/spendwise/
@@ -43,6 +43,17 @@ Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB l
 - **Logos:** served from the app's own `Logos/`; `LOGO_CATALOG` in setup.js resolves a logo by account/platform name at render time (20 added from official Play Store icons); users can upload their own (a 64px data URL stored in their settings).
 - The one-time Fife→Kids / USD Cash / Energy→Fuel repairs no longer run at boot.
 - Tested 2026-09-26 on localhost with two test accounts: sign-up + upload of local data, ciphertext-only storage, restore on sign-in, recovery, password change, concurrent increments from two tabs, live listeners, offline-then-reload, cross-user isolation. Known gap (pre-existing): if the boot sync throws, realtime listeners stay off until a reload.
+
+## v4.7.2 (2026-09-27)
+
+- **Recording interest** replaces the monthly "Post" (`postInterest`/`_postableMonth` are gone). Interest on cash accounts and fixed-income investments is an estimate on top of the stored balance; `recordInterest(key, amount)` (key `cash:<name>` or `inv:<platformKey>`) books one Interest Income entry dated today (`source:'interest'`, `realised:true`), credits the balance (cash via `_adjustCash`; investments by adding to each sub's principal in proportion to its estimate) and restarts accrual from today via **`intFrom`** (cash: in the cash interest settings; investments: on each sub).
+  - Accrual starts at the latest of the start date, `intFrom` and the day after the last old monthly post (`_lastPostedFrom`), so nothing is counted twice. Cash walks month by month using each month's saved balance (`_cashUnrealised`); investments use `calcInterestAccrual` from `_subAccrualFrom` (`_invUnrealised`). The Investments page and the cash-out window use the same start.
+  - Entry points: Income → Interest card, the Cash page line "~₦X interest not recorded yet · Record", the investment's "+₦X interest · Record" line and the sub row's "Record interest" button. All open `int-modal` (`openRecordInterest`), where the amount can be changed to the statement figure.
+  - `_doTransfer` calls `_offerInterestTopUp` when the stored balance is short but balance + unrecorded interest covers it (current month only), so moving the whole Piggy or Renmoney balance works.
+  - Deleting a recorded interest entry: the cash side is reversed by the income delete as before; `_unrecordInterest` restores `intFrom` and takes investment interest back out of the subs.
+  - `saveCashInterest` keeps `intFrom` when the rates are re-saved.
+- **Cash Flow chart:** nodes are labelled "Food ₦44,000 (18%)" (share of income, or of spending when there's no income) via the sankey `labels` option; the legend under the chart is gone. Tapping a flow still lists its expenses.
+- **Display currency reaches Analytics and Settings:** `fC(ngn)` formats in the chosen currency ("Effective" = naira). Used by `computeSmartInsights`, `renderProjInsights`, `renderCashFlowProjection`, the month review, the Home alerts and Upcoming Bills. Budget boxes stay in naira (that's how budgets are stored); the total adds the dollar/pound figure (`_budgetTotalText`). `setDisplayCurrency` also re-renders the Budget and Recurring cards.
 
 ## v4.7.1 (2026-09-27)
 
