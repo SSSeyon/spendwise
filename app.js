@@ -2120,7 +2120,7 @@ function fabMenuToggle(){
 function fabAction(a){
   fabMenuClose();
   if(a==='add'){openExpModal('expense');setTimeout(()=>document.getElementById('qa-text')?.focus(),120);}
-  else if(a==='voice'){openExpModal('expense');quickAddVoice();} // same tap = user gesture for the mic
+  else if(a==='voice'){openVoiceAdd();} // same tap = user gesture for the mic
   else if(a==='ai'){openAiInsight();setTimeout(()=>document.getElementById('ai-input')?.focus(),200);}
 }
 (function initFab(){
@@ -4809,7 +4809,7 @@ async function quickAddParse(){
   if(r.type==='transfer'&&(!r.bank||!r.toBank))missing.push('accounts');
   _qaStatus(missing.length?`Filled in${byAI?' ✦':''}. Please pick the ${missing.join(' and ')}, then save.`:`Filled in${byAI?' ✦':''}. Check it, then save.`,missing.length?'qa-warn':'qa-ok');
 }
-// ── VOICE INPUT (shared by Quick add and the AI chat) ──────────────────────
+// ── VOICE INPUT (shared by Say it and the AI chat) ─────────────────────────
 // Web Speech API. Chrome/Android and Safari have it; some installed-app modes
 // and Firefox don't, so every caller has a typed fallback.
 let _voiceRec=null;
@@ -4837,14 +4837,40 @@ function voiceStart(opts){
   };
   try{rec.start();}catch(e){_voiceRec=null;if(opts.btn)opts.btn.classList.remove('on');status("Couldn't start the microphone.",'qa-warn');}
 }
-function quickAddVoice(){
-  _qaStatus('Listening… say something like “5k lunch from GTB”.');
+// Say it (the + menu): its own screen. Listening starts straight away (the
+// menu tap is the user gesture the mic needs); when you stop talking, what was
+// heard is read like a Quick add note and the + form opens filled in, for you
+// to check and save. Tap the mic again to stop or to try again.
+function _vcStatus(msg,cls){const el=document.getElementById('vc-status');if(el){el.textContent=msg||'';el.className='vc-status'+(cls?' '+cls:'');}}
+function openVoiceAdd(){
+  const h=document.getElementById('vc-heard');if(h)h.textContent='';
+  openMod('voice-modal');
+  voiceAddStart();
+}
+function voiceAddStart(){
+  if(_voiceRec){try{_voiceRec.stop();}catch{}return;}
+  const h=document.getElementById('vc-heard');if(h)h.textContent='';
+  _vcStatus(voiceSupported()?'Listening…':'');
   voiceStart({
-    btn:document.getElementById('qa-mic'),
-    onText:t=>{const q=document.getElementById('qa-text');if(q)q.value=t;},
-    onDone:()=>quickAddParse(),
-    onStatus:_qaStatus,
+    btn:document.getElementById('vc-mic'),
+    onText:t=>{if(h)h.textContent='“'+t+'”';},
+    onDone:t=>{
+      if(!document.getElementById('voice-modal')?.classList.contains('open'))return;
+      _vcStatus('Got it. Filling in the form…','qa-ok');
+      setTimeout(()=>{
+        closeMod('voice-modal');
+        openExpModal('expense');
+        const q=document.getElementById('qa-text');if(q)q.value=t;
+        quickAddParse();
+      },500);
+    },
+    onStatus:_vcStatus,
   });
+}
+function closeVoice(){
+  closeMod('voice-modal'); // first, so the mic stopping doesn't go on to fill in the form
+  if(_voiceRec){const r=_voiceRec;_voiceRec=null;try{r.abort();}catch{}}
+  document.getElementById('vc-mic')?.classList.remove('on');
 }
 // AI chat: dictate the question into the box; the user reviews it and taps ➤.
 function aiVoice(){
@@ -8133,7 +8159,8 @@ function renderSettGuide(){
       <p><b>Deleting your account.</b> Settings → Data → Account → <b>Delete my account</b> permanently erases your account and all your data from every device. Download a backup first (Settings → Export) if you want to keep a copy.</p>`)}
     ${sec('Recording money (the + button)',`
       <p>The round <b>+</b> button is on every page. Tap it for three shortcuts: <b>Quick add</b>, <b>Say it</b> (speak the transaction) and <b>Ask AI</b>. If it's covering something, <b>drag it</b> anywhere on the screen; it stays where you leave it.</p>
-      <p><b>Quick add</b> (the box at the top of the form) is the fastest way: type or tap 🎤 and say something like <i>"5k lunch from GTB yesterday"</i>, <i>"received 250k salary into Access"</i> or <i>"moved 20k from Opay to Kuda"</i>. The form fills itself in; check it and tap Save. Nothing is saved until you do.</p>
+      <p><b>Quick add</b> (the box at the top of the form) is the fastest way: type something like <i>"5k lunch from GTB yesterday"</i>, <i>"received 250k salary into Access"</i> or <i>"moved 20k from Opay to Kuda"</i>. The form fills itself in; check it and tap Save. Nothing is saved until you do.</p>
+      <p><b>Say it</b> opens its own screen and starts listening. Say the transaction the same way; when you stop, the form opens filled in for you to check and save. Tap the big mic to stop early or to try again.</p>
       <p>Or fill in the form yourself. Choose what you're recording:</p>
       <ul>
         <li><b>Paid in dollars or pounds from a naira account?</b> (e.g. a $6.93 subscription on your naira card) Switch the currency next to Amount to $ or £. It's converted at that month's rate and your account is charged in naira.</li>
@@ -9097,7 +9124,7 @@ function renderSettData(){
         <button class="btn btn-g btn-sm" style="flex:1" onclick="openGuide()">Open the guide</button>
         <button class="btn btn-g btn-sm" style="flex:1" onclick="reportProblem()">Report a problem</button>
       </div>
-      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.6</div><div style="color:var(--text3);margin-top:4px">v4.7.6: Bank alert reading removed: no Share to SpendWise, no paste button in Quick add. Quick add still reads typed or spoken notes.</div></div>
+      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.7</div><div style="color:var(--text3);margin-top:4px">v4.7.7: Say it now has its own screen: tap it in the + menu, speak, and the form opens filled in. The mic is gone from the Quick add box.</div></div>
     </div>
     <details class="sett-adv" id="sett-adv"${_settAdvOpen?' open':''} ontoggle="_settAdvOpen=this.open">
       <summary>Advanced<span>AI keys, net worth, exchange rates, balance audit</span></summary>
@@ -9853,7 +9880,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').cat
 
 
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.7.6';
+const APP_VERSION='v4.7.7';
 async function checkForUpdate(){
   try{
     const res=await fetch(location.origin+location.pathname+'?_='+Date.now(),{cache:'no-store'});

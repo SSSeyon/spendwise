@@ -1,4 +1,4 @@
-# SpendWise — Handover Note (v4.7.6)
+# SpendWise — Handover Note (v4.7.7)
 
 Personal-finance PWA, shared with the owner's friends since v4.5 (2026-09-26). Works signed out (data stays on the device); optional username/password accounts sync across devices with every document **encrypted on the device** — the project owner cannot read other users' data.
 Live: https://ssseyon.github.io/spendwise/
@@ -43,6 +43,10 @@ Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB l
 - **Logos:** served from the app's own `Logos/`; `LOGO_CATALOG` in setup.js resolves a logo by account/platform name at render time (20 added from official Play Store icons); users can upload their own (a 64px data URL stored in their settings).
 - The one-time Fife→Kids / USD Cash / Energy→Fuel repairs no longer run at boot.
 - Tested 2026-09-26 on localhost with two test accounts: sign-up + upload of local data, ciphertext-only storage, restore on sign-in, recovery, password change, concurrent increments from two tabs, live listeners, offline-then-reload, cross-user isolation. Known gap (pre-existing): if the boot sync throws, realtime listeners stay off until a reload.
+
+## v4.7.7 (2026-09-28)
+
+- **Say it is its own screen** (`voice-modal` in index.html; `openVoiceAdd`, `voiceAddStart`, `closeVoice`, `_vcStatus` in app.js). The + menu's Say it opens it and starts listening in the same tap (the mic needs a user gesture). When speech ends, the text goes into the Quick add box of the + form and `quickAddParse` fills the form in for review. `closeVoice` closes the modal *before* aborting recognition, because `onDone` checks the modal is still open; the other order filled in the form after the user closed it. The 🎤 button was removed from the Quick add box (`quickAddVoice` is gone); Quick add is typing only. The AI chat mic (`aiVoice`) is unchanged.
 
 ## v4.7.6 (2026-09-27)
 
