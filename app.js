@@ -426,7 +426,7 @@ function saveSubsForPlatform(pKey,arr){const s=getInvSubs();s[pKey]=arr;saveInvS
 // the month's own investments doc is the authoritative record of what the
 // balances were then. Without this guard, viewing a past month showed today's
 // balances on the dashboard.
-function _invIsLiveMonth(m,y){const n=new Date();return m===(n.getMonth()+1)&&y===n.getFullYear();}
+function _invIsLiveMonth(m,y){const n=appNow();return m===(n.getMonth()+1)&&y===n.getFullYear();}
 function invBalanceFor(pKey,m,y,monthData){
   if(_invIsLiveMonth(m,y)){
     const subs=migrateToSubs(pKey);
@@ -438,10 +438,15 @@ function invBalanceFor(pKey,m,y,monthData){
 
 // ── Sync all investment config to Firestore (debounced) ──────────────────
 let _invConfigSyncTimer=null;
+// True from a local change until its write lands, so the listener below
+// can't put an older copy back over it in the meantime (it did: month-end
+// interest booked on Piggy lost its principal and movement to a snapshot that
+// arrived during the 800ms wait).
+let _invCfgPending=false;
 function _syncInvConfig(){
-  clearTimeout(_invConfigSyncTimer);
+  clearTimeout(_invConfigSyncTimer);_invCfgPending=true;
   _invConfigSyncTimer=setTimeout(()=>{
-    if(!db) return;
+    if(!db){_invCfgPending=false;return;}
     const payload={
       platforms:getPlatforms(),
       invMeta:getInvMeta(),
@@ -449,7 +454,8 @@ function _syncInvConfig(){
       invMoves:getInvMovements(),
       updatedAt:FV.serverTimestamp()
     };
-    db.collection('appConfig').doc('investments').set(payload,{merge:true}).catch(e=>console.warn('invConfig sync failed',e));
+    db.collection('appConfig').doc('investments').set(payload,{merge:true})
+      .then(()=>{_invCfgPending=false;},e=>{_invCfgPending=false;console.warn('invConfig sync failed',e);});
   },800);
 }
 
@@ -942,7 +948,7 @@ function getHistory(){return cGet('sw3_history')||[];}
 // ══════════════════════════════════════════════════════════════════════════
 // STATE
 // ══════════════════════════════════════════════════════════════════════════
-const now=new Date();
+const now=appNow();
 let S={
   page:'dashboard',
   expMonth:now.getMonth()+1,expYear:now.getFullYear(),expCat:'All',
@@ -1115,7 +1121,7 @@ async function loadFxAuto(){
 }
 async function fxAutoUpdate(){
   if(navigator.onLine===false)return;
-  const n=new Date(),k=fxKey(n.getMonth()+1,n.getFullYear());
+  const n=appNow(),k=fxKey(n.getMonth()+1,n.getFullYear());
   const auto=getFxAuto();
   if(auto[k]&&Date.now()-(auto[k].at||0)<864e5)return;
   try{
@@ -1199,7 +1205,20 @@ function fmtChartNGN(v){if(Math.abs(v)>=1e6)return'₦'+(v/1e6).toFixed(2)+'M';i
 function fmtChartMoney(v){return fmtChartNGN(v);}
 const fNum=n=>n==null||isNaN(n)?'—':Number(n).toLocaleString('en-NG',{maximumFractionDigits:0});
 const ck=c=>c.replace(/[^a-zA-Z]/g,'');
-const todayStr=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');};
+// The app clock. Normally the real date; after a month is closed early (Settings
+// or the Home card, "Close September" on 29 Sept) it is the 1st of the next
+// month until the calendar catches up, so new entries, the live month and the
+// month-end work all move on. Use appNow()/todayStr() for anything that picks a
+// month or day; keep new Date()/Date.now() for timestamps and throttles.
+function _closedThrough(){try{const p=getProfile();return (p&&p.closedThrough)||'';}catch(e){return '';}}
+function _realMonth(){const n=new Date();return n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0');}
+function appNow(){
+  const n=new Date(),c=_closedThrough();
+  if(c&&_realMonth()<=c){const [y,m]=c.split('-').map(Number);return new Date(y,m,1,12);}
+  return n;
+}
+function _earlyClosed(){const c=_closedThrough();return !!c&&_realMonth()===c;}
+const todayStr=()=>toLocalISO(appNow());
 const toLocalISO=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 // Escape a value for safe interpolation inside a single-quoted onclick="...('...')" argument.
@@ -1208,8 +1227,8 @@ const MONTHS_SHORT=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct',
 function fmtDate(iso){if(!iso)return'—';const p=iso.slice(0,10).split('-');if(p.length<3)return iso;return`${parseInt(p[2],10)}-${MONTHS_SHORT[parseInt(p[1],10)-1]}-${p[0]}`;}
 // Returns numeric ms from a Firestore Timestamp, JS Date, ISO string, or 0 for missing
 function txnTs(t){if(!t)return 0;if(typeof t.toMillis==='function')return t.toMillis();if(typeof t.seconds==='number')return t.seconds*1000+(t.nanoseconds||0)/1e6;if(t instanceof Date)return t.getTime();if(typeof t==='string')return new Date(t).getTime()||0;return 0;}
-const curM=()=>new Date().getMonth()+1;
-const curY=()=>new Date().getFullYear();
+const curM=()=>appNow().getMonth()+1;
+const curY=()=>appNow().getFullYear();
 const bSt=(s,b)=>!b?'ok':s/b>=1?'over':s/b>=0.8?'warn':'ok';
 
 function fmtCur(ngn, currency, m, y) {
@@ -1344,6 +1363,7 @@ function _hasLegacyCache(){
   return false;
 }
 function initFirebase(){
+  try{_clockMoveViews(false);}catch(e){console.warn('month clock',e);}  // a month closed early opens on the next one
   try{loadFromCache();}catch(e){console.error('loadFromCache threw',e);}
   try{renderAll();}catch(e){console.error('renderAll threw',e);}
   if(S.isStale) showStaleBar();
@@ -1555,6 +1575,7 @@ function startRealtimeListeners(){
   _invCfgListener=db.collection('appConfig').doc('investments')
     .onSnapshot(snap=>{
       if(!snap.exists||snap.metadata.hasPendingWrites) return;
+      if(_invCfgPending) return;   // a local change is still on its way up
       const d=snap.data()||{};
       // Firestore still delivers a "server ack" event for our OWN writes once
       // they commit (hasPendingWrites only filters the first, optimistic echo)
@@ -1752,7 +1773,9 @@ function startRealtimeListeners(){
       if(!snap.exists||snap.metadata.hasPendingWrites) return;
       const p=snap.data()||{};delete p.updatedAt;
       if(JSON.stringify(p)===JSON.stringify(getProfile()))return;
+      const _clk=_closedThrough();
       cSet(PROFILE_KEY,p);_applyProfile(p);
+      if((p.closedThrough||'')!==_clk){_clockMoveViews(true);renderAll();}
       S.budgets=budgetFor(S.expMonth,S.expYear);
       renderDashboard();
       const sb=document.getElementById('sett-budget');
@@ -1867,7 +1890,7 @@ async function loadInvData(m,y){
     // when viewing the current month or a future (carry-forward) month —
     // for a genuinely PAST month with no doc, showing/caching the latest
     // figures would misrepresent that month's real history.
-    const _now=new Date();
+    const _now=appNow();
     const isPastMonth=(y<_now.getFullYear())||(y===_now.getFullYear()&&m<_now.getMonth()+1);
     if(!isPastMonth){
       const snap=await db.collection('investments').orderBy('year','desc').orderBy('month','desc').limit(1).get();
@@ -1892,7 +1915,7 @@ async function loadCashData(m,y){
     const doc=await db.collection('cashBalances').doc(sid(m,y)).get();
 
     // Guard: only seed/repair for months up to the current real month.
-    const _now=new Date();
+    const _now=appNow();
     const isFutureMonth=(y>_now.getFullYear())||(y===_now.getFullYear()&&m>_now.getMonth()+1);
 
     if(doc.exists&&doc.data()){
@@ -2190,7 +2213,7 @@ function navTo(pg, deepCat){
 // Years that can be picked: from the first year with any data (or this year)
 // up to this year. (Until v4.7 this was a fixed 2023–2026 list.)
 function _dataYears(){
-  const cy=new Date().getFullYear();
+  const cy=appNow().getFullYear();
   let min=cy;
   getHistory().forEach(h=>{if(h.year&&h.year<min)min=h.year;});
   cKeys('sw3_txns_').forEach(k=>{const y=+(k.match(/_(\d{4})_/)||[])[1];if(y&&y<min)min=y;});
@@ -2274,7 +2297,7 @@ function _showRenderErr(name,e){
   bar.textContent+='['+name+']: '+e.message+'\n';
 }
 function renderAll(){
-  const n=new Date();
+  const n=appNow();
   const _hdrDate=document.getElementById('hdr-date');if(_hdrDate)_hdrDate.textContent=MS[n.getMonth()].toUpperCase()+' '+n.getFullYear();
   initPeriodSelector();
   const _rf=[['applyDashOrder',applyDashOrder],['renderDashboard',renderDashboard],['renderExpenses',renderExpenses],['renderInvestments',renderInvestments],['renderCashPage',renderCashPage],['renderDebtors',renderDebtors],['renderLoans',renderLoans],['renderForecast',renderForecast],['renderSettings',renderSettings],['renderRecurringCard',renderRecurringCard],['renderGoalsCard',renderGoalsCard]];
@@ -2332,7 +2355,7 @@ function dismissGetStarted(){try{localStorage.setItem(GETSTARTED_LS,'1');}catch{
 // month; Share sends a short text summary.
 const REVIEW_OFF_LS='sw3_review_off';
 function _reviewData(){
-  const n=new Date();if(n.getDate()>7)return null;
+  const n=appNow();if(n.getDate()>7)return null;
   const pm=n.getMonth()===0?12:n.getMonth(),py=n.getMonth()===0?n.getFullYear()-1:n.getFullYear();
   try{if(localStorage.getItem(REVIEW_OFF_LS)===`${py}-${pm}`)return null;}catch{}
   const tx=cGet(CK.txns(pm,py)),inc=cGet(CK.inc(pm,py));
@@ -2350,12 +2373,12 @@ function _reviewData(){
 }
 function renderMonthReview(){
   const el=document.getElementById('dash-review');if(!el)return;
-  const d=_reviewData();
-  if(!d){el.innerHTML='';return;}
+  const d=_reviewData(),cm=_closeMonthCard();
+  if(!d){el.innerHTML=cm;return;}
   const name=MONTHS[d.pm-1];
   const chg=d.prevSpent?Math.round((d.spent-d.prevSpent)/d.prevSpent*100):null;
   const rate=d.income>0?Math.round(d.saved/d.income*100):null;
-  el.innerHTML=`<div class="card mr-card">
+  el.innerHTML=cm+`<div class="card mr-card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <div style="font-size:0.84rem;font-weight:800">${name} in review</div>
       <span class="sh-link" style="font-size:0.66rem" onclick="dismissMonthReview()">Hide</span>
@@ -2467,7 +2490,7 @@ function renderDashboard(){
     return`<span class="mom-badge ${good?'mom-dn':'mom-up'}">${up?'+':''}${pct}%</span>`;
   };
   // ── Safe-to-spend: remaining budget ÷ days left, shown only for the live month ──
-  const _now=new Date();
+  const _now=appNow();
   const _isLiveMonth=(m===_now.getMonth()+1&&y===_now.getFullYear());
   let _spentFooter=`${fmtCur(budgTotal-spent,cur,m,y)} left`;
   if(_isLiveMonth&&budgTotal>0){
@@ -2675,7 +2698,7 @@ function renderDashCalendar(m, y, txns){
   // Calendar grid
   const firstDay=new Date(y, m-1, 1).getDay(); // 0=Sun
   const daysInMonth=new Date(y, m, 0).getDate();
-  const todayStr=(()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');})();
+  const todayStr=(()=>{const d=appNow();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');})();
 
   let cells='';
   // Header
@@ -3306,7 +3329,7 @@ function _spendHistoryStats(m,y,day){
 // `why` — the reasoning shown when expanded — and a month-scoped `key` so a
 // dismissed alert stays dismissed for that month even as amounts move.
 function computeSmartInsights(){
-  const now=new Date();
+  const now=appNow();
   const m=now.getMonth()+1,y=now.getFullYear(),day=now.getDate();
   const daysInMonth=new Date(y,m,0).getDate(),daysLeft=daysInMonth-day;
   const mk=`${y}-${m}`;
@@ -3440,7 +3463,7 @@ function computeSmartInsights(){
 function renderDashAlerts(){
   const el=document.getElementById('dash-alerts');
   if(!el) return;
-  const now=new Date();
+  const now=appNow();
   const m=now.getMonth()+1,y=now.getFullYear();
   const isCurrentMonth=(S.dashMonth===m&&S.dashYear===y);
 
@@ -3548,7 +3571,7 @@ function ensureBalanceHistory(){
   _balHistP=(async()=>{
     try{
       const [cs,is]=await Promise.all([db.collection('cashBalances').get(),db.collection('investments').get()]);
-      const n=new Date(),live=sid(n.getMonth()+1,n.getFullYear());
+      const n=appNow(),live=sid(n.getMonth()+1,n.getFullYear());
       cs.docs.forEach(d=>{if(!/^\d{4}-\d{2}$/.test(d.id)||d.id===live)return;const [y,m]=d.id.split('-').map(Number);cSet(CK.cash(m,y),d.data());});
       is.docs.forEach(d=>{if(!/^\d{4}-\d{2}$/.test(d.id)||d.id===live)return;const [y,m]=d.id.split('-').map(Number);cSet(CK.inv(m,y),d.data());});
       _balHistAt=Date.now();
@@ -3564,7 +3587,7 @@ function renderNWTrendChart(){
   if(!canvas) return;
   const note=document.getElementById('nw-trend-note');
   // The last 12 months up to the month on screen that have any balances.
-  const endY=S.dashMonth?S.dashYear:new Date().getFullYear(),endM=S.dashMonth||12;
+  const endY=S.dashMonth?S.dashYear:appNow().getFullYear(),endM=S.dashMonth||12;
   const pts=[];
   for(let i=11;i>=0;i--){
     let mm=endM-i,yy=endY;while(mm<1){mm+=12;yy--;}
@@ -3600,7 +3623,7 @@ function renderNWTrendChart(){
 
 function renderDashFullYear(y,totalInc,totalExp,cur){
   const histYear=getHistory().filter(h=>h.year===y);
-  const now=new Date();
+  const now=appNow();
   const currentYear=now.getFullYear();
   // Use Dec for completed years, current month for the ongoing year
   const refMonth=y<currentYear?12:(y===currentYear?now.getMonth()+1:12);
@@ -3885,7 +3908,7 @@ function sbNewBudget(type){
   const b={id:_sbNewId(),title:type==='travel'?'New trip':'New budget',type,
     base:'NGN',fx:{USD:DEF_RATES.USD,GBP:DEF_RATES.GBP},
     travelers:type==='travel'?2:1,nights:type==='travel'?7:0,
-    departure:type==='travel'?new Date().toISOString().slice(0,10):'',
+    departure:type==='travel'?appNow().toISOString().slice(0,10):'',
     contingencyPct:5,items:type==='travel'?_sbTravelItems():[],
     createdAt:Date.now(),updatedAt:Date.now()};
   _sbSyncQtys(b);
@@ -4677,7 +4700,7 @@ function _qaParseLocal(text){
   if(/\b(transfer(red)?|move[d]?|sent)\b/.test(low)&&found.length>=2){r.type='transfer';r.bank=found[0].a;r.toBank=found[1].a;}
   else if(found.length)r.bank=found[0].a;
   // date
-  const d=new Date();
+  const d=appNow();
   if(/\byesterday\b/.test(low))d.setDate(d.getDate()-1);
   else{
     const ago=low.match(/\b(\d+)\s+days?\s+ago\b/);
@@ -4713,7 +4736,7 @@ function _qaParseLocal(text){
 async function _qaParseAI(text,local){
   const cats={};getAllCats().forEach(c=>{cats[c]=getExpLines(c);});
   const prompt=`You turn one short note about money into a transaction for a personal finance app. Reply with JSON only.
-Today is ${todayStr()} (${_QA_WEEKDAYS[new Date().getDay()]}). Amounts are in Naira unless another currency is stated. "5k" means 5000, "2m" means 2000000.
+Today is ${todayStr()} (${_QA_WEEKDAYS[appNow().getDay()]}). Amounts are in Naira unless another currency is stated. "5k" means 5000, "2m" means 2000000.
 Expense categories and their known items: ${JSON.stringify(cats)}
 Income categories: ${JSON.stringify(getIncomeCats())}
 The user's accounts: ${JSON.stringify(getCashAccounts())}
@@ -5174,7 +5197,7 @@ function _doTransfer({kind,from,to,amt,date,notes}){
   // principals into a past month AND corrupt today's figures, so refuse it.
   // Back-dating inside the current month is still fine.
   if(!_invIsLiveMonth(m,y)){
-    const n=new Date();
+    const n=appNow();
     return {ok:false,msg:`Investment transfers must be dated in ${MONTHS[n.getMonth()]} ${n.getFullYear()} — investment balances only track the current month`};
   }
 
@@ -5306,7 +5329,7 @@ function _lastPostedFrom(key){
 }
 function _monthsFrom(from){
   const out=[];if(!from)return out;
-  const n=new Date(),cm=n.getMonth()+1,cy=n.getFullYear();
+  const n=appNow(),cm=n.getMonth()+1,cy=n.getFullYear();
   let [y,m]=from.split('-').map(Number);
   while(y<cy||(y===cy&&m<=cm)){out.push({m,y});if(++m>12){m=1;y++;}}
   return out;
@@ -5336,7 +5359,7 @@ function _ledgerEntries(m,y){
 }
 async function _loadLedgers(months){
   if(!_dbReady())return false;
-  const n=new Date(),live=sid(n.getMonth()+1,n.getFullYear());
+  const n=appNow(),live=sid(n.getMonth()+1,n.getFullYear());
   const need=months.filter(({m,y})=>{const r=_ledgerRemote[sid(m,y)];return !r||(sid(m,y)===live&&Date.now()-r.at>3e5);});
   if(!need.length)return false;
   await Promise.all(need.map(async({m,y})=>{
@@ -5373,7 +5396,7 @@ function _movesIn(key,m,y){
 // balance less everything that moved on or after that day.
 function _dayBalances(key,m,y){
   const n=_daysInMonth(m,y),p=m===1?{m:12,y:y-1}:{m:m-1,y};
-  const now=new Date();
+  const now=appNow();
   let close=_closingBal(key,m,y);
   const prevClose=_closingBal(key,p.m,p.y);
   if(close==null)close=prevClose;
@@ -5505,7 +5528,7 @@ function _fmtAcctAmt(key,v){return key.startsWith('cash:')&&isUSDCashAccount(key
 // Add `amt` to a platform's saved month docs from (m,y) to last month, and
 // set this month's to the investments' live total.
 function _invBumpDocs(pKey,amt,m,y,subs){
-  const n=new Date(),cm=n.getMonth()+1,cy=n.getFullYear();
+  const n=appNow(),cm=n.getMonth()+1,cy=n.getFullYear();
   let mm=m,yy=y;
   while(yy<cy||(yy===cy&&mm<cm)){
     const d=cGet(CK.inv(mm,yy));
@@ -5594,7 +5617,7 @@ function _unrecordInterest(inc){
     return out;
   });
   saveSubsForPlatform(pKey,subs);
-  _invBumpDocs(pKey,-Math.round(inc.amount||0),inc.month||new Date().getMonth()+1,inc.year||new Date().getFullYear(),subs);
+  _invBumpDocs(pKey,-Math.round(inc.amount||0),inc.month||appNow().getMonth()+1,inc.year||appNow().getFullYear(),subs);
   const mv=getInvMovements(),i=mv.findIndex(x=>x.platformKey===pKey&&x.date===inc.date&&x.notes==='Interest'&&x.delta===Math.round(inc.amount||0));
   if(i>=0){mv.splice(i,1);cSet(INV_MOVE_KEY,mv);_syncInvConfig();}
   renderInvestments();renderDashboard();
@@ -5624,7 +5647,7 @@ async function runAutoInterest(){
   _autoIntBusy=true;
   const done=[];
   try{
-    const n=new Date(),cur=sid(n.getMonth()+1,n.getFullYear());
+    const n=appNow(),cur=sid(n.getMonth()+1,n.getFullYear());
     // A cash rate with no start date counts from the 1st of the month it was
     // first seen, so a later month's run doesn't keep moving the start.
     const meta=getCashInterestMeta();let pinned=false;
@@ -5663,6 +5686,88 @@ async function runAutoInterest(){
     toast(`Interest added: ${done.join(' · ')}`);
     renderDashboard();renderIncome();renderCashPage();renderInvestments();renderExpenses();
   }
+}
+
+// ── Close a month early (v4.7.9) ──
+// "Close September" on, say, 29 Sept: profile.closedThrough='2026-09' moves
+// the app clock (appNow) to 1 Oct, so the month-end work runs now (interest
+// booked on 30 Sept, bills due by 1 Oct posted, October's rate), new entries
+// default to 1 Oct and every page opens on October. Until the real 1 Oct it
+// can be reopened, which takes back the interest the close booked.
+function _monLabel(mon){const [y,m]=mon.split('-').map(Number);return MONTHS[m-1];}
+function _nextMonLabel(mon){const [y,m]=mon.split('-').map(Number);return MONTHS[m%12];}
+// Every page back to the clock's month (after a close, reopen or boot).
+function _clockMoveViews(reload){
+  const n=appNow(),m=n.getMonth()+1,y=n.getFullYear();
+  S.cashMonth=m;S.cashYear=y;
+  if(reload)reloadMonth(m,y);else{S.expMonth=m;S.expYear=y;S.dashMonth=m;S.dashYear=y;}
+}
+async function closeMonthEarly(){
+  if(!_dbReady()){toast('Still loading. Try again in a moment.');return;}
+  if(_earlyClosed())return;
+  const mon=_realMonth(),cur=_monLabel(mon),nxt=_nextMonLabel(mon);
+  const [y,m]=mon.split('-').map(Number);
+  if(!confirm(`Close ${cur} now?\n\n• Interest for ${cur} is added to your accounts, dated ${fmtDate(_ymd(y,m,_daysInMonth(m,y)))}.\n• Bills due by 1 ${nxt.slice(0,3)} are posted.\n• SpendWise moves to ${nxt}: new entries are dated 1 ${nxt.slice(0,3)}.\n\nYou can reopen ${cur} until it really ends.`))return;
+  saveProfile({closedThrough:mon});
+  _clockMoveViews(true);
+  renderAll();
+  toast(`${cur} closed. You're now in ${nxt}.`);
+  await runAutoInterest();
+  runAutoRecurring();
+  fxAutoUpdate();
+}
+async function reopenMonth(){
+  if(!_earlyClosed()||!_dbReady())return;
+  const mon=_closedThrough(),cur=_monLabel(mon),nxt=_nextMonLabel(mon);
+  if(!confirm(`Reopen ${cur}?\n\nThe interest added when you closed it is taken back (it's added again when you close ${cur} or when the month ends). Bills already posted for 1 ${nxt.slice(0,3)} stay. New entries are dated today again.`))return;
+  const posts=getInterestPosts();let changed=false;
+  for(const key of Object.keys(posts)){
+    const p=posts[key]&&posts[key][mon];
+    if(!p||!p.auto)continue;
+    if(p.incomeId)await _removeInterestEntry(p.incomeId,mon);
+    delete posts[key][mon];changed=true;
+  }
+  if(changed)saveInterestPosts(posts);
+  saveProfile({closedThrough:''});
+  _clockMoveViews(true);
+  renderAll();renderInvestments();
+  toast(`${cur} reopened.`);
+}
+// Remove one automatic interest entry: the income record, and the balance it
+// added (a cash account's through the ledger; an investment's via _unrecordInterest).
+async function _removeInterestEntry(id,mon){
+  const [y,m]=mon.split('-').map(Number);
+  let inc=(cGet(CK.inc(m,y))||[]).find(i=>i.id===id)||(S.income||[]).find(i=>i.id===id);
+  if(!inc){try{const d=await db.collection('income').doc(id).get();if(d.exists)inc={id,...d.data()};}catch(e){}}
+  if(!inc)return;
+  const c=cGet(CK.inc(m,y));if(Array.isArray(c))cSet(CK.inc(m,y),c.filter(i=>i.id!==id));
+  if(S.expMonth===m&&S.expYear===y){S.income=(S.income||[]).filter(i=>i.id!==id);}
+  if(inc.intAcct&&inc.intAcct.startsWith('cash:')&&inc.amount)_adjustCash(inc.bank,-inc.amount,m,y,'income-delete','',inc.date);
+  else _unrecordInterest(inc);
+  _histTouch(m,y);
+  try{await db.collection('income').doc(id).delete();}catch(e){console.warn('interest entry delete failed',e);}
+}
+// Saving an entry dated in a month that was closed early: offer the 1st of
+// the next month instead (OK), or keep the date (Cancel).
+function _checkClosedDate(){
+  if(!_earlyClosed())return;
+  const el=document.getElementById('e-date');if(!el||!el.value)return;
+  const mon=_closedThrough();
+  if(el.value.slice(0,7)>mon)return;
+  if(el.value.slice(0,7)<mon)return; // older months: back-dating as usual
+  const first=todayStr();
+  if(confirm(`${_monLabel(mon)} is closed. Post this on ${fmtDate(first)} instead?\n\nOK: ${fmtDate(first)}\nCancel: keep ${fmtDate(el.value)}`))el.value=first;
+}
+// Home card: in a month's last week, offer to close it; while closed early, offer to reopen.
+function _closeMonthCard(){
+  if(_earlyClosed()){
+    const mon=_closedThrough();
+    return `<div class="exp-card close-mo-card"><span>${_monLabel(mon)} is closed. You're in ${_nextMonLabel(mon)}.</span><button class="btn btn-g btn-sm" onclick="reopenMonth()">Reopen ${_monLabel(mon)}</button></div>`;
+  }
+  const n=new Date();
+  if(_daysInMonth(n.getMonth()+1,n.getFullYear())-n.getDate()>6)return '';
+  const cur=MONTHS[n.getMonth()];
+  return `<div class="exp-card close-mo-card"><span>Done with ${cur}? Close it now and start ${MONTHS[(n.getMonth()+1)%12]}.</span><button class="btn btn-p btn-sm" onclick="closeMonthEarly()">Close ${cur}</button></div>`;
 }
 
 // ── Record interest window ──
@@ -5822,6 +5927,7 @@ async function saveExpense(){
   const type=document.getElementById('e-type')?.value||'expense';
   const amt=numVal('e-amt');
   if(!amt||amt<=0){toast('Enter a valid amount');return;}
+  _checkClosedDate();             // dated in a month closed early? offer the 1st of the next
 
   // ── Transfer ──
   if(type==='transfer'){
@@ -6172,7 +6278,7 @@ function _renderInvInto(suffix){
     const platformNGN=effectivePrincipalNGN+dailyIntNGN;
     const _monthIntNGN=totalInterestNGN-dailyIntNGN;
     const _fmtInt=v=>isUSD?'$'+(v/fxRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):fN(Math.round(v));
-    const _n=new Date(),_lastDay=_ymd(_n.getFullYear(),_n.getMonth()+1,_daysInMonth(_n.getMonth()+1,_n.getFullYear()));
+    const _n=appNow(),_lastDay=_ymd(_n.getFullYear(),_n.getMonth()+1,_daysInMonth(_n.getMonth()+1,_n.getFullYear()));
     const intNote=[dailyIntNGN>0?`incl. +${_fmtInt(dailyIntNGN)} interest`:'',_monthIntNGN>0?`+${_fmtInt(_monthIntNGN)} earned this month, added ${fmtDate(_lastDay)}`:''].filter(Boolean).join(' · ');
     const pct=inv[p.key]&&(PLATFORMS.reduce((a,pp)=>a+(inv[pp.key]||0),0)>0)?((inv[p.key]/(PLATFORMS.reduce((a,pp)=>a+(inv[pp.key]||0),0)))*100).toFixed(1):'0.0';
     const badge=`<span style="font-size:0.56rem;padding:1px 4px;border-radius:3px;background:var(--bg3);color:var(--text3);margin-left:4px">${p.currency}</span>`;
@@ -6255,7 +6361,7 @@ function _renderInvInto(suffix){
   if(elPlatforms){
     let html='';
     if(!live){
-      const n=new Date();
+      const n=appNow();
       html+=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rsm);padding:9px 11px;margin-bottom:10px;font-size:0.66rem;color:var(--text2);line-height:1.5">
         Viewing <strong>${MONTHS[m-1]} ${y}</strong> — these are that month's saved balances.
         Investment balances can only be edited for the current month.
@@ -6738,7 +6844,7 @@ function renderCashPage(){
   const total=ACCTS.reduce((s,b)=>{const v=cash[b]||0;return s+(isUSDCashAccount(b)?v*(fxR.USD||1650):v);},0);
   const intMeta=getCashInterestMeta();
   const live=_invIsLiveMonth(m,y);
-  const _n=new Date(),_lastDay=_ymd(_n.getFullYear(),_n.getMonth()+1,_daysInMonth(_n.getMonth()+1,_n.getFullYear()));
+  const _n=appNow(),_lastDay=_ymd(_n.getFullYear(),_n.getMonth()+1,_daysInMonth(_n.getMonth()+1,_n.getFullYear()));
   if(live)_intPrefetch();
   document.getElementById('cash-summary').innerHTML=`<div class="clabel">Total Cash — ${MONTHS[m-1]} ${y}${eyeBtn('cash-page','renderCashPage')}</div><div class="cval">${total?maskIf('cash-page',fmtCur(Math.round(total),cur,m,y)):'—'}</div><div class="csub">${ACCTS.join(' · ')}</div>`;
   document.getElementById('cash-breakdown').innerHTML=ACCTS.length?ACCTS.map((b,i)=>{
@@ -6841,7 +6947,7 @@ async function saveAcctEdit(){
 // Month strip with the previous year at the start and the next year (up to
 // this one) at the end, so any month of any year can be reached.
 function _monthStrip(m,y,fn){
-  const cy=new Date().getFullYear();
+  const cy=appNow().getFullYear();
   let h=`<div class="mpill mpill-yr" onclick="${fn}(12,${y-1})">‹ ${y-1}</div>`;
   for(let mo=1;mo<=12;mo++)h+=`<div class="mpill ${mo===m?'active':''}" onclick="${fn}(${mo},${y})">${MS[mo-1]}${mo===m&&y!==cy?' '+String(y).slice(2):''}</div>`;
   if(y<cy)h+=`<div class="mpill mpill-yr" onclick="${fn}(1,${y+1})">${y+1} ›</div>`;
@@ -7791,7 +7897,7 @@ function refreshInsights(){
 }
 function renderProjInsights(){
   const el=document.getElementById('proj-insights');if(!el)return;
-  const now=new Date();
+  const now=appNow();
   const m=now.getMonth()+1,y=now.getFullYear(),day=now.getDate();
   const daysInMonth=new Date(y,m,0).getDate();
   const R=computeSmartInsights();
@@ -8173,6 +8279,7 @@ function renderSettGuide(){
       <p>The round <b>+</b> button is on every page. Tap it for three shortcuts: <b>Quick add</b>, <b>Say it</b> (speak or type the transaction) and <b>Ask AI</b>. If it's covering something, <b>drag it</b> anywhere on the screen; it stays where you leave it.</p>
       <p><b>Quick add</b> opens the form for you to fill in yourself.</p>
       <p><b>Say it</b> is the fastest way. It opens its own screen and starts listening: say something like <i>"5k lunch from GTB yesterday"</i>, <i>"received 250k salary into Access"</i> or <i>"moved 20k from Opay to Kuda"</i>. Prefer to type? Tap the box under the mic and type it instead, then tap ✦. The form opens filled in; check it and tap Save. Nothing is saved until you do. Tap the big mic to stop early or to try again.</p>
+      <p><b>Closing a month early.</b> Done with a month before it ends (say on 29 Sept)? Tap <b>Close September</b> on Home (it shows in the last week of the month) or in Settings → Data → Month. September's interest is added, bills due are posted, and SpendWise moves to October: new entries are dated 1 Oct. If you date something in September afterwards, you're asked whether to post it on 1 Oct instead. Changed your mind? <b>Reopen September</b> until the month really ends.</p>
       <p>Filling in the form yourself, choose what you're recording:</p>
       <ul>
         <li><b>Paid in dollars or pounds from a naira account?</b> (e.g. a $6.93 subscription on your naira card) Switch the currency next to Amount to $ or £. It's converted at that month's rate and your account is charged in naira.</li>
@@ -9130,13 +9237,19 @@ function renderSettData(){
       <div style="font-size:0.68rem;color:var(--text2);margin-top:10px">The round <b>+</b> button can be dragged anywhere on the screen. <span class="sh-link" style="font-size:0.68rem" onclick="fabResetPosition()">Put it back in the corner</span></div>
     </div>
     <div class="exp-card" style="margin-top:10px">
+      <div class="exp-card-title" style="margin-bottom:6px">Month</div>
+      ${_earlyClosed()
+        ?`<div class="exp-card-sub" style="margin-bottom:10px">${_monLabel(_closedThrough())} is closed, so SpendWise is in ${_nextMonLabel(_closedThrough())} and new entries are dated ${fmtDate(todayStr())}. You can reopen it until it really ends.</div><button class="btn btn-g btn-sm btn-full" onclick="reopenMonth()">Reopen ${_monLabel(_closedThrough())}</button>`
+        :`<div class="exp-card-sub" style="margin-bottom:10px">Finished with ${MONTHS[new Date().getMonth()]} before it ends? Close it: its interest is added, bills due are posted and SpendWise moves to ${MONTHS[(new Date().getMonth()+1)%12]}, with new entries dated the 1st.</div><button class="btn btn-g btn-sm btn-full" onclick="closeMonthEarly()">Close ${MONTHS[new Date().getMonth()]} now</button>`}
+    </div>
+    <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Help</div>
       <div class="exp-card-sub" style="margin-bottom:10px">New here? The Guide explains every part of the app. Found a bug or have an idea? Send it straight to the developer.</div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-g btn-sm" style="flex:1" onclick="openGuide()">Open the guide</button>
         <button class="btn btn-g btn-sm" style="flex:1" onclick="reportProblem()">Report a problem</button>
       </div>
-      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.8</div><div style="color:var(--text3);margin-top:4px">v4.7.8: The type-it box moved from Quick add to Say it. Quick add opens the plain form; Say it lets you speak or type, then fills in the form.</div></div>
+      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.9</div><div style="color:var(--text3);margin-top:4px">v4.7.9: Close a month early: on Home (last week of the month) or Settings - Month. Its interest and due bills are booked, and SpendWise moves to the next month. Reopen until it really ends.</div></div>
     </div>
     <details class="sett-adv" id="sett-adv"${_settAdvOpen?' open':''} ontoggle="_settAdvOpen=this.open">
       <summary>Advanced<span>AI keys, net worth, exchange rates, balance audit</span></summary>
@@ -9247,7 +9360,7 @@ function renderFxCard(){
   // the real-world current month and the next 11 months ahead, so the
   // current month and any month we move into is always editable here
   // even before a built-in or override entry exists for it.
-  const _fxNow=new Date();
+  const _fxNow=appNow();
   const _fxFutureKeys=[];
   for(let i=0;i<12;i++){
     const fm=_fxNow.getMonth()+i,fy=_fxNow.getFullYear()+Math.floor(fm/12);
@@ -9290,7 +9403,7 @@ function renderFxCard(){
     </div>`;
 }
 function saveAllFxOverrides(){
-  const _fxNow=new Date();
+  const _fxNow=appNow();
   const _fxFutureKeys=[];
   for(let i=0;i<12;i++){
     const fm=_fxNow.getMonth()+i,fy=_fxNow.getFullYear()+Math.floor(fm/12);
@@ -9892,7 +10005,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').cat
 
 
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.7.8';
+const APP_VERSION='v4.7.9';
 async function checkForUpdate(){
   try{
     const res=await fetch(location.origin+location.pathname+'?_='+Date.now(),{cache:'no-store'});
@@ -9945,7 +10058,7 @@ function saveSavingsTargetUI(){
 // OVERDUE DEBTOR HELPERS
 // ══════════════════════════════════════════════════════════════════════════
 function _getOverdueDebtors(){
-  const now=new Date();
+  const now=appNow();
   return S.debtors.filter(d=>{
     if(d.expectRepayment===false||(d.ngnBalance||0)<=0)return false;
     let lastDate=d.date||'';
@@ -10008,7 +10121,7 @@ async function renderInvAllocChart(suffix){
 // CASH FLOW PROJECTION + BREAK-EVEN helper
 // ══════════════════════════════════════════════════════════════════════════
 // History without the month in progress (averages and projections).
-function _completedHistory(){const n=new Date(),k=n.getFullYear()*100+n.getMonth()+1;return getHistory().filter(h=>h.year*100+h.month<k);}
+function _completedHistory(){const n=appNow(),k=n.getFullYear()*100+n.getMonth()+1;return getHistory().filter(h=>h.year*100+h.month<k);}
 function renderCashFlowProjection(containerEl){
   if(!containerEl)return;
   const hist=_completedHistory().filter(h=>h.income>0||h.expenses>0).slice(-6);
@@ -10021,7 +10134,7 @@ function renderCashFlowProjection(containerEl){
   getCashAccounts().forEach(b=>{const ci=intMeta[b];if(ci&&ci.interestRate)monthlyInt+=(S.cash[b]||0)*(ci.interestRate/100/12);});
   PLATFORMS.forEach(p=>{const meta=getInvPlatformMeta(p.key);if(meta.assetClass==='fixed_income'&&meta.interestRate)monthlyInt+=(S.investments[p.key]||0)*(meta.interestRate/100/12);});
   const netPerMonth=avgInc+monthlyInt-avgExp;
-  const now=new Date();let runningCash=cashNow;
+  const now=appNow();let runningCash=cashNow;
   const months=[];
   for(let i=1;i<=3;i++){const d=new Date(now.getFullYear(),now.getMonth()+i,1);runningCash+=netPerMonth;months.push({label:MS[d.getMonth()]+" '"+String(d.getFullYear()).slice(2),cash:Math.round(runningCash)});}
   const breakEven=avgExp>avgInc+monthlyInt&&cashNow>0?Math.ceil(cashNow/(avgExp-avgInc-monthlyInt)):null;
@@ -10882,7 +10995,7 @@ async function _aiBuildContext(force){
     +hist.slice().sort(byYm).map(h=>JSON.stringify(strip(h))).join('\n'));
   sect.push('BUDGETS (one JSON per month; NGN per category):\n'
     +budgets.slice().sort(byYm).map(b=>ym(b)+' '+JSON.stringify(strip(b))).join('\n'));
-  const nw=new Date();
+  const nw=appNow();
   const fx=getFxRates(nw.getMonth()+1,nw.getFullYear());
   const std=Object.entries(DEF_BUDGETS).filter(([,v])=>+v>0);
   if(std.length)sect.push('STANDARD MONTHLY BUDGET (applies to every month that has no budget of its own below; NGN per category):\n'+JSON.stringify(Object.fromEntries(std)));

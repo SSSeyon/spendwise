@@ -1,4 +1,4 @@
-# SpendWise — Handover Note (v4.7.8)
+# SpendWise — Handover Note (v4.7.9)
 
 Personal-finance PWA, shared with the owner's friends since v4.5 (2026-09-26). Works signed out (data stays on the device); optional username/password accounts sync across devices with every document **encrypted on the device** — the project owner cannot read other users' data.
 Live: https://ssseyon.github.io/spendwise/
@@ -43,6 +43,15 @@ Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB l
 - **Logos:** served from the app's own `Logos/`; `LOGO_CATALOG` in setup.js resolves a logo by account/platform name at render time (20 added from official Play Store icons); users can upload their own (a 64px data URL stored in their settings).
 - The one-time Fife→Kids / USD Cash / Energy→Fuel repairs no longer run at boot.
 - Tested 2026-09-26 on localhost with two test accounts: sign-up + upload of local data, ciphertext-only storage, restore on sign-in, recovery, password change, concurrent increments from two tabs, live listeners, offline-then-reload, cross-user isolation. Known gap (pre-existing): if the boot sync throws, realtime listeners stay off until a reload.
+
+## v4.7.9 (2026-10-01)
+
+- **Close a month early.** `appConfig/profile.closedThrough='YYYY-MM'` (set through `saveProfile`, synced by `_profileListener`, which moves the views on other devices). While the real month is ≤ that month, **`appNow()`** returns the 1st of the next month (noon); otherwise it's the real date. `todayStr()`, `curM`/`curY`, `_invIsLiveMonth` and every `new Date()` that picks a month or day now go through `appNow()`, so the live month, new-entry dates, Quick add's "yesterday", month-end interest (`runAutoInterest`'s `cur`), recurring due dates, `_reviewData`, `fxAutoUpdate`'s month and cash seeding (`loadCashData` `isFutureMonth`) all move on together. **Rule: use `appNow()`/`todayStr()` for anything that picks a month or day; keep `new Date()`/`Date.now()` for timestamps and throttles.** The two one-time migrations (~L311, ~L812) still use the real date on purpose.
+- `closeMonthEarly()` saves the flag, moves the views (`_clockMoveViews(true)`), then runs `runAutoInterest` (books the closed month's interest on its last day; days after the close use the closing balance, which is right because later money is dated the 1st), `runAutoRecurring` and `fxAutoUpdate`. Only the current real month can be closed. `_earlyClosed()` is true until the real month ends.
+- `reopenMonth()` (only while `_earlyClosed()`): for each `interestPosts[key][mon]` with `auto`, `_removeInterestEntry` deletes the income entry and takes back its balance (cash through `_adjustCash`; investments through `_unrecordInterest`), and the claim is deleted so it's booked again later. Bills already posted for the 1st are kept.
+- `_checkClosedDate()` runs at the start of `saveExpense` (expense, income and transfer): an entry dated in the early-closed month asks "Post this on 1 Oct instead?" (OK = the 1st, Cancel = keep). Older months back-date as before.
+- UI: `_closeMonthCard()` at the top of `#dash-review` (last 7 days of a real month: "Close September"; while closed: "Reopen"), Settings → Data → **Month**, and a Guide paragraph.
+- **Fixed an investment sync race:** `_syncInvConfig` waits 800 ms before writing `appConfig/investments`, and the listener could put an older snapshot over a change made in that window (seen as month-end interest on Piggy losing its principal and movement). `_invCfgPending` now stays true from the local change until the write lands, and the listener ignores snapshots meanwhile.
 
 ## v4.7.8 (2026-10-01)
 
