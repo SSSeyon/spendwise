@@ -537,5 +537,5 @@ datalist option{background:var(--bg2);color:var(--text)}
 .vc-status{font-size:0.78rem;color:var(--text2);min-height:1.2em;margin-bottom:8px}
 .vc-status.qa-ok{color:var(--accent)}
 .vc-status.qa-warn{color:var(--gold)}
-.vc-heard{font-size:0.92rem;color:var(--text);min-height:1.4em;margin-bottom:12px;line-height:1.45}
+.vc-box{width:100%;box-sizing:border-box;margin:2px 0 12px;text-align:left}
 .vc-hint{font-size:0.68rem;color:var(--text3);line-height:1.5}

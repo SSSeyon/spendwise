@@ -2119,7 +2119,7 @@ function fabMenuToggle(){
 }
 function fabAction(a){
   fabMenuClose();
-  if(a==='add'){openExpModal('expense');setTimeout(()=>document.getElementById('qa-text')?.focus(),120);}
+  if(a==='add'){openExpModal('expense');}
   else if(a==='voice'){openVoiceAdd();} // same tap = user gesture for the mic
   else if(a==='ai'){openAiInsight();setTimeout(()=>document.getElementById('ai-input')?.focus(),200);}
 }
@@ -4573,7 +4573,6 @@ function openExpModal(type){
   type=type||'expense';_txnType=type;
   const ic2=document.getElementById('i-cat2');
   if(ic2)ic2.innerHTML=getIncomeCats().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
-  const qa=document.getElementById('qa-text');if(qa)qa.value='';
   const qs=document.getElementById('qa-status');if(qs){qs.textContent='';qs.className='qa-status';}
   const qn=document.getElementById('e-notes');if(qn)delete qn.dataset.qa;
   const ecur=document.getElementById('e-cur');if(ecur)ecur.value='NGN';
@@ -4631,7 +4630,6 @@ function openEditExp(id){
 function _setEditMode(on,title,btn){
   const row=document.getElementById('e-type-row');if(row)row.style.display=on?'none':'flex';
   const rr=document.getElementById('e-recur-row');if(rr)rr.style.display=on?'none':'flex';
-  const qa=document.querySelector('#exp-modal .qa-box');if(qa)qa.style.display=on?'none':'';
   if(on){
     const t=document.getElementById('exp-modal-title');if(t)t.textContent=title;
     const b=document.getElementById('e-save');if(b)b.textContent=btn;
@@ -4787,20 +4785,20 @@ function _qaFill(r){
   if(r.notes&&!nt.value){nt.value=r.notes;nt.dataset.qa='1';}
 }
 function _qaStatus(msg,cls){const el=document.getElementById('qa-status');if(el){el.textContent=msg||'';el.className='qa-status'+(cls?' '+cls:'');}}
-let _qaBusy=false;
-async function quickAddParse(){
-  const text=(document.getElementById('qa-text')?.value||'').trim();
+let _qaSeq=0; // a newer Say it takes over from one still waiting on the AI
+async function quickAddParse(text){
+  text=String(text||'').trim();
   if(!text){_qaStatus('Type or say something like “5k lunch from GTB yesterday”.');return;}
-  if(_qaBusy)return;_qaBusy=true;
+  const seq=++_qaSeq;
   const local=_qaParseLocal(text);
   _qaFill(local);
   let r=local,byAI=false;
   if(navigator.onLine!==false&&_aiKey()){
     _qaStatus('Filling in…');
-    try{const a=await _qaParseAI(text,local);if(a){r=a;byAI=true;_qaFill(a);}}
+    try{const a=await _qaParseAI(text,local);if(a&&seq===_qaSeq){r=a;byAI=true;_qaFill(a);}}
     catch(e){console.warn('quick add AI failed, kept the on-device result',e);}
   }
-  _qaBusy=false;
+  if(seq!==_qaSeq)return;
   const missing=[];
   if(!r.amount)missing.push('amount');
   if(r.type==='expense'&&!r.category)missing.push('category');
@@ -4837,35 +4835,49 @@ function voiceStart(opts){
   };
   try{rec.start();}catch(e){_voiceRec=null;if(opts.btn)opts.btn.classList.remove('on');status("Couldn't start the microphone.",'qa-warn');}
 }
-// Say it (the + menu): its own screen. Listening starts straight away (the
-// menu tap is the user gesture the mic needs); when you stop talking, what was
-// heard is read like a Quick add note and the + form opens filled in, for you
-// to check and save. Tap the mic again to stop or to try again.
+// Say it (the + menu): its own screen, and the one place to describe a
+// transaction in words. Listening starts straight away (the menu tap is the
+// user gesture the mic needs) and what's heard goes into the box; tapping the
+// box stops the mic so you can type instead. When you stop talking, or tap ✦,
+// the + form opens filled in, for you to check and save.
+let _vcTyping=false;
 function _vcStatus(msg,cls){const el=document.getElementById('vc-status');if(el){el.textContent=msg||'';el.className='vc-status'+(cls?' '+cls:'');}}
 function openVoiceAdd(){
-  const h=document.getElementById('vc-heard');if(h)h.textContent='';
+  const v=document.getElementById('vc-text');if(v)v.value='';
   openMod('voice-modal');
   voiceAddStart();
 }
 function voiceAddStart(){
   if(_voiceRec){try{_voiceRec.stop();}catch{}return;}
-  const h=document.getElementById('vc-heard');if(h)h.textContent='';
-  _vcStatus(voiceSupported()?'Listening…':'');
+  _vcTyping=false;
+  const v=document.getElementById('vc-text');if(v)v.value='';
+  _vcStatus(voiceSupported()?'Listening…':'Type it below, then tap ✦.');
   voiceStart({
     btn:document.getElementById('vc-mic'),
-    onText:t=>{if(h)h.textContent='“'+t+'”';},
-    onDone:t=>{
-      if(!document.getElementById('voice-modal')?.classList.contains('open'))return;
+    onText:t=>{if(v&&!_vcTyping)v.value=t;},
+    onDone:()=>{
+      if(_vcTyping||!document.getElementById('voice-modal')?.classList.contains('open'))return;
       _vcStatus('Got it. Filling in the form…','qa-ok');
-      setTimeout(()=>{
-        closeMod('voice-modal');
-        openExpModal('expense');
-        const q=document.getElementById('qa-text');if(q)q.value=t;
-        quickAddParse();
-      },500);
+      setTimeout(voiceAddSubmit,500);
     },
     onStatus:_vcStatus,
   });
+}
+// Tapping the box while listening: stop the mic without submitting.
+function voiceAddTyping(){
+  if(!_voiceRec)return;
+  _vcTyping=true;
+  const r=_voiceRec;_voiceRec=null;try{r.abort();}catch{}
+  document.getElementById('vc-mic')?.classList.remove('on');
+  _vcStatus('Type it, then tap ✦.');
+}
+function voiceAddSubmit(){
+  if(!document.getElementById('voice-modal')?.classList.contains('open'))return;
+  const text=(document.getElementById('vc-text')?.value||'').trim();
+  if(!text){_vcStatus('Say or type something first.','qa-warn');return;}
+  closeVoice();
+  openExpModal('expense');
+  quickAddParse(text);
 }
 function closeVoice(){
   closeMod('voice-modal'); // first, so the mic stopping doesn't go on to fill in the form
@@ -8158,10 +8170,10 @@ function renderSettGuide(){
       <p><b>Privacy.</b> Your data is encrypted on your device before it's saved online. Nobody else can read it, including the person who runs the app. The only exceptions are Quick add and the AI Analyst, which send what you type to Google's Gemini service to understand it.</p>
       <p><b>Deleting your account.</b> Settings → Data → Account → <b>Delete my account</b> permanently erases your account and all your data from every device. Download a backup first (Settings → Export) if you want to keep a copy.</p>`)}
     ${sec('Recording money (the + button)',`
-      <p>The round <b>+</b> button is on every page. Tap it for three shortcuts: <b>Quick add</b>, <b>Say it</b> (speak the transaction) and <b>Ask AI</b>. If it's covering something, <b>drag it</b> anywhere on the screen; it stays where you leave it.</p>
-      <p><b>Quick add</b> (the box at the top of the form) is the fastest way: type something like <i>"5k lunch from GTB yesterday"</i>, <i>"received 250k salary into Access"</i> or <i>"moved 20k from Opay to Kuda"</i>. The form fills itself in; check it and tap Save. Nothing is saved until you do.</p>
-      <p><b>Say it</b> opens its own screen and starts listening. Say the transaction the same way; when you stop, the form opens filled in for you to check and save. Tap the big mic to stop early or to try again.</p>
-      <p>Or fill in the form yourself. Choose what you're recording:</p>
+      <p>The round <b>+</b> button is on every page. Tap it for three shortcuts: <b>Quick add</b>, <b>Say it</b> (speak or type the transaction) and <b>Ask AI</b>. If it's covering something, <b>drag it</b> anywhere on the screen; it stays where you leave it.</p>
+      <p><b>Quick add</b> opens the form for you to fill in yourself.</p>
+      <p><b>Say it</b> is the fastest way. It opens its own screen and starts listening: say something like <i>"5k lunch from GTB yesterday"</i>, <i>"received 250k salary into Access"</i> or <i>"moved 20k from Opay to Kuda"</i>. Prefer to type? Tap the box under the mic and type it instead, then tap ✦. The form opens filled in; check it and tap Save. Nothing is saved until you do. Tap the big mic to stop early or to try again.</p>
+      <p>Filling in the form yourself, choose what you're recording:</p>
       <ul>
         <li><b>Paid in dollars or pounds from a naira account?</b> (e.g. a $6.93 subscription on your naira card) Switch the currency next to Amount to $ or £. It's converted at that month's rate and your account is charged in naira.</li>
         <li><b>Expense.</b> Pick a <b>category</b> (e.g. Food) and what it was <b>spent on</b> (e.g. Lunch). To add a new item, choose "New item" and give it a name and emoji. It's remembered for next time.</li>
@@ -9124,7 +9136,7 @@ function renderSettData(){
         <button class="btn btn-g btn-sm" style="flex:1" onclick="openGuide()">Open the guide</button>
         <button class="btn btn-g btn-sm" style="flex:1" onclick="reportProblem()">Report a problem</button>
       </div>
-      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.7</div><div style="color:var(--text3);margin-top:4px">v4.7.7: Say it now has its own screen: tap it in the + menu, speak, and the form opens filled in. The mic is gone from the Quick add box.</div></div>
+      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.8</div><div style="color:var(--text3);margin-top:4px">v4.7.8: The type-it box moved from Quick add to Say it. Quick add opens the plain form; Say it lets you speak or type, then fills in the form.</div></div>
     </div>
     <details class="sett-adv" id="sett-adv"${_settAdvOpen?' open':''} ontoggle="_settAdvOpen=this.open">
       <summary>Advanced<span>AI keys, net worth, exchange rates, balance audit</span></summary>
@@ -9880,7 +9892,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').cat
 
 
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.7.7';
+const APP_VERSION='v4.7.8';
 async function checkForUpdate(){
   try{
     const res=await fetch(location.origin+location.pathname+'?_='+Date.now(),{cache:'no-store'});

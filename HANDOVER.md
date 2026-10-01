@@ -1,4 +1,4 @@
-# SpendWise — Handover Note (v4.7.7)
+# SpendWise — Handover Note (v4.7.8)
 
 Personal-finance PWA, shared with the owner's friends since v4.5 (2026-09-26). Works signed out (data stays on the device); optional username/password accounts sync across devices with every document **encrypted on the device** — the project owner cannot read other users' data.
 Live: https://ssseyon.github.io/spendwise/
@@ -43,6 +43,11 @@ Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB l
 - **Logos:** served from the app's own `Logos/`; `LOGO_CATALOG` in setup.js resolves a logo by account/platform name at render time (20 added from official Play Store icons); users can upload their own (a 64px data URL stored in their settings).
 - The one-time Fife→Kids / USD Cash / Energy→Fuel repairs no longer run at boot.
 - Tested 2026-09-26 on localhost with two test accounts: sign-up + upload of local data, ciphertext-only storage, restore on sign-in, recovery, password change, concurrent increments from two tabs, live listeners, offline-then-reload, cross-user isolation. Known gap (pre-existing): if the boot sync throws, realtime listeners stay off until a reload.
+
+## v4.7.8 (2026-10-01)
+
+- **The words box belongs to Say it now.** The `.qa-box` (`qa-text`) was removed from the + form, so Quick add opens the plain form. The Say it screen has its own box (`vc-text`): speech is written into it live, and tapping it (`voiceAddTyping`) stops the mic without submitting (`_vcTyping`) so you can type. `voiceAddSubmit()` closes Say it, opens the form and calls `quickAddParse(text)`, which now takes the text as an argument. `#qa-status` stays in the form for the "Filled in…" message.
+- `quickAddParse` uses a sequence number (`_qaSeq`) instead of a busy flag: a newer request takes over, and a slower AI answer for an older one is ignored. Before, a second Say it made while the first was still waiting on the AI was silently dropped.
 
 ## v4.7.7 (2026-09-28)
 
