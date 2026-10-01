@@ -1,4 +1,4 @@
-# SpendWise — Handover Note (v4.7.9)
+# SpendWise — Handover Note (v4.8.0)
 
 Personal-finance PWA, shared with the owner's friends since v4.5 (2026-09-26). Works signed out (data stays on the device); optional username/password accounts sync across devices with every document **encrypted on the device** — the project owner cannot read other users' data.
 Live: https://ssseyon.github.io/spendwise/
@@ -43,6 +43,11 @@ Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB l
 - **Logos:** served from the app's own `Logos/`; `LOGO_CATALOG` in setup.js resolves a logo by account/platform name at render time (20 added from official Play Store icons); users can upload their own (a 64px data URL stored in their settings).
 - The one-time Fife→Kids / USD Cash / Energy→Fuel repairs no longer run at boot.
 - Tested 2026-09-26 on localhost with two test accounts: sign-up + upload of local data, ciphertext-only storage, restore on sign-in, recovery, password change, concurrent increments from two tabs, live listeners, offline-then-reload, cross-user isolation. Known gap (pre-existing): if the boot sync throws, realtime listeners stay off until a reload.
+
+## v4.8.0 (2026-10-01)
+
+- **Analytics is now "AI/Analytics"** (bottom-bar label with ✦ icon, page title, Guide). Its tabs are AI ✦, Insights, Treasury, History; AI is first and shown by default (`#proj-ai` visible in index.html). `navTo('forecast')` builds it (`renderProjAI`) when the AI tab is the current one (`_projTabCur`, set by `projTab`).
+- **Two floating buttons replace the + menu.** `initFab` swaps `#fab` for `#fab-group`, which holds `#fab-say` (🎤, Say it → `openVoiceAdd`) above `#fab-add` (+, Quick add → `openExpModal`). Pressing either one and moving more than 8px drags the pair; the position is saved in `sw3_fab_pos` as before, and Settings' "Put it back in the corner" still resets it. The menu, the scrim and Ask AI in the menu are gone (`fabMenuClose` is a no-op kept for callers; `fabAction('ai')` still works). `_fabVisibility()` hides the group on the AI tab, where it would cover the chat box.
 
 ## v4.7.9 (2026-10-01)
 

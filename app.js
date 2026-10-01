@@ -2103,94 +2103,77 @@ function openAiInsight(){
   if(btn) projTab('ai',btn);
 }
 
-// ── FLOATING ACTION BUTTON (every tab) ─────────────────────────────────────
-// Tap: opens three quick actions (Quick add · Say it · Ask AI).
-// Drag: moves it anywhere on screen (so it never covers something you need,
-// e.g. the AI send button); the position is remembered on this device.
+// ── FLOATING BUTTONS (every tab) ───────────────────────────────────────────
+// Two buttons stacked in one group: + (Quick add, opens the form) and the mic
+// above it (Say it). Ask AI is the first tab of AI/Analytics, so the buttons
+// are hidden there (they'd sit on the chat box). Drag either button to move
+// the pair; the position is remembered on this device.
 const FAB_POS_LS='sw3_fab_pos';
-let _fabOpen=false;
-function _fabEl(){return document.getElementById('fab');}
+function _fabEl(){return document.getElementById('fab-group');}
 function _fabApplyPos(){
   const fab=_fabEl();if(!fab)return;
   let p=null;try{p=JSON.parse(localStorage.getItem(FAB_POS_LS)||'null');}catch{}
   if(!p){fab.style.left='';fab.style.top='';fab.style.right='';fab.style.bottom='';return;}
-  const w=fab.offsetWidth||48,h=fab.offsetHeight||48;
+  const w=fab.offsetWidth||48,h=fab.offsetHeight||108;
   // Stored as fractions of the viewport so rotation / resizing keeps it on screen.
   const x=Math.min(Math.max(8,p.fx*window.innerWidth-w/2),window.innerWidth-w-8);
   const y=Math.min(Math.max(60,p.fy*window.innerHeight-h/2),window.innerHeight-h-8);
   fab.style.left=x+'px';fab.style.top=y+'px';fab.style.right='auto';fab.style.bottom='auto';
 }
-function fabMenuClose(){
-  _fabOpen=false;
-  document.getElementById('fab-menu')?.classList.remove('open');
-  document.getElementById('fab-scrim')?.classList.remove('open');
-  _fabEl()?.classList.remove('open');
-}
-function fabMenuToggle(){
-  if(_fabOpen){fabMenuClose();return;}
-  const fab=_fabEl(),menu=document.getElementById('fab-menu');if(!fab||!menu)return;
-  // Open the menu on whichever side of the button has room.
-  const r=fab.getBoundingClientRect();
-  const below=r.top<window.innerHeight/2, leftSide=r.left+r.width/2<window.innerWidth/2;
-  menu.classList.toggle('below',below);menu.classList.toggle('left',leftSide);
-  menu.style.top=below?(r.bottom+10)+'px':'auto';
-  menu.style.bottom=below?'auto':(window.innerHeight-r.top+10)+'px';
-  menu.style.left=leftSide?r.left+'px':'auto';
-  menu.style.right=leftSide?'auto':(window.innerWidth-r.right)+'px';
-  _fabOpen=true;menu.classList.add('open');document.getElementById('fab-scrim').classList.add('open');fab.classList.add('open');
-  haptic([6]);
-}
+function fabMenuClose(){} // the old + menu is gone; kept for callers
 function fabAction(a){
-  fabMenuClose();
   if(a==='add'){openExpModal('expense');}
   else if(a==='voice'){openVoiceAdd();} // same tap = user gesture for the mic
   else if(a==='ai'){openAiInsight();setTimeout(()=>document.getElementById('ai-input')?.focus(),200);}
 }
+// Hidden on the AI chat; shown everywhere else.
+let _projTabCur='ai';
+function _fabVisibility(){
+  const g=_fabEl();if(g)g.classList.toggle('hidden',S.page==='forecast'&&_projTabCur==='ai');
+}
 (function initFab(){
-  const fab=_fabEl();if(!fab)return;
-  fab.removeAttribute('onclick');fab.title='Quick actions (drag to move)';fab.setAttribute('aria-label','Quick actions');
-  const menu=document.createElement('div');menu.id='fab-menu';
-  menu.innerHTML=`
-    <button class="fab-item" onclick="fabAction('add')"><span class="fab-ic">✍︎</span><span>Quick add</span></button>
-    <button class="fab-item" onclick="fabAction('voice')"><span class="fab-ic">🎤</span><span>Say it</span></button>
-    <button class="fab-item" onclick="fabAction('ai')"><span class="fab-ic fab-ic-ai">✦</span><span>Ask AI</span></button>`;
-  const scrim=document.createElement('div');scrim.id='fab-scrim';scrim.onclick=fabMenuClose;
-  document.body.appendChild(scrim);document.body.appendChild(menu);
-  // Drag vs tap: a press that moves more than 8px is a drag.
-  let sx=0,sy=0,ox=0,oy=0,dragging=false,down=false;
-  fab.addEventListener('pointerdown',e=>{
-    down=true;dragging=false;sx=e.clientX;sy=e.clientY;
-    const r=fab.getBoundingClientRect();ox=sx-r.left;oy=sy-r.top;
-    try{fab.setPointerCapture(e.pointerId);}catch{}
+  const old=document.getElementById('fab');if(!old)return;
+  const group=document.createElement('div');group.id='fab-group';
+  group.innerHTML=`
+    <button class="fab fab-say" id="fab-say" title="Say it (drag to move)" aria-label="Say it">🎤</button>
+    <button class="fab" id="fab-add" title="Quick add (drag to move)" aria-label="Quick add">+</button>`;
+  old.replaceWith(group);
+  // Drag vs tap: a press that moves more than 8px is a drag (of the whole pair).
+  let sx=0,sy=0,ox=0,oy=0,dragging=false,down=null;
+  group.querySelectorAll('.fab').forEach(btn=>{
+    btn.addEventListener('pointerdown',e=>{
+      down=btn;dragging=false;sx=e.clientX;sy=e.clientY;
+      const r=group.getBoundingClientRect();ox=sx-r.left;oy=sy-r.top;
+      try{btn.setPointerCapture(e.pointerId);}catch{}
+    });
+    btn.addEventListener('pointermove',e=>{
+      if(down!==btn)return;
+      if(!dragging&&Math.hypot(e.clientX-sx,e.clientY-sy)<8)return;
+      if(!dragging){dragging=true;group.classList.add('dragging');}
+      const w=group.offsetWidth,h=group.offsetHeight;
+      const x=Math.min(Math.max(8,e.clientX-ox),window.innerWidth-w-8);
+      const y=Math.min(Math.max(60,e.clientY-oy),window.innerHeight-h-8);
+      group.style.left=x+'px';group.style.top=y+'px';group.style.right='auto';group.style.bottom='auto';
+      e.preventDefault();
+    });
+    const end=e=>{
+      if(down!==btn)return;down=null;
+      try{btn.releasePointerCapture(e.pointerId);}catch{}
+      if(dragging){
+        group.classList.remove('dragging');
+        const r=group.getBoundingClientRect();
+        try{localStorage.setItem(FAB_POS_LS,JSON.stringify({fx:(r.left+r.width/2)/window.innerWidth,fy:(r.top+r.height/2)/window.innerHeight}));}catch{}
+      }else if(e.type==='pointerup'){haptic([6]);fabAction(btn.id==='fab-say'?'voice':'add');}
+    };
+    btn.addEventListener('pointerup',end);btn.addEventListener('pointercancel',end);
+    // Keyboard users: Enter/Space (pointer events cover mouse and touch).
+    btn.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fabAction(btn.id==='fab-say'?'voice':'add');}});
   });
-  fab.addEventListener('pointermove',e=>{
-    if(!down)return;
-    if(!dragging&&Math.hypot(e.clientX-sx,e.clientY-sy)<8)return;
-    if(!dragging){dragging=true;fabMenuClose();fab.classList.add('dragging');}
-    const w=fab.offsetWidth,h=fab.offsetHeight;
-    const x=Math.min(Math.max(8,e.clientX-ox),window.innerWidth-w-8);
-    const y=Math.min(Math.max(60,e.clientY-oy),window.innerHeight-h-8);
-    fab.style.left=x+'px';fab.style.top=y+'px';fab.style.right='auto';fab.style.bottom='auto';
-    e.preventDefault();
-  });
-  const end=e=>{
-    if(!down)return;down=false;
-    try{fab.releasePointerCapture(e.pointerId);}catch{}
-    if(dragging){
-      fab.classList.remove('dragging');
-      const r=fab.getBoundingClientRect();
-      try{localStorage.setItem(FAB_POS_LS,JSON.stringify({fx:(r.left+r.width/2)/window.innerWidth,fy:(r.top+r.height/2)/window.innerHeight}));}catch{}
-    }else if(e.type==='pointerup')fabMenuToggle();
-  };
-  fab.addEventListener('pointerup',end);fab.addEventListener('pointercancel',end);
-  // Keyboard users: Enter/Space opens the menu (pointer events cover mouse & touch).
-  fab.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fabMenuToggle();}});
-  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&_fabOpen)fabMenuClose();});
-  window.addEventListener('resize',()=>{fabMenuClose();_fabApplyPos();});
+  window.addEventListener('resize',_fabApplyPos);
   _fabApplyPos();
 })();
 // Double-tap-free way back: long-press isn't discoverable, so Settings offers a reset.
-function fabResetPosition(){try{localStorage.removeItem(FAB_POS_LS);}catch{}_fabApplyPos();toast('Button moved back to the corner');}
+function fabResetPosition(){try{localStorage.removeItem(FAB_POS_LS);}catch{}_fabApplyPos();toast('Buttons moved back to the corner');}
 
 function navTo(pg, deepCat){
   S.page=pg;
@@ -2199,7 +2182,8 @@ function navTo(pg, deepCat){
   document.getElementById('pg-'+pg).classList.add('active');
   document.querySelectorAll('.bn').forEach(n=>n.classList.toggle('active',n.dataset.pg===pg));
   document.getElementById('app-body').scrollTop=0;
-  fabMenuClose();
+  _fabVisibility();
+  if(pg==='forecast'&&_projTabCur==='ai')renderProjAI(); // AI is the first tab; build it on open
   if(pg==='expenses'&&deepCat){
     S.expCat=deepCat;
     renderExpenses();
@@ -7882,6 +7866,7 @@ function projTab(tab,btn){
     const el=document.getElementById('proj-'+t);if(el)el.style.display=t===tab?'block':'none';
   });
   btn.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');
+  _projTabCur=tab;_fabVisibility();
   if(tab==='ai')renderProjAI(); // panel skips the init-time render pass; build it fresh on open
 }
 
@@ -8276,7 +8261,7 @@ function renderSettGuide(){
       <p><b>Privacy.</b> Your data is encrypted on your device before it's saved online. Nobody else can read it, including the person who runs the app. The only exceptions are Quick add and the AI Analyst, which send what you type to Google's Gemini service to understand it.</p>
       <p><b>Deleting your account.</b> Settings → Data → Account → <b>Delete my account</b> permanently erases your account and all your data from every device. Download a backup first (Settings → Export) if you want to keep a copy.</p>`)}
     ${sec('Recording money (the + button)',`
-      <p>The round <b>+</b> button is on every page. Tap it for three shortcuts: <b>Quick add</b>, <b>Say it</b> (speak or type the transaction) and <b>Ask AI</b>. If it's covering something, <b>drag it</b> anywhere on the screen; it stays where you leave it.</p>
+      <p>Two round buttons sit on every page (except the AI chat): <b>+</b> is <b>Quick add</b> and the 🎤 above it is <b>Say it</b> (speak or type the transaction). To ask the AI, open the <b>AI/Analytics</b> tab; it opens on the chat. If the buttons are covering something, <b>drag either one</b> to move them anywhere on the screen; they stay where you leave them.</p>
       <p><b>Quick add</b> opens the form for you to fill in yourself.</p>
       <p><b>Say it</b> is the fastest way. It opens its own screen and starts listening: say something like <i>"5k lunch from GTB yesterday"</i>, <i>"received 250k salary into Access"</i> or <i>"moved 20k from Opay to Kuda"</i>. Prefer to type? Tap the box under the mic and type it instead, then tap ✦. The form opens filled in; check it and tap Save. Nothing is saved until you do. Tap the big mic to stop early or to try again.</p>
       <p><b>Closing a month early.</b> Done with a month before it ends (say on 29 Sept)? Tap <b>Close September</b> on Home (it shows in the last week of the month) or in Settings → Data → Month. September's interest is added, bills due are posted, and SpendWise moves to October: new entries are dated 1 Oct. If you date something in September afterwards, you're asked whether to post it on 1 Oct instead. Changed your mind? <b>Reopen September</b> until the month really ends.</p>
@@ -8315,12 +8300,12 @@ function renderSettGuide(){
         <li><b>Debtors</b>: money people owe you. Add a person and record repayments as they come in.</li>
         <li><b>Loans</b>: money you owe. Record repayments to see what's left.</li>
       </ul>`)}
-    ${sec('Analytics page',`
+    ${sec('AI/Analytics page',`
       <ul>
+        <li><b>AI ✦</b>: ask questions about your money in plain English ("Where did most of my money go last month?"). It can draw charts too. Tap 🎤 to speak your question instead of typing. Chats sync across your devices.</li>
         <li><b>Insights</b>: a forecast of how the month will end and which categories are running hot.</li>
         <li><b>Treasury</b>: your <b>runway</b> (how many months your cash would last at your usual spending), savings rate, your fixed monthly bills (from Recurring) and a 3-month cash projection. It uses completed months only.</li>
         <li><b>History</b>: income and expenses month by month. Tap a column heading to sort.</li>
-        <li><b>AI ✦</b>: ask questions about your money in plain English ("Where did most of my money go last month?"). It can draw charts too. Tap 🎤 to speak your question instead of typing. Chats sync across your devices.</li>
       </ul>
       <p class="gd-tip">When you use the AI Analyst, your question and the relevant figures are sent to Google's Gemini service to produce the answer. Nothing is sent unless you ask it something.</p>`)}
     ${sec('Settings page',`
@@ -9234,7 +9219,7 @@ function renderSettData(){
           ${[['NGN','₦ Naira'],['USD','$ US dollars'],['GBP','£ Pounds'],['NATIVE','Each account\'s own currency']].map(([v,l])=>`<option value="${v}"${S.dashCurrency===v?' selected':''}>${l}</option>`).join('')}
         </select>
       </div>
-      <div style="font-size:0.68rem;color:var(--text2);margin-top:10px">The round <b>+</b> button can be dragged anywhere on the screen. <span class="sh-link" style="font-size:0.68rem" onclick="fabResetPosition()">Put it back in the corner</span></div>
+      <div style="font-size:0.68rem;color:var(--text2);margin-top:10px">The round <b>+</b> and 🎤 buttons can be dragged anywhere on the screen. <span class="sh-link" style="font-size:0.68rem" onclick="fabResetPosition()">Put it back in the corner</span></div>
     </div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Month</div>
@@ -9249,7 +9234,7 @@ function renderSettData(){
         <button class="btn btn-g btn-sm" style="flex:1" onclick="openGuide()">Open the guide</button>
         <button class="btn btn-g btn-sm" style="flex:1" onclick="reportProblem()">Report a problem</button>
       </div>
-      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.7.9</div><div style="color:var(--text3);margin-top:4px">v4.7.9: Close a month early: on Home (last week of the month) or Settings - Month. Its interest and due bills are booked, and SpendWise moves to the next month. Reopen until it really ends.</div></div>
+      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.8.0</div><div style="color:var(--text3);margin-top:4px">v4.8.0: Analytics is now AI/Analytics and opens on the AI chat. The + menu is replaced by two buttons: + for Quick add and the mic for Say it.</div></div>
     </div>
     <details class="sett-adv" id="sett-adv"${_settAdvOpen?' open':''} ontoggle="_settAdvOpen=this.open">
       <summary>Advanced<span>AI keys, net worth, exchange rates, balance audit</span></summary>
@@ -10005,7 +9990,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').cat
 
 
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.7.9';
+const APP_VERSION='v4.8.0';
 async function checkForUpdate(){
   try{
     const res=await fetch(location.origin+location.pathname+'?_='+Date.now(),{cache:'no-store'});
@@ -10584,7 +10569,7 @@ function renderApiKeysCard(){
     ?`Your keys, encrypted in your account. <b>Everyone else uses the shared key</b> (${hasShared?shared.list.length+' published':'none published yet'}). After changing keys here, publish them again.`
     :hasShared
       ?`AI is included: the AI Analyst uses SpendWise's shared key. You don't need to add anything. Optionally add your own Gemini key below and it will be used instead.`
-      :`Add a Gemini API key to use the AI Analyst (Analytics → AI).`;
+      :`Add a Gemini API key to use the AI Analyst (AI/Analytics → AI).`;
   return`<div class="exp-card" style="margin-top:10px">
     <div class="exp-card-title" style="margin-bottom:6px">AI API Keys</div>
     <div class="exp-card-sub" style="margin-bottom:10px">${intro}</div>

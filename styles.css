@@ -542,3 +542,9 @@ datalist option{background:var(--bg2);color:var(--text)}
 /* Close a month early (Home card) */
 .close-mo-card{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:0.74rem;color:var(--text2);margin-bottom:10px;padding:10px 12px}
 .close-mo-card .btn{flex-shrink:0}
+/* Two floating buttons (v4.8): Say it above Quick add, dragged as a pair */
+#fab-group{position:fixed;bottom:calc(var(--nh) + 16px);right:18px;z-index:90;display:flex;flex-direction:column;align-items:center;gap:12px}
+#fab-group.hidden{display:none}
+#fab-group .fab{position:static;bottom:auto;right:auto}
+#fab-group .fab-say{width:42px;height:42px;background:var(--bg1);color:var(--accent);border:2px solid var(--accent);font-size:1.05rem}
+#fab-group.dragging .fab{transform:scale(1.08);transition:none;cursor:grabbing}
