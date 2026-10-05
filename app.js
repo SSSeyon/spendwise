@@ -2397,6 +2397,13 @@ async function shareMonthReview(){
   if(navigator.share){try{await navigator.share({title:`${name} in review`,text});}catch(e){/* dismissed */}return;}
   try{await navigator.clipboard.writeText(text);toast('Summary copied');}catch(e){toast('Could not share');}
 }
+// Spend vs Budget: tapping a category lists its expenses for the month on Home.
+function _budgetCatOpen(cat){
+  const list=(S.txns||[]).filter(t=>t.category===cat);
+  if(!list.length)return;
+  haptic([10]);
+  openCatPopup(cat,list,S.dashCurrency,S.dashMonth,S.dashYear);
+}
 function renderDashboard(){
   const m=S.dashMonth,y=S.dashYear,cur=S.dashCurrency;
   renderGetStarted();
@@ -2521,14 +2528,14 @@ function renderDashboard(){
   // Cash Flow is the first chart tab, so draw it whenever it's the one showing.
   if(document.getElementById('dash-tab-cashflow')?.style.display!=='none')renderCashFlowChart();
 
-  // Spend vs budget
+  // Spend vs budget (tap a category for its expenses)
   const allCats=[...new Set([...getAllCats(),...Object.keys(catSpend)])];
   // Only show categories with actual spend; budgets still count in total for the Spent card
   const catRows=allCats.filter(c=>catSpend[c]>0).map(c=>({cat:c,spent:catSpend[c]||0,budg:S.budgets[ck(c)]||0})).sort((a,b)=>b.spent-a.spent);
   const _catRowHtml=r=>{
     const st=bSt(r.spent,r.budg);const pct=r.budg?Math.min(r.spent/r.budg*100,100):0;
     const icn=`<span style="margin-right:5px">${CAT_ICONS[r.cat]||''}</span>`;
-    return`<div class="cr"><div class="cr-top"><span class="cr-name">${icn}${r.cat}</span><div class="cr-vals"><span class="cr-spent" style="color:${st==='over'?'var(--red)':st==='warn'?'var(--gold)':'var(--text)'}">${fmtCur(r.spent,cur,m,y)}</span>${r.budg?`<span class="cr-budg">/ ${fmtCur(r.budg,cur,m,y)}</span>`:''}</div></div><div class="prog"><div class="pf ${st}" style="width:${pct}%"></div></div></div>`;
+    return`<div class="cr" style="cursor:pointer" onclick="_budgetCatOpen('${jsq(r.cat)}')"><div class="cr-top"><span class="cr-name">${icn}${r.cat}</span><div class="cr-vals"><span class="cr-spent" style="color:${st==='over'?'var(--red)':st==='warn'?'var(--gold)':'var(--text)'}">${fmtCur(r.spent,cur,m,y)}</span>${r.budg?`<span class="cr-budg">/ ${fmtCur(r.budg,cur,m,y)}</span>`:''}</div></div><div class="prog"><div class="pf ${st}" style="width:${pct}%"></div></div></div>`;
   };
     document.getElementById('dash-cats').innerHTML=catRows.length?catRows.map(_catRowHtml).join(''):'<div class="empty"><div class="empty-i">↕</div>No expenses this month</div>';
 
@@ -7721,6 +7728,37 @@ function renderCategoryTrends(){
   }).join('')+`<div class="csub" style="margin-top:8px">Bars span ${MS[months[0].m-1]} ${String(months[0].y).slice(2)} – ${MS[months[5].m-1]} ${String(months[5].y).slice(2)}</div>`;
 }
 
+// Besides income and expenses, the Cash Flow chart counts money that moved
+// through your banks for loans and debts (each can be switched off in
+// Settings → Preferences, stored in profile.cfInclude):
+//   in:  repayments debtors made into a bank · loans paid into a bank
+//   out: loan repayments taken from a bank · money lent out from a bank
+// Without them, a month that repaid a loan showed it all as "Savings".
+const CF_INCLUDE_DEF={loanRepay:true,lent:true,repaidIn:true,loanIn:true};
+const CF_NODE={loanRepay:'Loan repayments',lent:'Lent out',repaidIn:'Repaid to you',loanIn:'Loans received'};
+function _cfInclude(){const p=getProfile()||{};return {...CF_INCLUDE_DEF,...(p.cfInclude||{})};}
+function setCfInclude(k,on){const o=_cfInclude();o[k]=!!on;saveProfile({cfInclude:o});renderCashFlowChart();}
+function _cfMoves(m,y){
+  const inMon=d=>{if(!d)return false;const r=_ymOf(d);return r.m===m&&r.y===y;};
+  const debtNGN=(d,a)=>(d.currency==='NGN'||!d.currency)?a:a*(d.rate||DEF_RATES[d.currency]||1);
+  const out={loanRepay:[],lent:[],repaidIn:[],loanIn:[]};
+  (S.loans||[]).forEach(l=>{
+    if(l.disbursedTo&&inMon(l.startDate)&&(l.amtNGN||l.amount))out.loanIn.push({date:l.startDate,name:l.lender,amt:l.amtNGN||l.amount,bank:l.disbursedTo});
+    (l.repayLog||[]).forEach(r=>{if(r.account&&inMon(r.date)&&r.amount)out.loanRepay.push({date:r.date,name:l.lender,amt:+r.amount,bank:r.account});});
+  });
+  (S.debtors||[]).forEach(d=>{
+    if(d.disbursedFrom&&inMon(d.date)&&d.amount)out.lent.push({date:d.date,name:d.name,amt:debtNGN(d,d.amount),bank:d.disbursedFrom});
+    (d.pmtLog||[]).forEach(p=>{if(p.creditedTo&&inMon(p.date)&&p.amount)out.repaidIn.push({date:p.date,name:d.name,amt:debtNGN(d,p.amount),bank:p.creditedTo});});
+  });
+  return out;
+}
+// Tapping a loan or debt band: the entries behind it.
+function _cfMovesPopup(title,list,cur,m,y){
+  const rows=list.slice().sort((a,b)=>a.date<b.date?-1:1).map(x=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><div><div style="font-size:0.8rem;font-weight:600">${esc(x.name||'')}</div><div style="font-size:0.64rem;color:var(--text2);font-family:var(--mono)">${fmtDate(x.date)} · ${esc(x.bank||'')}</div></div><div style="font-family:var(--mono);font-size:0.84rem">${fmtCur(Math.round(x.amt),cur,m,y)}</div></div>`).join('');
+  document.getElementById('drill-title').textContent=`${title} · ${fmtCur(Math.round(list.reduce((s,x)=>s+x.amt,0)),cur,m,y)}`;
+  document.getElementById('drill-body').innerHTML=rows;
+  openMod('drill-modal');
+}
 function renderCashFlowChart(){
   const m=S.dashMonth,y=S.dashYear,cur=S.dashCurrency;
   const canvas=document.getElementById('cashflow-diagram');
@@ -7736,10 +7774,20 @@ function renderCashFlowChart(){
     const other=cats.slice(7).reduce((s,[,v])=>s+v,0);
     cats=[...cats.slice(0,7),['Others',other]];
   }
-  const totalExp=cats.reduce((s,[,v])=>s+v,0);
-  const savings=incTotal-totalExp;
 
-  if(!incTotal&&!totalExp){
+  // Money in (left) and money out (right), with loans and debts as switched on.
+  const inc=_cfInclude(),mv=_cfMoves(m,y),sum=a=>a.reduce((s,x)=>s+x.amt,0);
+  const sources=[['Income',incTotal]];
+  ['repaidIn','loanIn'].forEach(k=>{const v=sum(mv[k]);if(inc[k]&&v>0)sources.push([CF_NODE[k],v]);});
+  const targets=cats.slice();
+  ['loanRepay','lent'].forEach(k=>{const v=sum(mv[k]);if(inc[k]&&v>0)targets.push([CF_NODE[k],v]);});
+  const inTotal=sources.reduce((s,[,v])=>s+v,0),outTotal=targets.reduce((s,[,v])=>s+v,0);
+  const savings=inTotal-outTotal;
+  // A shortfall came out of savings: shown as money in, so both sides balance.
+  if(savings>0)targets.push(['Savings',savings]);
+  else if(savings<0)sources.push(['From savings',-savings]);
+
+  if(!inTotal&&!outTotal){
     if(S._sankeyChart){S._sankeyChart.destroy();S._sankeyChart=null;}
     document.getElementById('cashflow-nodata')?.remove();
     canvas.insertAdjacentHTML('afterend','<div id="cashflow-nodata" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:0.72rem">No data for this period</div>');
@@ -7751,26 +7799,29 @@ function renderCashFlowChart(){
   if(S._sankeyChart){S._sankeyChart.destroy();S._sankeyChart=null;}
 
   const CAT_COLOURS=['#f87171','#fb923c','#e879a0','#c084fc','#fbbf24','#60a5fa','#34d399','#94a3b8'];
-  const colorMap={'Income':'#14b8a6','Savings':'#34d399','Deficit':'#fb923c','Others':'#94a3b8'};
+  const colorMap={'Income':'#14b8a6','Savings':'#34d399','From savings':'#fb923c','Others':'#94a3b8',
+    'Repaid to you':'#2dd4bf','Loans received':'#a78bfa','Loan repayments':'#f43f5e','Lent out':'#eab308'};
   cats.forEach(([cat],i)=>{if(!colorMap[cat])colorMap[cat]=CAT_COLOURS[i%CAT_COLOURS.length];});
 
+  // Each source feeds each target in proportion to its size.
+  const T=Math.max(inTotal,outTotal)||1;
   const data=[];
-  cats.forEach(([cat,val])=>data.push({from:'Income',to:cat,flow:val}));
-  if(savings>0)       data.push({from:'Income',to:'Savings',flow:savings});
-  else if(savings<0)  data.push({from:'Income',to:'Deficit',flow:Math.abs(savings)});
+  sources.forEach(([s,sv])=>{if(sv>0)targets.forEach(([t,tv])=>{if(tv>0)data.push({from:s,to:t,flow:sv*tv/T});});});
 
-  // Each band is labelled on one line where it meets its category, e.g.
-  // "Food ₦44,000 (17%)" (share of income, or of spending when there's no
-  // income), in black. Income is written under the chart, beneath its bar.
-  // The plugin's own labels are hidden (color transparent); cfLabels draws them.
-  const _base=incTotal>0?incTotal:totalExp;
-  const labels={Income:`Income ${fmtCur(incTotal,cur,m,y)}`};
-  data.forEach(d=>{labels[d.to]=`${d.to} ${fmtCur(Math.round(d.flow),cur,m,y)} (${_base?Math.round(d.flow/_base*100):0}%)`;});
+  // Each band is labelled on one line where it meets its target, e.g.
+  // "Food ₦44,000 (17%)" (share of money in, or of money out when nothing came
+  // in), in black. Money in is written under the chart, one line per source,
+  // top to bottom as the bars are. The plugin's own labels are hidden
+  // (color transparent); cfLabels draws them.
+  const _base=inTotal>0?inTotal:outTotal;
+  const labels={};
+  sources.forEach(([s,v])=>{labels[s]=`${s} ${fmtCur(Math.round(v),cur,m,y)}`;});
+  targets.forEach(([t,v])=>{labels[t]=`${t} ${fmtCur(Math.round(v),cur,m,y)} (${_base?Math.round(v/_base*100):0}%)`;});
   const cfLabels={id:'cfLabels',afterDatasetsDraw(chart){
     const meta=chart.getDatasetMeta(0),ctrl=meta.controller,nodes=ctrl&&ctrl._nodes;
     if(!nodes||!meta.xScale)return;
     const c=chart.ctx,area=chart.chartArea,xs=meta.xScale,ys=meta.yScale;
-    const lh=13,right=[];
+    const lh=13,right=[],left=[];
     c.save();
     c.textBaseline='middle';c.fillStyle='#000';
     c.font='600 10px "DM Mono", monospace';
@@ -7778,13 +7829,14 @@ function renderCashFlowChart(){
       const x=xs.getPixelForValue(node.x),y=ys.getPixelForValue(node.y);
       const h=Math.abs(ys.getPixelForValue(node.y+Math.max(node.in||node.out,node.out||node.in))-y);
       const text=labels[node.key]||node.key;
-      if(x<area.width/2){
-        // Income: under the chart, beneath its bar (layout padding makes room).
-        c.textAlign='left';
-        c.fillText(text,x,area.bottom+11);
-      }else right.push({text,x,y:y+h/2});
+      if(x<area.width/2)left.push({text,x,y});
+      else right.push({text,x,y:y+h/2});
     }
-    // Category labels sit on their band, just left of the category's bar;
+    // Money in: under the chart (layout padding makes room for each line).
+    left.sort((a,b)=>a.y-b.y);
+    c.textAlign='left';
+    left.forEach((t,i)=>c.fillText(t.text,t.x,area.bottom+11+i*lh));
+    // Target labels sit on their band, just left of the target's bar;
     // nudged apart when small bands are too close to fit a line each.
     right.sort((a,b)=>a.y-b.y);
     let prev=area.top+lh/2-lh;
@@ -7795,13 +7847,15 @@ function renderCashFlowChart(){
     right.forEach(t=>c.fillText(t.text,t.x-6,t.y));
     c.restore();
   }};
-  // Tapping a flow lists that category's expenses, as the Breakdown chart
-  // does. "Others" lists the smaller ones.
+  // Tapping a flow lists what's behind its target: a category's expenses
+  // ("Others" lists the smaller ones), or the loan and debt entries.
   const _top=new Set(cats.map(([c])=>c).filter(c=>c!=='Others'));
+  const _byNode=Object.fromEntries(Object.entries(CF_NODE).map(([k,n])=>[n,k]));
   const _cfOpen=to=>{
     if(to==='Income'){drillDown('income');return;}
     if(to==='Expenses'){drillDown('expenses');return;}
-    if(to==='Savings'||to==='Deficit')return;
+    if(to==='Savings'||to==='From savings')return;
+    if(_byNode[to]){haptic([10]);_cfMovesPopup(to,mv[_byNode[to]],cur,m,y);return;}
     const list=to==='Others'?S.txns.filter(t=>!_top.has(t.category)):S.txns.filter(t=>t.category===to);
     if(!list.length)return;
     haptic([10]);
@@ -7830,7 +7884,7 @@ function renderCashFlowChart(){
     options:{
       responsive:true,
       maintainAspectRatio:false,
-      layout:{padding:{bottom:18}},
+      layout:{padding:{bottom:18+13*(sources.length-1)}},
       onClick:(_e,els)=>{if(els.length){const d=data[els[0].index];if(d)_cfOpen(d.to);}},
       onHover:(e,els)=>{if(e.native?.target)e.native.target.style.cursor=els.length?'pointer':'default';},
       plugins:{
@@ -7839,7 +7893,7 @@ function renderCashFlowChart(){
           callbacks:{
             label:(item)=>{
               const d=item.dataset.data[item.dataIndex];
-              const pct=incTotal>0?Math.round(d.flow/incTotal*100):0;
+              const pct=_base>0?Math.round(d.flow/_base*100):0;
               return`${d.from} to ${d.to}: ${fmtCur(Math.round(d.flow),cur,m,y)} (${pct}%)`;
             }
           },
@@ -8280,8 +8334,8 @@ function renderSettGuide(){
         <li><b>Search</b> (top right) finds any entry in any month by item, category, bank, note or amount.</li>
         <li><b>Year / month / currency</b> selectors change the period and currency you're looking at (the currency is also in Settings → Preferences).</li>
         <li>In the first week of a month, a <b>month in review</b> card sums up the month before. You can share it or hide it.</li>
-        <li><b>Spend vs Budget</b>: how much of each category's budget you've used this month.</li>
-        <li><b>Calendar</b> shows what you spent on each day. <b>Charts</b> cover breakdown, 6-month trend, net worth and cash flow.</li>
+        <li><b>Spend vs Budget</b>: how much of each category's budget you've used this month. Tap a category to see its expenses.</li>
+        <li><b>Calendar</b> shows what you spent on each day. <b>Charts</b> cover cash flow, breakdown, 6-month trend and net worth. <b>Cash Flow</b> shows where the month's money came from and went, including loans and debts that moved money in or out of a bank (choose which in Settings → Preferences); Savings is what's left.</li>
         <li>Tap <b>Edit</b> (top right) to reorder the cards.</li>
         <li>The 🔔 bell shows alerts, like a category on track to go over budget.</li>
       </ul>`)}
@@ -9220,6 +9274,9 @@ function renderSettData(){
         </select>
       </div>
       <div style="font-size:0.68rem;color:var(--text2);margin-top:10px">The round <b>+</b> and 🎤 buttons can be dragged anywhere on the screen. <span class="sh-link" style="font-size:0.68rem" onclick="fabResetPosition()">Put it back in the corner</span></div>
+      <div style="font-size:0.72rem;font-weight:600;margin:14px 0 4px">Cash Flow chart also counts</div>
+      <div style="font-size:0.66rem;color:var(--text2);margin-bottom:6px">Loans and debts that moved money in or out of a bank that month.</div>
+      ${[['repaidIn','Repayments you receive'],['loanIn','Loans you receive'],['loanRepay','Loan repayments you make'],['lent','Money you lend out']].map(([k,l])=>`<label style="display:flex;align-items:center;gap:8px;font-size:0.74rem;padding:4px 0;cursor:pointer"><input type="checkbox" ${_cfInclude()[k]?'checked':''} onchange="setCfInclude('${k}',this.checked)">${l}</label>`).join('')}
     </div>
     <div class="exp-card" style="margin-top:10px">
       <div class="exp-card-title" style="margin-bottom:6px">Month</div>
@@ -9234,7 +9291,7 @@ function renderSettData(){
         <button class="btn btn-g btn-sm" style="flex:1" onclick="openGuide()">Open the guide</button>
         <button class="btn btn-g btn-sm" style="flex:1" onclick="reportProblem()">Report a problem</button>
       </div>
-      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.8.0</div><div style="color:var(--text3);margin-top:4px">v4.8.0: Analytics is now AI/Analytics and opens on the AI chat. The + menu is replaced by two buttons: + for Quick add and the mic for Say it.</div></div>
+      <div style="font-size:0.66rem;color:var(--text3);line-height:1.7;margin-top:10px"><div>Version: v4.8.1</div><div style="color:var(--text3);margin-top:4px">v4.8.1: Tap a category in Spend vs Budget to see its expenses. Cash Flow now counts loans and debts moved through your banks (choose which in Settings - Preferences), so Savings is right.</div></div>
     </div>
     <details class="sett-adv" id="sett-adv"${_settAdvOpen?' open':''} ontoggle="_settAdvOpen=this.open">
       <summary>Advanced<span>AI keys, net worth, exchange rates, balance audit</span></summary>
@@ -9990,7 +10047,7 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').cat
 
 
 // ── Version check against GitHub Pages ──
-const APP_VERSION='v4.8.0';
+const APP_VERSION='v4.8.1';
 async function checkForUpdate(){
   try{
     const res=await fetch(location.origin+location.pathname+'?_='+Date.now(),{cache:'no-store'});

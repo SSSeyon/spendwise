@@ -1,4 +1,4 @@
-# SpendWise — Handover Note (v4.8.0)
+# SpendWise — Handover Note (v4.8.1)
 
 Personal-finance PWA, shared with the owner's friends since v4.5 (2026-09-26). Works signed out (data stays on the device); optional username/password accounts sync across devices with every document **encrypted on the device** — the project owner cannot read other users' data.
 Live: https://ssseyon.github.io/spendwise/
@@ -43,6 +43,13 @@ Files: `vault.js` (crypto, accounts, the `udb` Firestore facade, the IndexedDB l
 - **Logos:** served from the app's own `Logos/`; `LOGO_CATALOG` in setup.js resolves a logo by account/platform name at render time (20 added from official Play Store icons); users can upload their own (a 64px data URL stored in their settings).
 - The one-time Fife→Kids / USD Cash / Energy→Fuel repairs no longer run at boot.
 - Tested 2026-09-26 on localhost with two test accounts: sign-up + upload of local data, ciphertext-only storage, restore on sign-in, recovery, password change, concurrent increments from two tabs, live listeners, offline-then-reload, cross-user isolation. Known gap (pre-existing): if the boot sync throws, realtime listeners stay off until a reload.
+
+## v4.8.1 (2026-10-05)
+
+- **Spend vs Budget rows are tappable:** `_budgetCatOpen(cat)` opens `openCatPopup` with that category's expenses for the month on Home (`S.txns`).
+- **Cash Flow counts loans and debts.** `_cfMoves(m,y)` collects, for the month, only movements that touched a bank: loans paid into a bank (`loan.disbursedTo` + `startDate`), loan repayments taken from a bank (`repayLog[].account`), money lent from a bank (`debtor.disbursedFrom` + `date`) and debtor repayments credited to a bank (`pmtLog[].creditedTo`); debt amounts are converted with the debt's rate. Each kind can be switched off in Settings → Preferences ("Cash Flow chart also counts"), saved as `profile.cfInclude` (`_cfInclude`, `setCfInclude`); all are on by default.
+- The chart now has sources (Income, Repaid to you, Loans received, and From savings when money out exceeds money in) and targets (top 7 categories + Others, Loan repayments, Lent out, Savings). Every source feeds every target in proportion (flow = source × target ÷ total), so the bars balance. Percentages are of money in (or of money out when nothing came in). Money-in labels are written under the chart, one line each; `layout.padding.bottom` grows with the number of sources. Tapping a loan or debt band lists its entries (`_cfMovesPopup`). "Deficit" is now "From savings" on the left.
+- These changes affect the Cash Flow chart only.
 
 ## v4.8.0 (2026-10-01)
 
